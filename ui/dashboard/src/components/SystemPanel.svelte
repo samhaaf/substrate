@@ -72,12 +72,12 @@
   $: diskFreePct = diskTotal > 0 ? Math.max(0, 100 - diskGcPct - diskOtherPct) : 0
 </script>
 
-<section class="panel">
+<section id="system-panel" class="panel">
   <h2>SYSTEM</h2>
-  <Bar label="CPU" value={$systemState.cpu_utilization * 100} />
+  <Bar id="system-cpu-bar" label="CPU" value={$systemState.cpu_utilization * 100} />
 
   {#if showGpu}
-    <div class="bar-row" title="GPU utilization estimate via ioreg — may not reflect true compute load">
+    <div id="system-gpu-bar" class="bar-row" title="GPU utilization estimate via ioreg — may not reflect true compute load">
       <span class="bar-label">GPU</span>
       <div class="bar-track">
         <div class="bar-fill" style="width:{Math.min(gpuUtilPct, 100)}%;background:{gpuUtilPct > 90 ? '#ff4444' : gpuUtilPct > 70 ? '#ffaa00' : '#00ff88'}"></div>
@@ -85,16 +85,16 @@
       <span class="bar-value">~{gpuUtilPct.toFixed(1)}%</span>
     </div>
   {:else}
-    <div class="bar-row">
+    <div id="system-gpu-bar" class="bar-row">
       <span class="bar-label">GPU</span>
       <span class="na-text">N/A</span>
     </div>
   {/if}
 
-  <Bar label="VRAM" value={$systemState.gpu_memory_total_bytes > 0 ? ($systemState.gpu_memory_used_bytes / $systemState.gpu_memory_total_bytes * 100) : 0} />
+  <Bar id="system-vram-bar" label="VRAM" value={$systemState.gpu_memory_total_bytes > 0 ? ($systemState.gpu_memory_used_bytes / $systemState.gpu_memory_total_bytes * 100) : 0} />
 
   <!-- RAM as a progress bar -->
-  <div class="bar-row">
+  <div id="system-ram-bar" class="bar-row">
     <span class="bar-label">RAM</span>
     <div class="bar-track">
       <div class="bar-fill" style="width:{Math.min(ramPct, 100)}%;background:{ramPressureColor}"></div>
@@ -110,7 +110,7 @@
 
   <!-- Disk stacked bar -->
   {#if diskTotal > 0}
-    <div class="disk-section">
+    <div id="system-disk-bar" class="disk-section">
       <div class="bar-row">
         <span class="bar-label">Disk</span>
         <div class="bar-track stacked">
@@ -125,7 +125,7 @@
       </div>
     </div>
   {:else}
-    <div class="bar-row">
+    <div id="system-disk-bar" class="bar-row">
       <span class="bar-label">Disk</span>
       <span class="na-text dim">loading…</span>
     </div>

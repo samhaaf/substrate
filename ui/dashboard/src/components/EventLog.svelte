@@ -14,14 +14,14 @@
   }
 </script>
 
-<section class="panel event-log" class:collapsed>
+<section id="event-log-panel" class="panel event-log" class:collapsed>
   <h2>
     EVENT LOG ({$eventLog.length})
-    <button on:click={() => (collapsed = !collapsed)}>{collapsed ? '▼' : '▲'}</button>
-    <button on:click={clearLog}>CLEAR</button>
+    <button id="event-log-toggle-button" on:click={() => (collapsed = !collapsed)}>{collapsed ? '▼' : '▲'}</button>
+    <button id="event-log-clear-button" on:click={clearLog}>CLEAR</button>
   </h2>
   {#if !collapsed}
-    <div class="log-list">
+    <div id="event-log-list" class="log-list">
       {#each [...$eventLog].reverse().slice(0, 200) as evt, i (i)}
         <div class="log-entry">
           <span class="log-ts">{formatTs(evt.ts)}</span>

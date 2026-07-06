@@ -7,9 +7,9 @@
   }
 </script>
 
-<section class="panel">
+<section id="backend-panel" class="panel">
   <h2>BACKEND</h2>
-  <div class="status" style="color:{statusColors[$backendState.status] || '#ccc'}">
+  <div id="backend-status" class="status" style="color:{statusColors[$backendState.status] || '#ccc'}">
     ● {$backendState.status.toUpperCase()}
   </div>
   {#if $backendState.active}
@@ -20,7 +20,7 @@
     <div class="installing">Installing {$backendState.installing_version}...</div>
   {/if}
   {#if $backendState.installed.length}
-    <div class="installed-list">
+    <div id="backend-installed-list" class="installed-list">
       {#each $backendState.installed as v}
         <span class="version-tag">{v}</span>
       {/each}

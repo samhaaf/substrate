@@ -1,11 +1,12 @@
 <script>
   export let label = ''
   export let value = 0 // 0-1 or 0-100, normalize it
+  export let id = undefined // optional id forwarded to the root element, for agent legibility
   $: pct = value > 1 ? value : value * 100
   $: color = pct > 90 ? '#ff4444' : pct > 70 ? '#ffaa00' : '#00ff88'
 </script>
 
-<div class="bar-row">
+<div {id} class="bar-row">
   <span class="bar-label">{label}</span>
   <div class="bar-track">
     <div class="bar-fill" style="width:{Math.min(pct, 100)}%;background:{color}"></div>

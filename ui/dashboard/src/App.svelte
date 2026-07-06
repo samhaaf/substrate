@@ -19,18 +19,18 @@
   })
 </script>
 
-<main>
-  <header>
+<main id="dashboard-app">
+  <header id="dashboard-header">
     <h1>SUBSTRATE</h1>
-    <span class="ws-status" class:connected={$wsStatus === 'connected'}>{$wsStatus}</span>
+    <span id="ws-status" class="ws-status" class:connected={$wsStatus === 'connected'}>{$wsStatus}</span>
   </header>
 
   <div class="grid">
-    <div class="col-left">
+    <div id="col-left" class="col-left">
       <QueuePanel />
       <BenchmarkPanel />
     </div>
-    <div class="col-right">
+    <div id="col-right" class="col-right">
       <SystemPanel />
       <ModelPanel />
       <BackendPanel />

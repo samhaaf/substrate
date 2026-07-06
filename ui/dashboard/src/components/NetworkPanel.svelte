@@ -4,11 +4,11 @@
   // Future: poll /api/nodes for registered mesh nodes
 </script>
 
-<section class="panel">
+<section id="network-panel" class="panel">
   <h2>NETWORK</h2>
-  <div class="node-list">
+  <div id="network-node-list" class="node-list">
     {#each $networkState.nodes as node (node.id)}
-      <div class="node-card">
+      <div id={`network-node-${node.id}`} class="node-card">
         <div class="node-id">{node.id}</div>
         <div class="node-url dim">{node.url}</div>
         <div class="node-status" class:connected={node.id === 'local' && $wsStatus === 'connected'}>

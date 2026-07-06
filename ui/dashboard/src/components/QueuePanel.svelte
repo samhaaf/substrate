@@ -28,22 +28,22 @@
   onDestroy(() => clearInterval(interval))
 </script>
 
-<section class="panel queue-panel">
+<section id="queue-panel" class="panel queue-panel">
   <h2>QUEUE
     <span class="count pending">{$queueState.pending} pending</span>
     <span class="count running">{$queueState.running} running</span>
-    <button class="pause-btn {$queueState.paused ? 'paused' : ''}" on:click={togglePause}>
+    <button id="queue-pause-button" class="pause-btn {$queueState.paused ? 'paused' : ''}" on:click={togglePause}>
       {$queueState.paused ? '▶ RESUME' : '⏸ PAUSE'}
     </button>
   </h2>
-  <div class="queue-list">
+  <div id="queue-list" class="queue-list">
     {#each $queueState.items as item (item.id)}
-      <div class="queue-item" class:running={item.state === 'running'}>
+      <div id={`queue-item-${item.id}`} class="queue-item" class:running={item.state === 'running'}>
         <span class="item-id">{item.id.slice(0, 8)}</span>
         <span class="item-model dim">{item.model_id}</span>
         <span class="item-priority">p{item.priority}</span>
         <span class="item-state {item.state}">{item.state}</span>
-        <button class="drop-btn" on:click={() => dropCompletion(item.id)}>✕</button>
+        <button id={`queue-drop-button-${item.id}`} class="drop-btn" on:click={() => dropCompletion(item.id)}>✕</button>
       </div>
     {/each}
     {#if $queueState.items.length === 0}

@@ -27,6 +27,12 @@
     return p ? p.split('/').pop() : ''
   }
 
+  // Turn an arbitrary filesystem path into a safe id fragment for dynamic
+  // element ids (e.g. gc-dir-toggle-${slug(dir.root)}).
+  function slug(p) {
+    return (p || '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  }
+
   // Track which dirs are expanded; default collapsed
   let expanded = {}
 
@@ -76,13 +82,13 @@
   onDestroy(() => clearInterval(interval))
 </script>
 
-<section class="panel">
+<section id="gc-panel" class="panel">
   <h2>GARBAGE COLLECTOR</h2>
 
   {#if $gcState.dirs.length === 0}
     <div class="dim empty">no managed directories</div>
   {:else}
-    <div class="dir-tree">
+    <div id="gc-dir-tree" class="dir-tree">
       {#each $gcState.dirs as dir (dir.root)}
         {@const group = dirEntryMap[dir.root]}
         {@const usedBytes = dir.used_bytes || 0}
@@ -92,7 +98,7 @@
         {@const isOpen = !!expanded[dir.root]}
 
         <div class="dir-row">
-          <button class="toggle" on:click={() => toggle(dir.root)} aria-label={isOpen ? 'collapse' : 'expand'}>
+          <button id={`gc-dir-toggle-${slug(dir.root)}`} class="toggle" on:click={() => toggle(dir.root)} aria-label={isOpen ? 'collapse' : 'expand'}>
             {isOpen ? '▾' : '▸'}
           </button>
           <div class="dir-info">
@@ -109,10 +115,10 @@
         </div>
 
         {#if isOpen}
-          <div class="entries-list">
+          <div id={`gc-entries-list-${slug(dir.root)}`} class="entries-list">
             {#if group && group.children.length > 0}
               {#each group.children as entry (entry.path)}
-                <div class="gc-entry" class:locked={isLocked(entry)}>
+                <div id={`gc-entry-${slug(entry.path)}`} class="gc-entry" class:locked={isLocked(entry)}>
                   <span class="indent">  </span>
                   <span class="entry-path">{basename(entry.path)}</span>
                   <span class="entry-size dim">{formatBytes(entry.size_bytes)}</span>
@@ -130,7 +136,7 @@
     </div>
   {/if}
 
-  <div class="gc-events">
+  <div id="gc-events-list" class="gc-events">
     <h3>Recent Events</h3>
     {#each $gcState.recent_events as evt, i (i)}
       <div class="gc-event dim">{evt.event.type} {evt.event.path ? basename(evt.event.path) : ''}</div>

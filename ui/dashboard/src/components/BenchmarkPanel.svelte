@@ -218,20 +218,21 @@
   })
 </script>
 
-<section class="panel">
+<section id="benchmark-panel" class="panel">
   <h2>INFERENCE BENCHMARK</h2>
 
   <!-- Model selector header -->
   <div class="model-selector">
-    <button class="selector-toggle" on:click={() => selectorOpen = !selectorOpen}>
+    <button id="benchmark-model-selector-toggle" class="selector-toggle" on:click={() => selectorOpen = !selectorOpen}>
       <span class="selector-label">Kernel: {currentModel?.model_name || currentModel?.model_id || '—'}</span>
       <span class="arrow">{selectorOpen ? '▾' : '▸'}</span>
     </button>
     {#if selectorOpen}
-      <div class="model-list">
+      <div id="benchmark-model-list" class="model-list">
         {#each models as m, i}
           <label class="model-item">
             <input
+              id={`benchmark-model-checkbox-${m.model_id}`}
               type="checkbox"
               checked={enabledModels.has(m.model_id)}
               on:change={() => toggleModel(m.model_id)}
@@ -250,7 +251,7 @@
 
   <!-- SVG Kernel Curve Chart -->
   {#if enabledList.length > 0}
-    <div class="chart-wrap">
+    <div id="benchmark-chart" class="chart-wrap">
       <svg width="100%" viewBox="0 0 {CHART_W} {CHART_H}" class="chart-svg" preserveAspectRatio="none">
         <!-- X axis -->
         <line x1={PAD.left} y1={PAD.top + innerH} x2={PAD.left + innerW} y2={PAD.top + innerH} stroke="#333" stroke-width="1"/>
@@ -312,7 +313,7 @@
 
   <!-- Run Benchmark button -->
   <div class="bench-controls">
-    <button class="bench-btn" on:click={runBenchmark} disabled={benchRunning}>
+    <button id="benchmark-run-button" class="bench-btn" on:click={runBenchmark} disabled={benchRunning}>
       {#if benchRunning}
         <span class="spinner">⟳</span> Benchmarking…
       {:else}
@@ -320,7 +321,7 @@
       {/if}
     </button>
     {#if benchError}
-      <span class="bench-error dim">{benchError}</span>
+      <span id="benchmark-error" class="bench-error dim">{benchError}</span>
     {/if}
   </div>
 </section>

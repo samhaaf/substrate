@@ -7,9 +7,9 @@
   }
 </script>
 
-<section class="panel">
+<section id="model-panel" class="panel">
   <h2>MODEL</h2>
-  <div class="status-badge" style="color:{statusColors[$modelState.status] || '#ccc'}">
+  <div id="model-status-badge" class="status-badge" style="color:{statusColors[$modelState.status] || '#ccc'}">
     ● {$modelState.status.toUpperCase()}
   </div>
   {#if $modelState.resident_model}
