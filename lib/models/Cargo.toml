@@ -1,0 +1,18 @@
+[package]
+name = "substrate-models"
+description = "Model lifecycle management: registry sync, resumable download pipeline, and disk-budget LRU eviction"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+substrate-types = { workspace = true }
+substrate-store = { workspace = true }
+tokio           = { workspace = true }
+tokio-stream    = { workspace = true }
+chrono          = { workspace = true }
+futures         = { workspace = true }
+reqwest         = { workspace = true }
+anyhow          = { workspace = true }
+thiserror       = { workspace = true }
+tracing         = { workspace = true }
+substrate-gc    = { workspace = true }

@@ -1,0 +1,100 @@
+[workspace]
+resolver = "2"
+members = [
+    "bin/inference",
+    "bin/mesh",
+    "bin/gc",
+    "bin/db",
+    "bin/gateway",
+    "lib/types",
+    "lib/store",
+    "lib/gc",
+    "lib/db",
+    "lib/engine",
+    "lib/scheduler",
+    "lib/models",
+    "lib/cache",
+    "lib/telemetry",
+    "lib/benchmark",
+    "lib/api",
+    "lib/inference",
+    "lib/mesh",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Async
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+futures = "0.3"
+
+# HTTP
+axum = { version = "0.7", features = ["ws"] }
+tower = { version = "0.4" }
+tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
+# Archive extraction (llama.cpp release zips and tar.gz)
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tar = "0.4"
+flate2 = "1"
+
+# Database
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# IDs and time
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+async-trait = "0.1"
+
+# CLI (net-new: first clap user in the workspace, for the `db` noun-verb surface)
+clap = { version = "4", features = ["derive", "env"] }
+
+# Native Postgres client (net-new: DECISION #2 — native crate, never shelling psql)
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1", "with-chrono-0_4", "with-uuid-1"] }
+# Bytes (shared with tokio-postgres; needed for ToSql impl in pg.rs)
+bytes = "1"
+
+# Hashing (migration checksums + edge-bundle source_hash)
+sha2 = "0.10"
+
+# System
+sysinfo = "0.30"
+
+# Math
+nalgebra = "0.33"
+
+# WebSocket (upstream connector in gateway)
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Internal crates
+substrate-types     = { path = "lib/types" }
+substrate-store     = { path = "lib/store" }
+substrate-engine    = { path = "lib/engine" }
+substrate-scheduler = { path = "lib/scheduler" }
+substrate-models    = { path = "lib/models" }
+substrate-cache     = { path = "lib/cache" }
+substrate-telemetry = { path = "lib/telemetry" }
+substrate-benchmark = { path = "lib/benchmark" }
+substrate-api       = { path = "lib/api" }
+substrate-inference  = { path = "lib/inference" }
+substrate-mesh      = { path = "lib/mesh" }
+substrate-gc        = { path = "lib/gc" }
+substrate-db        = { path = "lib/db" }

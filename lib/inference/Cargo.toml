@@ -1,0 +1,25 @@
+[package]
+name = "substrate-inference"
+description = "Inference service core: wires all subsystems into a single-machine runtime (the v2 successor to v1 Substrate)"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+substrate-types     = { workspace = true }
+substrate-store     = { workspace = true }
+substrate-engine    = { workspace = true }
+substrate-scheduler = { workspace = true }
+substrate-models    = { workspace = true }
+substrate-cache     = { workspace = true }
+substrate-gc        = { workspace = true }
+substrate-telemetry = { workspace = true }
+substrate-benchmark = { workspace = true }
+substrate-api       = { workspace = true }
+axum                = { workspace = true }
+tokio               = { workspace = true }
+serde               = { workspace = true }
+toml                = { workspace = true }
+anyhow              = { workspace = true }
+thiserror           = { workspace = true }
+tracing             = { workspace = true }
+tracing-subscriber  = { workspace = true }

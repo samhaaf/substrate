@@ -1,0 +1,16 @@
+[package]
+name = "substrate-mesh-bin"
+description = "Mesh proxy binary: thin entry point that loads mesh.toml and starts the proxy"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "substrate-mesh"
+path = "src/main.rs"
+
+[dependencies]
+substrate-mesh     = { workspace = true }
+tokio              = { workspace = true }
+anyhow             = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -1,0 +1,19 @@
+data_dir = "/Users/samhaaf/.substrate"
+llama_server_bin = ""
+llama_version = "latest"
+n_gpu_layers = -1
+context_size = 4096
+api_bind = "127.0.0.1:8420"
+llama_server_port = 8421
+max_concurrent_completions = 4
+
+[resource_limits]
+model_weights_budget_bytes = 42949672960
+kv_cache_budget_bytes = 10737418240
+memory_soft_pct = 0.90
+memory_hard_pct = 0.95
+
+[defaults]
+max_tokens = 4096
+max_preemption_count = 100
+error_retry_limit = 3

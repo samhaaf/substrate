@@ -1,0 +1,17 @@
+[package]
+name = "substrate-benchmark"
+description = "Benchmark orchestrator: idle-period detection, priority-0 sweep collections, throughput characterization"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+substrate-types     = { workspace = true }
+substrate-store     = { workspace = true }
+substrate-scheduler = { workspace = true }
+tokio               = { workspace = true }
+serde_json          = { workspace = true }
+anyhow              = { workspace = true }
+thiserror           = { workspace = true }
+tracing             = { workspace = true }
+chrono              = { workspace = true }
+uuid                = { workspace = true }

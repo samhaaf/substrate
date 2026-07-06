@@ -1,0 +1,120 @@
+# substrate inference configuration
+# Copy to substrate.toml and edit for your machine.
+#
+# Run with:
+#   substrate-inference                     # looks for substrate.toml in the current directory
+#   substrate-inference /path/to/inference.toml  # explicit config path
+
+# ---------------------------------------------------------------------------
+# Core settings
+# ---------------------------------------------------------------------------
+
+# Root directory for all substrate data:
+# - SQLite database:   data_dir/substrate.db
+# - Model weights:     data_dir/models/
+# - KV cache:          data_dir/kvcache/
+data_dir = "~/.substrate"
+
+# Path to a pre-installed llama-server binary.
+# Leave empty (the default) to AUTO-PROVISION the correct llama.cpp build for this
+# platform (Metal on Apple Silicon, CUDA on NVIDIA Linux, AVX2 CPU otherwise).
+# The binary is downloaded from https://github.com/ggml-org/llama.cpp/releases and
+# cached under data_dir/backends/llama-<version>/.
+llama_server_bin = ""
+
+# llama.cpp release to provision when llama_server_bin is empty.
+# "latest" resolves the newest GitHub release; or pin a build tag like "b4935".
+llama_version = "latest"
+
+# GPU layer offload passed to llama-server (--n-gpu-layers).
+#  -1 = offload all layers to the GPU (default; Metal/CUDA)
+#   0 = CPU only
+n_gpu_layers = -1
+
+# Context window size in tokens passed to llama-server (--ctx-size).
+context_size = 4096
+
+# Address and port for the substrate inference API server.
+# Use 127.0.0.1 to restrict to localhost (recommended for single-node).
+# Use 0.0.0.0 if the mesh proxy runs on a different machine.
+api_bind = "127.0.0.1:8420"
+
+# Port for the internal llama-server process (must not conflict with api_bind).
+llama_server_port = 8421
+
+# Maximum number of completions to run in parallel.
+# Set to 1 for a single-slot GPU with high memory pressure.
+# Set to 4-8 for a GPU with ample VRAM relative to model size.
+max_concurrent_completions = 4
+
+# Hugging Face API token (required for gated models like Llama 3).
+# Set via environment variable if preferred: HF_TOKEN
+# hf_token = "hf_your_token_here"
+
+# ---------------------------------------------------------------------------
+# Resource limits
+# ---------------------------------------------------------------------------
+
+[resource_limits]
+
+# Maximum total bytes of model weight files to keep on disk.
+# LRU eviction removes the least-recently-used model when this is exceeded.
+# Default: 40 GB
+model_weights_budget_bytes = 42949672960
+
+# Maximum total bytes of KV cache blobs to keep on disk.
+# LRU eviction applies.
+# Default: 10 GB
+kv_cache_budget_bytes = 10737418240
+
+# Memory pressure at which admission is throttled (reduce concurrency).
+# 0.90 = 90% RAM used.
+memory_soft_pct = 0.90
+
+# Memory pressure at which no new completions are admitted.
+# 0.95 = 95% RAM used.
+memory_hard_pct = 0.95
+
+# ---------------------------------------------------------------------------
+# Completion defaults
+# (used when the request doesn't specify a value)
+# ---------------------------------------------------------------------------
+
+[defaults]
+
+# Maximum tokens to generate if not specified by the caller.
+max_tokens = 4096
+
+# Maximum number of times a completion can be preempted before failing.
+max_preemption_count = 100
+
+# Maximum number of times to retry a completion after a transient error.
+error_retry_limit = 3
+
+# ---------------------------------------------------------------------------
+# Models
+# (add one [[models]] section per model you want to register)
+# ---------------------------------------------------------------------------
+
+# Example: Qwen3.6-30B-A3B (MoE, fits in ~20 GB VRAM)
+[[models]]
+id = "qwen3.6-30b-a3b-q4"
+source = "hf:Qwen/Qwen3.6-30B-A3B-GGUF/qwen3.6-30b-a3b.Q4_K_M.gguf"
+prompt_template = "{prompt}"
+context_length = 262144
+# n_gpu_layers = -1     # -1 = offload all layers (default)
+# max_slots = 4         # override node-level max_concurrent_completions
+
+# Example: Llama 3.1 8B Instruct (fits in ~6 GB VRAM)
+# [[models]]
+# id = "llama-3.1-8b-instruct-q8"
+# source = "hf:meta-llama/Meta-Llama-3.1-8B-Instruct-GGUF/Meta-Llama-3.1-8B-Instruct-Q8_0.gguf"
+# prompt_template = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n"
+# context_length = 131072
+
+# Example: local GGUF file (no download needed)
+# [[models]]
+# id = "my-local-model"
+# source = "file:///Users/me/models/my-model.Q4_K_M.gguf"
+# prompt_template = "{prompt}"
+# context_length = 4096

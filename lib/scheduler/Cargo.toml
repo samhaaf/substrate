@@ -1,0 +1,16 @@
+[package]
+name = "substrate-scheduler"
+description = "Scheduling loop: queue management, admission control, swap evaluation, and pluggable selection policies"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+substrate-types     = { workspace = true }
+substrate-store     = { workspace = true }
+substrate-engine    = { workspace = true }
+substrate-telemetry = { workspace = true }
+tokio               = { workspace = true }
+serde_json          = { workspace = true }
+anyhow              = { workspace = true }
+thiserror           = { workspace = true }
+tracing             = { workspace = true }

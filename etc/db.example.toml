@@ -1,0 +1,39 @@
+# db.toml — the single project-root config for the `db` utility.
+# Copy to your project root as `db.toml`. Secrets NEVER live here: PAT / service-role
+# come from the OS keychain at runtime. See substrate-db design §2.
+
+default_env = "local"
+
+[dirs]
+migrations    = "db/migrations"            # per-schema subdirs: public/ core/ mind/ ops/
+seeds         = "db/seeds"                 # {public,core,mind}.sql curated dataset
+handlers      = "db/handlers"              # one contract file per handler version
+edge          = "supabase/functions"       # TS edge sources, deployed as _vN
+bundles       = "db/.bundles"              # content-addressed built edge bundles (git-ignored)
+generated_sql = "db/generated"             # codegen: typed SQL wrappers + trigger bodies
+generated_ts  = "supabase/functions/_generated"
+
+[schema_map]
+public = { rls = true }
+mind   = { rls = true }
+core   = { rls = false }
+
+[safety]
+# PROD identity is the project_ref allow-list, NOT the driver kind and NOT a mutable
+# `prod=true` flag. crawl + any destructive op REFUSE against any env whose project_ref
+# is in this set.
+protected_refs = ["imexvxagmmnsrtobbnhp"]
+confirm_phrase = "promote prod"
+
+[env.local]
+driver      = "supabase-local"
+project_dir = "."
+
+[env.sqlite]
+driver = "sqlite"
+path   = ".db/local.sqlite"
+
+[env.prod]
+driver      = "supabase-cloud"
+project_ref = "imexvxagmmnsrtobbnhp"
+mgmt_api    = true

@@ -1,0 +1,5 @@
+bind_addr = "0.0.0.0:8400"
+inference_url = "http://127.0.0.1:8420"
+gc_url = "http://127.0.0.1:8430"
+static_dir = "ui/dashboard/dist"
+node_id = "local"

@@ -1,0 +1,67 @@
+# substrate mesh proxy configuration
+# Copy to mesh.toml and edit.
+#
+# Run with:
+#   substrate-mesh                     # looks for mesh.toml in the current directory
+#   substrate-mesh /path/to/mesh.toml  # explicit config path
+#
+# The mesh proxy exposes the SAME API as the node. Clients don't change when
+# you add more nodes or change the routing strategy.
+
+# ---------------------------------------------------------------------------
+# API server
+# ---------------------------------------------------------------------------
+
+# Address for the user-facing mesh proxy API.
+# Clients connect here instead of connecting to nodes directly.
+# Use 0.0.0.0 to accept from any machine.
+api_bind = "0.0.0.0:8419"
+
+# ---------------------------------------------------------------------------
+# Routing
+# ---------------------------------------------------------------------------
+
+[routing]
+# Strategy for selecting which node handles each request.
+#
+# Supported values:
+#   "single"       — all requests go to the first node (current v2 implementation)
+#
+# Planned values (not yet implemented):
+#   "round_robin"  — alternate requests across all nodes
+#   "model_affinity" — route to the node that already has the model loaded
+#   "least_loaded" — route to the node with the fewest running completions
+strategy = "single"
+
+# ---------------------------------------------------------------------------
+# Nodes (static list)
+# ---------------------------------------------------------------------------
+# Add one [[nodes]] section per substrate node daemon.
+# The mesh proxy will route requests to these nodes.
+
+# Example: single local node (node and mesh on the same machine)
+[[nodes]]
+name = "local"
+url = "http://127.0.0.1:8420"
+
+# Example: remote node on a GPU machine
+# [[nodes]]
+# name = "gpu-box-1"
+# url = "http://192.168.1.42:8420"
+
+# Example: node accessible via Tailscale
+# [[nodes]]
+# name = "gpu-m4-ultra"
+# url = "http://gpu-m4-ultra:8420"
+
+# ---------------------------------------------------------------------------
+# Discovery (future: Tailscale auto-discovery)
+# ---------------------------------------------------------------------------
+# When enabled, the mesh discovers substrate nodes automatically by querying
+# the Tailscale network. This replaces the static [[nodes]] list.
+# This is NOT yet implemented — the section is here as a schema preview.
+
+# [discovery]
+# method = "tailscale"
+# network = "substrate-mesh"
+# default_port = 8420

@@ -1,0 +1,27 @@
+[package]
+name = "substrate-engine"
+description = "Execution engine: owns the llama-server child process, slot management, and the InferenceBackend trait seam"
+version.workspace = true
+edition.workspace = true
+
+[dev-dependencies]
+uuid = { workspace = true }
+
+[dependencies]
+substrate-types = { workspace = true }
+substrate-store = { workspace = true }
+tokio           = { workspace = true }
+tokio-stream    = { workspace = true }
+chrono          = { workspace = true }
+futures         = { workspace = true }
+reqwest         = { workspace = true }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+anyhow          = { workspace = true }
+thiserror       = { workspace = true }
+async-trait     = { workspace = true }
+tracing         = { workspace = true }
+zip             = { workspace = true }
+tar             = { workspace = true }
+flate2          = { workspace = true }
+substrate-gc    = { workspace = true }

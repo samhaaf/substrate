@@ -1,0 +1,16 @@
+[package]
+name = "substrate-telemetry"
+description = "System state sampling (CPU, memory, GPU stub) and polynomial throughput estimator from benchmark data"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+substrate-types = { workspace = true }
+substrate-store = { workspace = true }
+sysinfo         = { workspace = true }
+nalgebra        = { workspace = true }
+chrono          = { workspace = true }
+tokio           = { workspace = true }
+anyhow          = { workspace = true }
+thiserror       = { workspace = true }
+tracing         = { workspace = true }

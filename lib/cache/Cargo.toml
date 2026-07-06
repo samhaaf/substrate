@@ -1,0 +1,15 @@
+[package]
+name = "substrate-cache"
+description = "Disk-backed KV/prefix cache manager: budget enforcement, TTL + LRU eviction, metadata in SQLite"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+substrate-types = { workspace = true }
+substrate-store = { workspace = true }
+tokio           = { workspace = true }
+anyhow          = { workspace = true }
+thiserror       = { workspace = true }
+tracing         = { workspace = true }
+chrono          = { workspace = true }
+substrate-gc    = { workspace = true }

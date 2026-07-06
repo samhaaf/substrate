@@ -1,0 +1,21 @@
+[package]
+name = "substrate-mesh"
+description = "Mesh proxy core: routing, load balancing, and node discovery stubs; isolated from node internals (HTTP boundary only)"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+substrate-types = { workspace = true }
+axum            = { workspace = true }
+tower           = { workspace = true }
+tower-http      = { workspace = true }
+reqwest         = { workspace = true }
+tokio           = { workspace = true }
+tokio-stream    = { workspace = true }
+futures         = { workspace = true }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+toml            = { workspace = true }
+anyhow          = { workspace = true }
+thiserror       = { workspace = true }
+tracing         = { workspace = true }

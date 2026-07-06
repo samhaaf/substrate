@@ -1,0 +1,13 @@
+[package]
+name = "substrate-types"
+description = "Zero-dependency foundation crate: all shared types, IDs, enums, errors, and promise mechanism"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+uuid       = { workspace = true }
+chrono     = { workspace = true }
+thiserror  = { workspace = true }
+tokio      = { workspace = true }
