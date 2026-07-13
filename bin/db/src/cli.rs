@@ -81,6 +81,10 @@ pub enum Command {
     #[command(subcommand)]
     Edge(EdgeCmd),
 
+    /// Supabase Vault secret management (set / list / get / rm).
+    #[command(subcommand)]
+    Vault(VaultCmd),
+
     /// Ad-hoc query (read-only default; --write crosses the safety gate).
     Query {
         /// The SQL to run (or use -f).
@@ -275,6 +279,29 @@ pub enum EdgeCmd {
         #[arg(long)]
         tail: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum VaultCmd {
+    /// Create a secret, or update the existing one with the same name, in place.
+    /// MUTATING: prod-guarded (needs --i-understand-prod on a protected ref) + --dry-run.
+    Set {
+        name: String,
+        value: String,
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// List secret names + descriptions (NEVER the decrypted values).
+    List,
+    /// Print a secret's DECRYPTED value. Requires the explicit --reveal flag.
+    Get {
+        name: String,
+        /// Reveal the decrypted plaintext (required; guards against accidental exposure).
+        #[arg(long)]
+        reveal: bool,
+    },
+    /// Remove a secret by name. MUTATING: prod-guarded + --dry-run.
+    Rm { name: String },
 }
 
 #[derive(Debug, Subcommand)]

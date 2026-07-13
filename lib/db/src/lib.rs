@@ -27,6 +27,7 @@
 //! - [`promote`]     — the promote invariant gate + `doctor`
 //! - [`snapshot`]    — full-database catastrophic-recovery snapshot (create-only)
 //! - [`tree`]        — worktree stage envs + reap-safety (M7)
+//! - [`vault`]       — Supabase Vault secret management (set/list/get/rm)
 
 pub mod audit;
 pub mod config;
@@ -43,6 +44,7 @@ pub mod promote;
 pub mod query;
 pub mod snapshot;
 pub mod tree;
+pub mod vault;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

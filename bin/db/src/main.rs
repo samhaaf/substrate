@@ -18,7 +18,7 @@ use substrate_db::{migration, Db};
 
 use cli::{
     Cli, Command, ConfigCmd, EdgeCmd, FakedataCmd, HandlerCmd, InspectCmd, LocalCmd, LogsCmd,
-    MigrateCmd, OutboxCmd, OutputFormat, SeedCmd, TreeCmd,
+    MigrateCmd, OutboxCmd, OutputFormat, SeedCmd, TreeCmd, VaultCmd,
 };
 
 #[tokio::main]
@@ -114,6 +114,9 @@ async fn dispatch(db: &Db, cli: &Cli, dry_run: bool, fmt: OutputFormat) -> Resul
         // ── handlers / edge ─────────────────────────────────────────────────
         Command::Handler(h) => handler_cmd(db, h, dry_run).await?,
         Command::Edge(e) => edge_cmd(db, e, dry_run).await?,
+
+        // ── vault (secret management) ───────────────────────────────────────
+        Command::Vault(v) => vault_cmd(db, v, dry_run, override_ref, fmt).await?,
 
         // ── query / inspect ─────────────────────────────────────────────────
         Command::Query { sql, file, write } => {
@@ -765,6 +768,75 @@ async fn outbox_cmd(db: &Db, o: &OutboxCmd, fmt: OutputFormat) -> Result<()> {
                 "drained: fired={} failed={} skipped_quarantined={}",
                 report.fired, report.failed, report.skipped_quarantined
             );
+        }
+    }
+    Ok(())
+}
+
+/// `db vault …` — Supabase Vault secret management (design: a fundamental for edge
+/// functions). `set`/`rm` are MUTATING: they pass the single overridable protected-ref
+/// guard (`--i-understand-prod <ref>`) and honour `--dry-run` (print the intended change,
+/// write nothing). `list`/`get` are read-only; `get` additionally requires `--reveal` to
+/// decrypt. Values flow to the driver as bound params (never interpolated).
+async fn vault_cmd(
+    db: &Db,
+    v: &VaultCmd,
+    dry_run: bool,
+    override_ref: Option<&str>,
+    fmt: OutputFormat,
+) -> Result<()> {
+    let d = db.driver();
+    let env = db.env_token.as_str();
+    match v {
+        VaultCmd::Set { name, value, description } => {
+            db.guard_mutating_migrate("vault set", override_ref, dry_run).map_err(anyhow_err)?;
+            if dry_run {
+                println!(
+                    "DRY RUN — would set vault secret '{name}'{} in env {}; no write performed.",
+                    description
+                        .as_deref()
+                        .map(|d| format!(" (description: {d})"))
+                        .unwrap_or_default(),
+                    db.env_token
+                );
+                return Ok(());
+            }
+            let outcome = substrate_db::vault::set(d, env, name, value, description.as_deref())
+                .await
+                .map_err(anyhow_err)?;
+            println!("{outcome} vault secret '{name}' in env {}", db.env_token);
+        }
+        VaultCmd::List => {
+            let rows = substrate_db::vault::list(d, env).await.map_err(anyhow_err)?;
+            print_rows(&rows, fmt);
+        }
+        VaultCmd::Get { name, reveal } => {
+            if !*reveal {
+                anyhow::bail!(
+                    "refusing to decrypt vault secret '{name}' without --reveal (this prints the \
+                     plaintext to stdout)"
+                );
+            }
+            match substrate_db::vault::get(d, env, name).await.map_err(anyhow_err)? {
+                Some(val) => println!("{val}"),
+                None => anyhow::bail!("no vault secret named '{name}' in env {}", db.env_token),
+            }
+        }
+        VaultCmd::Rm { name } => {
+            db.guard_mutating_migrate("vault rm", override_ref, dry_run).map_err(anyhow_err)?;
+            if dry_run {
+                println!(
+                    "DRY RUN — would remove vault secret '{name}' from env {}; no write performed.",
+                    db.env_token
+                );
+                return Ok(());
+            }
+            let existed = substrate_db::vault::remove(d, env, name).await.map_err(anyhow_err)?;
+            if existed {
+                println!("removed vault secret '{name}' from env {}", db.env_token);
+            } else {
+                println!("no vault secret named '{name}' in env {} (nothing removed)", db.env_token);
+            }
         }
     }
     Ok(())

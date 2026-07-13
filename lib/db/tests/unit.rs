@@ -759,6 +759,59 @@ fn u_query_is_write_classification() {
     assert!(is_write("DROP TABLE t"));
 }
 
+// ── A.8 Vault secret management ───────────────────────────────────────────────
+
+// U-VAULT-01: sqlite has no Supabase Vault → every vault op is a typed NotImplemented
+// (mirrors the outbox degradation), never a confusing deep runtime error.
+#[tokio::test]
+async fn u_vault_01_sqlite_not_implemented() {
+    use substrate_db::vault;
+    let d = SqliteDriver::open_in_memory().unwrap();
+    let is_not_impl = |e: &substrate_types::SubstrateError| {
+        matches!(e, substrate_types::SubstrateError::NotImplemented { driver, .. } if *driver == "sqlite")
+    };
+    assert!(is_not_impl(&vault::list(&d, "").await.unwrap_err()));
+    assert!(is_not_impl(&vault::get(&d, "", "k").await.unwrap_err()));
+    assert!(is_not_impl(&vault::set(&d, "", "k", "v", None).await.unwrap_err()));
+    assert!(is_not_impl(&vault::remove(&d, "", "k").await.unwrap_err()));
+    assert!(is_not_impl(&vault::exists(&d, "", "k").await.unwrap_err()));
+}
+
+// U-VAULT-02: the reference expression a migration/handler embeds reads the DECRYPTED
+// view by name and single-quote-escapes the name (never raw interpolation of a `'`).
+#[test]
+fn u_vault_02_reference_sql_shape_and_escaping() {
+    use substrate_db::vault::reference_sql;
+    let r = reference_sql("stripe_key");
+    assert!(r.contains("vault.decrypted_secrets"));
+    assert!(r.contains("decrypted_secret"));
+    assert!(r.contains("name = 'stripe_key'"));
+    // A quote in the name is doubled, not left to break the literal.
+    assert!(reference_sql("o'brien").contains("name = 'o''brien'"));
+}
+
+// U-VAULT-03: setting/removing a vault secret is a MUTATING op — it must route through the
+// SAME overridable protected-ref guard as migrate up/down (refuse on prod w/o override,
+// proceed with the exact ref, --dry-run always allowed). State-light: exercises the guard
+// under the vault op names directly (no DB, no process).
+#[test]
+fn u_vault_03_mutations_are_prod_guarded() {
+    let db = prod_db();
+    for op in ["vault set", "vault rm"] {
+        // Refuse on a protected ref with no override.
+        assert!(db.guard_mutating_migrate(op, None, false).is_err(), "{op} must refuse on prod");
+        // Proceed only with the EXACT protected ref.
+        assert!(
+            db.guard_mutating_migrate(op, Some(PROT_REF), false).is_ok(),
+            "{op} must proceed with the exact --i-understand-prod ref"
+        );
+        // A wrong ref still refuses.
+        assert!(db.guard_mutating_migrate(op, Some("nope"), false).is_err());
+        // --dry-run is always allowed (it never mutates).
+        assert!(db.guard_mutating_migrate(op, None, true).is_ok(), "{op} --dry-run allowed on prod");
+    }
+}
+
 // ── A.7 Snapshot (full catastrophic-recovery backup) ─────────────────────────
 
 use substrate_db::snapshot::{
