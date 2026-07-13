@@ -273,16 +273,20 @@ pub async fn run(db: &Db, opts: &SnapshotOptions) -> Result<SnapshotReport> {
         Err(e) => components.push(Component::failed("schemas", format!("{e}"))),
     }
 
-    // 4. Resolve the dump URL (local exposes it; cloud needs DB_DUMP_URL).
-    let dump_url = std::env::var("DB_DUMP_URL").ok().or_else(|| driver.dump_url());
+    // 4. Resolve HOW to dump (read-only, always). The supabase-cloud driver dumps the
+    //    LINKED project over the CLI access token (`--linked`) — no DB password needed and
+    //    strictly read-only. Every other driver needs a direct Postgres URL (`--db-url`):
+    //    the local Docker stack exposes one; `DB_DUMP_URL` overrides.
+    let dump_source = resolve_dump_source(db);
     let cli_present = supabase_cli_present();
     let project_dir = project_dir_for(db);
 
-    if dump_url.is_none() {
+    if dump_source.is_none() {
         gaps.push(
-            "no dump URL available (DB_DUMP_URL unset and driver exposes none): schema.sql, \
-             data.sql, cron.sql and roles.sql were NOT captured — the SQL-queryable parts \
-             (extensions, grants, cron listing, edge registry) still were"
+            "no dump source available (not the cloud --linked driver, and no dump URL: \
+             DB_DUMP_URL unset and the driver exposes none): schema.sql, data.sql, cron.sql \
+             and roles.sql were NOT captured — the SQL-queryable parts (extensions, grants, \
+             cron listing, edge registry) still were"
                 .to_string(),
         );
     } else if !cli_present {
@@ -294,7 +298,7 @@ pub async fn run(db: &Db, opts: &SnapshotOptions) -> Result<SnapshotReport> {
     }
 
     // 5. pg_dump-backed captures (schema / data / cron / roles) via `supabase db dump`.
-    if let (Some(url), true) = (dump_url.as_deref(), cli_present) {
+    if let (Some(src), true) = (dump_source.as_ref(), cli_present) {
         if app_present.is_empty() {
             components.push(Component::skipped("schema", "no requested app schema present on target"));
             components.push(Component::skipped("data", "no requested app schema present on target"));
@@ -303,14 +307,14 @@ pub async fn run(db: &Db, opts: &SnapshotOptions) -> Result<SnapshotReport> {
             // schema.sql (schema-only is the default).
             let schema_path = out_dir.join("schema.sql");
             components.push(
-                capture_dump(&project_dir, url, &["--schema", &csv], &schema_path, "schema")
+                capture_dump(&project_dir, src, &["--schema", &csv], &schema_path, "schema")
                     .await,
             );
             // data.sql (COPY form — completeness over readability, incl. blob tables).
             let data_path = out_dir.join("data.sql");
             let data_comp = capture_dump(
                 &project_dir,
-                url,
+                src,
                 &["--data-only", "--use-copy", "--schema", &csv],
                 &data_path,
                 "data",
@@ -331,7 +335,7 @@ pub async fn run(db: &Db, opts: &SnapshotOptions) -> Result<SnapshotReport> {
             components.push(
                 capture_dump(
                     &project_dir,
-                    url,
+                    src,
                     &["--data-only", "--schema", "cron", "-x", "cron.job_run_details"],
                     &cron_path,
                     "cron",
@@ -345,11 +349,11 @@ pub async fn run(db: &Db, opts: &SnapshotOptions) -> Result<SnapshotReport> {
         // roles.sql — cluster roles + grants DDL.
         let roles_path = out_dir.join("roles.sql");
         components.push(
-            capture_dump(&project_dir, url, &["--role-only"], &roles_path, "roles").await,
+            capture_dump(&project_dir, src, &["--role-only"], &roles_path, "roles").await,
         );
     } else {
         for n in ["schema", "data", "cron", "roles"] {
-            components.push(Component::skipped(n, "no dump URL / supabase CLI (see gaps)"));
+            components.push(Component::skipped(n, "no dump source / supabase CLI (see gaps)"));
         }
     }
 
@@ -411,27 +415,82 @@ const GRANTS_SQL: &str = "SELECT table_schema, table_name, grantee, privilege_ty
      WHERE table_schema IN ('public','core','mind','workshop','ops','actions') \
      ORDER BY 1,2,3,4";
 
-/// Run `supabase db dump --db-url <url> -f <out> <extra…>` (a version-matched pg_dump) and
-/// turn the result into a [`Component`]. Read-only against the source.
+/// How `supabase db dump` authenticates to the source — always READ-ONLY (dumps only).
+enum DumpSource {
+    /// A direct Postgres URL (`--db-url`) — the local Docker stack exposes one; the cloud
+    /// DB password is not in this crate, so cloud never uses this.
+    DbUrl(String),
+    /// The linked cloud project (`--linked`) — dumps prod read-only over the Supabase CLI's
+    /// access token, no direct DB password required.
+    Linked,
+}
+
+impl DumpSource {
+    /// The auth args prepended to every `supabase db dump` invocation for this source.
+    fn auth_args(&self) -> Vec<String> {
+        match self {
+            DumpSource::DbUrl(url) => vec!["--db-url".into(), url.clone()],
+            DumpSource::Linked => vec!["--linked".into()],
+        }
+    }
+    /// Short label recorded in the manifest detail.
+    fn label(&self) -> &'static str {
+        match self {
+            DumpSource::DbUrl(_) => "--db-url",
+            DumpSource::Linked => "--linked",
+        }
+    }
+}
+
+/// Whether this driver dumps the LINKED cloud project (`supabase db dump --linked`, the
+/// read-only access-token path) rather than a direct `--db-url`. True ONLY for the
+/// supabase-cloud driver: prod's direct DB password is not in this crate, so the linked
+/// access-token dump is the only read-only way to capture its schema + data.
+pub fn dumps_via_linked(kind: DriverKind) -> bool {
+    kind == DriverKind::SupabaseCloud
+}
+
+/// Pick the dump source for this env: the cloud driver dumps the LINKED project read-only
+/// over the CLI access token; every other driver needs a direct `--db-url` (`DB_DUMP_URL`
+/// overrides, else the driver may expose one — local does).
+fn resolve_dump_source(db: &Db) -> Option<DumpSource> {
+    if dumps_via_linked(db.driver_kind()) {
+        Some(DumpSource::Linked)
+    } else {
+        std::env::var("DB_DUMP_URL")
+            .ok()
+            .or_else(|| db.driver().dump_url())
+            .map(DumpSource::DbUrl)
+    }
+}
+
+/// Run `supabase db dump <auth> -f <out> <extra…>` (a version-matched pg_dump) and turn the
+/// result into a [`Component`]. Read-only against the source — a `--linked` cloud dump uses
+/// the CLI access token and never needs the prod DB password.
 async fn capture_dump(
     project_dir: &str,
-    db_url: &str,
+    source: &DumpSource,
     extra: &[&str],
     out: &Path,
     name: &str,
 ) -> Component {
-    let out_str = match out.to_str() {
+    // Resolve to an ABSOLUTE output path: `--linked` runs from the linked project dir, which
+    // may differ from the snapshot's cwd, so a relative `-f` would land in the wrong place.
+    let abs_out = if out.is_absolute() {
+        out.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|c| c.join(out))
+            .unwrap_or_else(|_| out.to_path_buf())
+    };
+    let out_str = match abs_out.to_str() {
         Some(s) => s.to_string(),
         None => return Component::failed(name, "non-utf8 output path"),
     };
-    let mut args: Vec<String> = vec![
-        "db".into(),
-        "dump".into(),
-        "--db-url".into(),
-        db_url.into(),
-        "-f".into(),
-        out_str,
-    ];
+    let mut args: Vec<String> = vec!["db".into(), "dump".into()];
+    args.extend(source.auth_args());
+    args.push("-f".into());
+    args.push(out_str);
     args.extend(extra.iter().map(|s| s.to_string()));
 
     let output = Command::new("supabase")
@@ -441,10 +500,10 @@ async fn capture_dump(
         .await;
     match output {
         Ok(o) if o.status.success() => {
-            let bytes = std::fs::metadata(out).map(|m| m.len()).unwrap_or(0);
+            let bytes = std::fs::metadata(&abs_out).map(|m| m.len()).unwrap_or(0);
             Component::captured(
                 name,
-                format!("supabase db dump {}", extra.join(" ")),
+                format!("supabase db dump {} {}", source.label(), extra.join(" ")),
                 vec![out.file_name().unwrap_or_default().to_string_lossy().into_owned()],
                 bytes,
             )
@@ -695,16 +754,18 @@ fn supabase_cli_present() -> bool {
         .unwrap_or(false)
 }
 
-/// The dir to run `supabase db dump` from — the project dir for a supabase-local env,
-/// else the current dir.
+/// The dir to run `supabase db dump` from. For a local env it is the Docker project dir;
+/// for a cloud env it is the dir where `supabase link` was run (the linked project holds
+/// `supabase/.temp/` there) — configurable via the env's `project_dir`, defaulting to the
+/// current dir (the operator runs `db` from the linked project root). sqlite/other → cwd.
 fn project_dir_for(db: &Db) -> String {
-    if db.driver_kind() == DriverKind::SupabaseLocal {
-        db.config
+    match db.driver_kind() {
+        DriverKind::SupabaseLocal | DriverKind::SupabaseCloud => db
+            .config
             .env(&db.env_name)
             .ok()
             .and_then(|e| e.project_dir.clone())
-            .unwrap_or_else(|| ".".to_string())
-    } else {
-        ".".to_string()
+            .unwrap_or_else(|| ".".to_string()),
+        _ => ".".to_string(),
     }
 }

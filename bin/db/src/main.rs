@@ -109,8 +109,8 @@ async fn dispatch(db: &Db, cli: &Cli, dry_run: bool, fmt: OutputFormat) -> Resul
         Command::Fakedata(f) => fakedata_cmd(db, f).await?,
 
         // ── handlers / edge ─────────────────────────────────────────────────
-        Command::Handler(h) => handler_cmd(db, h).await?,
-        Command::Edge(e) => edge_cmd(db, e).await?,
+        Command::Handler(h) => handler_cmd(db, h, dry_run).await?,
+        Command::Edge(e) => edge_cmd(db, e, dry_run).await?,
 
         // ── query / inspect ─────────────────────────────────────────────────
         Command::Query { sql, file, write } => {
@@ -277,6 +277,9 @@ async fn migrate_cmd(db: &Db, m: &MigrateCmd, dry_run: bool, fmt: OutputFormat) 
                 edge_incapable: db.driver_kind() == substrate_db::config::DriverKind::Sqlite,
             };
             let mut n = 0;
+            if dry_run {
+                println!("DRY RUN — migrate up plan (no DDL, no ledger writes will happen):");
+            }
             for mm in ordered.iter().filter(|mm| !applied.contains(&mm.id)) {
                 if let Some(to) = to {
                     if mm.seq > *to {
@@ -284,7 +287,7 @@ async fn migrate_cmd(db: &Db, m: &MigrateCmd, dry_run: bool, fmt: OutputFormat) 
                     }
                 }
                 if dry_run {
-                    println!("would apply {}", mm.id);
+                    print_plan_step(n + 1, "apply", mm, "up.sql");
                 } else {
                     migration::apply_one(d, mm, &ctx).await.map_err(anyhow_err)?;
                     println!("applied {}", mm.id);
@@ -296,12 +299,18 @@ async fn migrate_cmd(db: &Db, m: &MigrateCmd, dry_run: bool, fmt: OutputFormat) 
             }
             if n == 0 {
                 println!("nothing to apply");
+            } else if dry_run {
+                println!("\nplan: {n} migration(s) WOULD apply; nothing was changed.");
             }
         }
         MigrateCmd::Down { to, one } => {
             let migs = migration::discover(mig_dir).map_err(anyhow_err)?;
             let ordered = migration::topo_order(&migs).map_err(anyhow_err)?;
             let applied = migration::applied_ids(d, env).await.map_err(anyhow_err)?;
+            if dry_run {
+                println!("DRY RUN — migrate down plan (no DDL, no ledger writes will happen):");
+            }
+            let mut n = 0;
             for mm in ordered.iter().rev().filter(|mm| applied.contains(&mm.id)) {
                 if let Some(to) = to {
                     if mm.seq <= *to {
@@ -309,13 +318,21 @@ async fn migrate_cmd(db: &Db, m: &MigrateCmd, dry_run: bool, fmt: OutputFormat) 
                     }
                 }
                 if dry_run {
-                    println!("would roll back {}", mm.id);
+                    print_plan_step(n + 1, "roll back", mm, "down.sql");
                 } else {
                     migration::rollback_one(d, mm, env).await.map_err(anyhow_err)?;
                     println!("rolled back {}", mm.id);
                 }
+                n += 1;
                 if *one {
                     break;
+                }
+            }
+            if dry_run {
+                if n == 0 {
+                    println!("nothing to roll back");
+                } else {
+                    println!("\nplan: {n} migration(s) WOULD roll back; nothing was changed.");
                 }
             }
         }
@@ -489,7 +506,7 @@ async fn fakedata_cmd(db: &Db, f: &FakedataCmd) -> Result<()> {
     Ok(())
 }
 
-async fn handler_cmd(db: &Db, h: &HandlerCmd) -> Result<()> {
+async fn handler_cmd(db: &Db, h: &HandlerCmd, dry_run: bool) -> Result<()> {
     let handlers_dir = Path::new(&db.config.dirs.handlers);
     match h {
         HandlerCmd::New { name, kind, invocation } => {
@@ -549,6 +566,14 @@ async fn handler_cmd(db: &Db, h: &HandlerCmd) -> Result<()> {
             }
         }
         HandlerCmd::Activate { name, version } => {
+            if dry_run {
+                println!(
+                    "DRY RUN — would activate handler {name} = {version} in env {} \
+                     (one-row ops.handler_active pointer flip); no registry write performed.",
+                    db.env_token
+                );
+                return Ok(());
+            }
             db.driver().activate_handler(&db.env_token, name, version).await.map_err(anyhow_err)?;
             println!("activated {name} = {version} in env {}", db.env_token);
         }
@@ -556,6 +581,14 @@ async fn handler_cmd(db: &Db, h: &HandlerCmd) -> Result<()> {
             // Finding 8: a real one-row pointer-flip to the prior version (§7.3), for the
             // active env. Refused on a protected ref unless the safety gate is crossed.
             db.refuse_if_protected("handler rollback").map_err(anyhow_err)?;
+            if dry_run {
+                println!(
+                    "DRY RUN — would roll handler {name} back to its prior version in env {} \
+                     (one-row ops.handler_active pointer flip); no registry write performed.",
+                    db.env_token
+                );
+                return Ok(());
+            }
             db.driver()
                 .rollback_handler(&db.env_token, name)
                 .await
@@ -566,7 +599,7 @@ async fn handler_cmd(db: &Db, h: &HandlerCmd) -> Result<()> {
     Ok(())
 }
 
-async fn edge_cmd(db: &Db, e: &EdgeCmd) -> Result<()> {
+async fn edge_cmd(db: &Db, e: &EdgeCmd, dry_run: bool) -> Result<()> {
     let d = db.driver();
     let env = db.env_token.as_str();
     if !d.capabilities().edge {
@@ -584,6 +617,14 @@ async fn edge_cmd(db: &Db, e: &EdgeCmd) -> Result<()> {
         }
         EdgeCmd::Deploy { name } => {
             let src = Path::new(&db.config.dirs.edge).join(name);
+            if dry_run {
+                println!(
+                    "DRY RUN — would deploy edge function {name} (slug {name}_v1) from {} \
+                     to env {env}; no bundle built or stored, no remote deploy performed.",
+                    src.display()
+                );
+                return Ok(());
+            }
             let bundle = substrate_db::edge::build_and_store(&src, Path::new(&db.config.dirs.bundles))
                 .map_err(anyhow_err)?;
             let deploy = d.deploy_edge(env, name, "v1", &bundle).await.map_err(anyhow_err)?;
@@ -600,6 +641,13 @@ async fn edge_cmd(db: &Db, e: &EdgeCmd) -> Result<()> {
             print_rows(&rows, OutputFormat::Table);
         }
         EdgeCmd::Activate { name, version } => {
+            if dry_run {
+                println!(
+                    "DRY RUN — would activate edge {name} = {version} in env {env} \
+                     (one-row registry pointer flip); no registry write performed."
+                );
+                return Ok(());
+            }
             d.activate_handler(env, name, version).await.map_err(anyhow_err)?;
             println!("activated edge {name} = {version}");
         }
@@ -607,6 +655,13 @@ async fn edge_cmd(db: &Db, e: &EdgeCmd) -> Result<()> {
             // Finding 8: real pointer-flip rollback to the prior version (§7.3) — the same
             // one-row UPDATE as `handler rollback`, on the edge-kind handler.
             db.refuse_if_protected("edge rollback").map_err(anyhow_err)?;
+            if dry_run {
+                println!(
+                    "DRY RUN — would roll edge {name} back to its prior version in env {env} \
+                     (one-row registry pointer flip); no registry write performed."
+                );
+                return Ok(());
+            }
             d.rollback_handler(env, name).await.map_err(anyhow_err)?;
             println!("rolled edge {name} back to its prior version in env {env}");
         }
@@ -615,6 +670,13 @@ async fn edge_cmd(db: &Db, e: &EdgeCmd) -> Result<()> {
             // (M3, §7.3), never a rebuild. Look up the deploy's bundle_ref, load the stored
             // bytes, and re-deploy the immutable slug.
             let slug = format!("{name}_{version}");
+            if dry_run {
+                println!(
+                    "DRY RUN — would re-push stored bundle for edge {slug} to env {env}; \
+                     no remote deploy performed."
+                );
+                return Ok(());
+            }
             let rows = d
                 .query(
                     env,
@@ -726,6 +788,21 @@ async fn promote_cmd(db: &Db, to: Option<u32>, confirm: Option<&str>, dry_run: b
         println!("promoted {}", m.id);
     }
     Ok(())
+}
+
+/// Render one ordered step of a `--dry-run` migration plan (Terraform-style): the position,
+/// the action, the migration id + schema, and the exact SQL that WOULD execute (`file` is
+/// `up.sql` for apply / `down.sql` for roll back). No DB access — reads the file on disk.
+fn print_plan_step(pos: usize, action: &str, mm: &migration::Migration, file: &str) {
+    println!("\n  [{pos}] {action} {} (schema {})", mm.id, mm.schema);
+    match mm.read(file) {
+        Some(sql) => {
+            for line in sql.lines() {
+                println!("      | {line}");
+            }
+        }
+        None => println!("      | (no {file} present — nothing would run for this step)"),
+    }
 }
 
 // ── output rendering ────────────────────────────────────────────────────────

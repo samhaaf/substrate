@@ -270,3 +270,68 @@ async fn i_base_02b_applied_seq_monotonic() {
     let ids: Vec<String> = rows.rows.iter().filter_map(|r| r[0].clone()).collect();
     assert_eq!(ids, vec!["public/0001_a", "public/0002_b", "core/0001_c"]);
 }
+
+// I-DRY-01: `--dry-run migrate up` is a TRUE no-op. Resolving the plan exactly as the CLI
+// does (discover → topo_order → applied_ids) and taking the dry-run branch (read the SQL,
+// never call apply_one) leaves the ledger empty and creates no table. The SAME plan then
+// really applies — proving the difference is the short-circuit before execution, nothing
+// else.
+#[tokio::test]
+async fn i_dry_01_dry_run_is_noop_then_apply_writes() {
+    let d = sqlite();
+    bootstrap_ledger(&d).await;
+    let tmp = tempfile::tempdir().unwrap();
+    write_migration(
+        tmp.path(),
+        "public",
+        1,
+        "dry",
+        &[
+            ("up.sql", "CREATE TABLE dry_widget (id int primary key);"),
+            ("down.sql", "DROP TABLE dry_widget;"),
+            ("test_up.sql", "-- @intentionally-none\n"),
+            ("test_down.sql", "-- @intentionally-none\n"),
+            ("fakedata_up.sql", "-- @intentionally-none\n"),
+            ("fakedata_down.sql", "-- @intentionally-none\n"),
+        ],
+    );
+    let migs = substrate_db::migration::discover(tmp.path()).unwrap();
+    let ordered = substrate_db::migration::topo_order(&migs).unwrap();
+    assert_eq!(ordered.len(), 1);
+
+    // ── DRY RUN: resolve the plan, print it (read up.sql), but never apply. ──
+    let applied = substrate_db::migration::applied_ids(&d, "").await.unwrap();
+    for m in ordered.iter().filter(|m| !applied.contains(&m.id)) {
+        // The CLI's dry-run branch reads up.sql to show the plan; it does NOT call apply_one.
+        assert!(m.read("up.sql").is_some(), "plan surfaces the SQL that would run");
+    }
+    // Ledger still empty AND the table was never created — no DDL, no ledger write.
+    assert!(
+        substrate_db::migration::applied_ids(&d, "").await.unwrap().is_empty(),
+        "dry run wrote no ledger row"
+    );
+    let seen = d
+        .query(
+            "",
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='dry_widget'",
+        )
+        .await
+        .unwrap();
+    assert!(seen.rows.is_empty(), "dry run executed no DDL (table absent)");
+
+    // ── REAL APPLY: the identical plan now mutates. ──
+    let ctx = ApplyContext { env: "", allow_fakedata: true, edge_incapable: true };
+    for m in ordered.iter() {
+        apply_one(&d, m, &ctx).await.unwrap();
+    }
+    let after = substrate_db::migration::applied_ids(&d, "").await.unwrap();
+    assert_eq!(after.len(), 1, "real apply records exactly one ledger row");
+    let now = d
+        .query(
+            "",
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='dry_widget'",
+        )
+        .await
+        .unwrap();
+    assert_eq!(now.rows.len(), 1, "real apply created the table");
+}

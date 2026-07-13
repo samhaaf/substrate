@@ -820,3 +820,62 @@ async fn u_snap_06_run_is_robust_and_records_gaps() {
     let edge = m.components.iter().find(|c| c.name == "edge_source").unwrap();
     assert_eq!(edge.status, Status::Skipped);
 }
+
+#[test]
+fn u_snap_07_cloud_dumps_via_linked_others_via_db_url() {
+    // The fix: the supabase-cloud driver dumps the LINKED project read-only over the CLI
+    // access token (no prod DB password needed); every other driver uses a direct --db-url.
+    assert!(
+        snapshot::dumps_via_linked(DriverKind::SupabaseCloud),
+        "cloud must dump the linked project read-only (schema + data + roles)"
+    );
+    assert!(
+        !snapshot::dumps_via_linked(DriverKind::SupabaseLocal),
+        "local uses its direct Docker --db-url"
+    );
+    assert!(
+        !snapshot::dumps_via_linked(DriverKind::Sqlite),
+        "sqlite exposes no supabase dump path"
+    );
+}
+
+#[test]
+fn u_snap_08_manifest_reports_captured_not_false_skipped() {
+    // Regression: the cloud path used to record schema/data/roles as SKIPPED even when a
+    // dump had captured them. The manifest must reflect the ACTUAL per-component outcome —
+    // captured dumps render as `captured`, and no component is listed twice or falsely
+    // skipped.
+    let m = Manifest {
+        tool: "db snapshot vX".into(),
+        env: "prod".into(),
+        driver: "supabase-cloud".into(),
+        project_ref: Some("ref".into()),
+        taken_at: "2026-07-13T17:23:49Z".into(),
+        taken_at_source: "db now()".into(),
+        read_only: true,
+        app_schemas_requested: vec!["public".into(), "core".into()],
+        app_schemas_captured: vec!["public".into(), "core".into()],
+        managed_schemas_present: vec!["auth".into()],
+        total_bytes: 189_511_000,
+        components: vec![
+            component("schema", Status::Captured, "supabase db dump --linked --schema public,core", 507_000),
+            component("data", Status::Captured, "supabase db dump --linked --data-only", 189_000_000),
+            component("roles", Status::Captured, "supabase db dump --linked --role-only", 4_000),
+        ],
+        gaps: vec![],
+    };
+    let md = m.to_markdown();
+    assert!(md.contains("| schema | captured |"), "schema captured, not skipped:\n{md}");
+    assert!(md.contains("| data | captured |"), "data captured, not skipped:\n{md}");
+    assert!(md.contains("| roles | captured |"), "roles captured, not skipped:\n{md}");
+    assert!(
+        !md.contains("skipped"),
+        "no false SKIPPED when every dump was captured:\n{md}"
+    );
+    // Each component name appears exactly once (no captured + skipped double-entry).
+    let mut names: Vec<String> = m.components.iter().map(|c| c.name.clone()).collect();
+    let count = names.len();
+    names.sort();
+    names.dedup();
+    assert_eq!(count, names.len(), "each component recorded once");
+}
