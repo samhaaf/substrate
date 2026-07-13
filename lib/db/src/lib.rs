@@ -124,6 +124,9 @@ impl Db {
 
     /// Refuse an operation against a protected (prod) ref unless explicitly confirmed
     /// (design §9.1). Returns an error when the env is protected.
+    ///
+    /// This is the HARD, NON-OVERRIDABLE refusal — used by `crawl`, the test harness,
+    /// and other destructive paths that may NEVER run against prod under any flag.
     pub fn refuse_if_protected(&self, op: &'static str) -> Result<()> {
         if self.protected {
             Err(SubstrateError::Db(format!(
@@ -132,6 +135,57 @@ impl Db {
             )))
         } else {
             Ok(())
+        }
+    }
+
+    /// The protected (prod) `project_ref` this env resolves to, if any. `None` when the
+    /// active env is not protected. Config-derived, computed without any DB connection.
+    pub fn protected_ref(&self) -> Option<String> {
+        if !self.protected {
+            return None;
+        }
+        self.config
+            .env(&self.env_name)
+            .ok()
+            .and_then(|e| e.project_ref.clone())
+    }
+
+    /// The SINGLE choke-point every mutating `migrate` op (`up`/`down`/`redo`) passes
+    /// through (design §9.1). Fail-closed:
+    ///
+    /// * `--dry-run` is ALWAYS allowed — it never mutates.
+    /// * A non-protected env is always allowed.
+    /// * A protected (prod) env REFUSES by default. It proceeds ONLY when `override_ref`
+    ///   is `Some` and EXACTLY names the protected ref (the deliberate
+    ///   `--i-understand-prod <ref>` path a real promotion / intentional prod op uses).
+    ///   A wrong/absent name is refused so the override can never fire by accident.
+    ///
+    /// Note: this is the OVERRIDABLE guard. Never route `crawl` or the test harness here —
+    /// those use [`refuse_if_protected`], which admits no override.
+    pub fn guard_mutating_migrate(
+        &self,
+        op: &str,
+        override_ref: Option<&str>,
+        dry_run: bool,
+    ) -> Result<()> {
+        // Dry-run and non-protected envs are always allowed — no mutation reaches prod.
+        if dry_run || !self.protected {
+            return Ok(());
+        }
+        let prot = self.protected_ref().unwrap_or_default();
+        match override_ref {
+            Some(r) if r == prot => Ok(()),
+            Some(r) => Err(SubstrateError::Db(format!(
+                "{op} refused: --i-understand-prod \"{r}\" does not name the protected (prod) \
+                 ref for env {} (expected exactly \"{prot}\")",
+                self.env_name
+            ))),
+            None => Err(SubstrateError::Db(format!(
+                "{op} is refused against protected (prod) ref \"{prot}\" for env {}. This is a \
+                 deliberate prod-mutating op: re-run with --i-understand-prod \"{prot}\" to \
+                 authorize it, or use --dry-run to preview without mutating.",
+                self.env_name
+            ))),
         }
     }
 

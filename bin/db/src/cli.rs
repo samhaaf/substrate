@@ -15,6 +15,12 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub dry_run: bool,
 
+    /// Deliberate prod override: to authorize a mutating migrate op (`up`/`down`/`redo`)
+    /// against the protected (prod) ref, pass this flag naming that ref EXACTLY. Never
+    /// bypasses `crawl` or the test harness (those refuse on prod unconditionally).
+    #[arg(long, global = true)]
+    pub i_understand_prod: Option<String>,
+
     /// Output format.
     #[arg(long, global = true, value_enum, default_value_t = OutputFormat::Table)]
     pub format: OutputFormat,

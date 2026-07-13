@@ -115,6 +115,86 @@ async fn u_safe_04_local_reset_refused_on_protected() {
     assert!(res.is_err(), "local reset must be refused outright on a protected ref (§9.2)");
 }
 
+// I-SAFE-05: the SINGLE choke-point for mutating migrate ops (`up`/`down`/`redo`).
+// Fail-closed on a protected ref, overridable ONLY by the exact protected ref name.
+// State-light: exercises `Db::guard_mutating_migrate` directly (no DB, no process).
+const PROT_REF: &str = "TEST_ONLY_ref_never_real";
+
+fn prod_db() -> substrate_db::Db {
+    let c = DbConfig::from_str(FX_TOML_BASE).unwrap();
+    // 'prod' points at the FAKE protected ref (never the real one).
+    substrate_db::Db::open(c, "prod", Some("fake-pat".into())).unwrap()
+}
+
+#[test]
+fn u_safe_05_mutating_migrate_refused_on_prod_without_override() {
+    let db = prod_db();
+    // down / up / redo all refuse by default on a protected ref (no override given).
+    for op in ["migrate down", "migrate up", "migrate redo"] {
+        let r = db.guard_mutating_migrate(op, None, false);
+        assert!(r.is_err(), "{op} must refuse on prod without override");
+        assert!(
+            r.unwrap_err().to_string().contains(PROT_REF),
+            "{op} refusal must name the protected ref and how to override"
+        );
+    }
+}
+
+#[test]
+fn u_safe_06_mutating_migrate_proceeds_with_exact_override() {
+    let db = prod_db();
+    for op in ["migrate down", "migrate up", "migrate redo"] {
+        assert!(
+            db.guard_mutating_migrate(op, Some(PROT_REF), false).is_ok(),
+            "{op} must proceed with the exact --i-understand-prod ref"
+        );
+    }
+}
+
+#[test]
+fn u_safe_07_mutating_migrate_refused_with_wrong_override() {
+    let db = prod_db();
+    // A WRONG ref name must NOT satisfy the override — no accidental firing.
+    let r = db.guard_mutating_migrate("migrate down", Some("some_other_ref"), false);
+    assert!(r.is_err(), "a wrong --i-understand-prod ref must still refuse");
+    // Empty string is likewise not the ref.
+    assert!(db.guard_mutating_migrate("migrate down", Some(""), false).is_err());
+}
+
+#[test]
+fn u_safe_08_dry_run_always_allowed_no_override() {
+    let db = prod_db();
+    // --dry-run is always allowed on a protected ref (it never mutates), no override.
+    for op in ["migrate down", "migrate up", "migrate redo"] {
+        assert!(
+            db.guard_mutating_migrate(op, None, true).is_ok(),
+            "{op} --dry-run must be allowed on prod (no mutation)"
+        );
+    }
+}
+
+#[test]
+fn u_safe_09_crawl_and_test_never_overridable_on_prod() {
+    let db = prod_db();
+    // crawl + the test harness use the HARD refusal — no flag, no ref name, ever bypasses.
+    assert!(db.refuse_if_protected("migrate crawl").is_err(), "crawl must refuse on prod");
+    assert!(db.refuse_if_protected("test").is_err(), "test harness must refuse on prod");
+    // guard_mutating_migrate is NOT the path crawl/test take; even so, the hard refusal
+    // ignores any override — there is no override parameter on refuse_if_protected.
+    assert_eq!(db.protected_ref().as_deref(), Some(PROT_REF));
+}
+
+#[test]
+fn u_safe_10_guard_noop_on_unprotected_env() {
+    let c = DbConfig::from_str(FX_TOML_BASE).unwrap();
+    let db = substrate_db::Db::open(c, "local", None).unwrap();
+    assert!(!db.protected);
+    assert!(db.protected_ref().is_none());
+    // On a non-protected env the mutating guard is a no-op regardless of override/dry-run.
+    assert!(db.guard_mutating_migrate("migrate down", None, false).is_ok());
+    assert!(db.guard_mutating_migrate("migrate up", Some("anything"), false).is_ok());
+}
+
 // ── A.2 Migration discovery / ordering / graph ───────────────────────────────
 
 fn discover(dir: &std::path::Path) -> Vec<Migration> {

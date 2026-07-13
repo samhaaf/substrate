@@ -84,6 +84,9 @@ fn config_cmd(cfg: &DbConfig, env_name: &str, c: &ConfigCmd) -> Result<()> {
 async fn dispatch(db: &Db, cli: &Cli, dry_run: bool, fmt: OutputFormat) -> Result<()> {
     let d = db.driver();
     let env = db.env_token.as_str();
+    // The deliberate prod override (`--i-understand-prod <ref>`), threaded into the
+    // single mutating-migrate choke-point. Absent for every non-migrate path.
+    let override_ref = cli.i_understand_prod.as_deref();
 
     match &cli.command {
         Command::Init | Command::Config(_) => unreachable!("handled in run()"),
@@ -96,11 +99,11 @@ async fn dispatch(db: &Db, cli: &Cli, dry_run: bool, fmt: OutputFormat) -> Resul
         Command::Tree(t) => tree_cmd(db, t).await?,
 
         // ── migrations ──────────────────────────────────────────────────────
-        Command::Migrate(m) => migrate_cmd(db, m, dry_run, fmt).await?,
+        Command::Migrate(m) => migrate_cmd(db, m, dry_run, override_ref, fmt).await?,
         Command::Up { to, one } => {
-            migrate_cmd(db, &MigrateCmd::Up { to: *to, one: *one }, dry_run, fmt).await?
+            migrate_cmd(db, &MigrateCmd::Up { to: *to, one: *one }, dry_run, override_ref, fmt).await?
         }
-        Command::Status => migrate_cmd(db, &MigrateCmd::Status, dry_run, fmt).await?,
+        Command::Status => migrate_cmd(db, &MigrateCmd::Status, dry_run, override_ref, fmt).await?,
 
         Command::Test { migration, all } => test_cmd(db, migration.as_deref(), *all).await?,
 
@@ -255,10 +258,43 @@ async fn tree_cmd(db: &Db, t: &TreeCmd) -> Result<()> {
     Ok(())
 }
 
-async fn migrate_cmd(db: &Db, m: &MigrateCmd, dry_run: bool, fmt: OutputFormat) -> Result<()> {
+async fn migrate_cmd(
+    db: &Db,
+    m: &MigrateCmd,
+    dry_run: bool,
+    override_ref: Option<&str>,
+    fmt: OutputFormat,
+) -> Result<()> {
     let d = db.driver();
     let env = db.env_token.as_str();
     let mig_dir = Path::new(&db.config.dirs.migrations);
+
+    // ── SINGLE CHOKE-POINT (design §9.1) ────────────────────────────────────
+    // Every MUTATING migrate arm passes through exactly one guard before any I/O.
+    // Fail-closed: a newly-added mutating arm that is not classified here will not
+    // compile past this match without a decision. Non-mutating arms are explicit no-ops.
+    match m {
+        // Overridable prod ops: refuse on a protected ref unless --i-understand-prod
+        // names it exactly. --dry-run always allowed (never mutates).
+        MigrateCmd::Up { .. } => {
+            db.guard_mutating_migrate("migrate up", override_ref, dry_run).map_err(anyhow_err)?
+        }
+        MigrateCmd::Down { .. } => {
+            db.guard_mutating_migrate("migrate down", override_ref, dry_run).map_err(anyhow_err)?
+        }
+        MigrateCmd::Redo => {
+            db.guard_mutating_migrate("migrate redo", override_ref, dry_run).map_err(anyhow_err)?
+        }
+        // HARD, NON-OVERRIDABLE refusal: crawl must NEVER touch prod under any flag.
+        MigrateCmd::Crawl { .. } => {
+            db.refuse_if_protected("migrate crawl").map_err(anyhow_err)?
+        }
+        // Non-mutating arms: no guard needed.
+        MigrateCmd::New { .. }
+        | MigrateCmd::Status
+        | MigrateCmd::Lint
+        | MigrateCmd::Verify => {}
+    }
 
     match m {
         MigrateCmd::New { name, schema, edge, no_test, no_data } => {
@@ -337,8 +373,8 @@ async fn migrate_cmd(db: &Db, m: &MigrateCmd, dry_run: bool, fmt: OutputFormat) 
             }
         }
         MigrateCmd::Redo => {
-            Box::pin(migrate_cmd(db, &MigrateCmd::Down { to: None, one: true }, dry_run, fmt)).await?;
-            Box::pin(migrate_cmd(db, &MigrateCmd::Up { to: None, one: true }, dry_run, fmt)).await?;
+            Box::pin(migrate_cmd(db, &MigrateCmd::Down { to: None, one: true }, dry_run, override_ref, fmt)).await?;
+            Box::pin(migrate_cmd(db, &MigrateCmd::Up { to: None, one: true }, dry_run, override_ref, fmt)).await?;
         }
         MigrateCmd::Status => {
             let migs = migration::discover(mig_dir).map_err(anyhow_err)?;
@@ -359,7 +395,7 @@ async fn migrate_cmd(db: &Db, m: &MigrateCmd, dry_run: bool, fmt: OutputFormat) 
             print_rows(&rows, fmt);
         }
         MigrateCmd::Crawl { from } => {
-            db.refuse_if_protected("migrate crawl").map_err(anyhow_err)?;
+            // Guarded above at the single choke-point (hard, non-overridable refusal).
             let mut migs = migration::discover(mig_dir).map_err(anyhow_err)?;
             if let Some(from) = from {
                 migs.retain(|mm| mm.seq >= *from);
@@ -401,6 +437,9 @@ async fn migrate_cmd(db: &Db, m: &MigrateCmd, dry_run: bool, fmt: OutputFormat) 
 /// SQL-assert harness — a failing assertion RAISEs and aborts, which surfaces as an error
 /// here (nonzero exit). Sentinel-only test files count as trivially-passing.
 async fn test_cmd(db: &Db, migration: Option<&str>, all: bool) -> Result<()> {
+    // The test harness executes each migration's `test_up.sql` as SQL against the active
+    // env — a destructive path. HARD refuse on a protected ref (never overridable).
+    db.refuse_if_protected("test").map_err(anyhow_err)?;
     let d = db.driver();
     let env = db.env_token.as_str();
     let mig_dir = Path::new(&db.config.dirs.migrations);
