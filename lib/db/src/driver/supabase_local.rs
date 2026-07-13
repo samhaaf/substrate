@@ -24,6 +24,9 @@ use crate::pg::PgClient;
 pub struct SupabaseLocalDriver {
     /// Directory where `supabase/config.toml` lives (for CLI invocations).
     project_dir: String,
+    /// The resolved connection string (kept so the snapshot path can hand it to
+    /// `supabase db dump` / `pg_dump` as a read-only dump source).
+    conn_str: String,
     /// Lazily-connected native Postgres client to the local stack.
     pg: PgClient,
 }
@@ -39,8 +42,19 @@ impl SupabaseLocalDriver {
         });
         Self {
             project_dir: project_dir.into(),
+            conn_str: conn_str.clone(),
             pg: PgClient::new(conn_str),
         }
+    }
+
+    /// The project dir (for CLI invocations like `supabase db dump`).
+    pub fn project_dir(&self) -> &str {
+        &self.project_dir
+    }
+
+    /// The read-only Postgres connection string (dump source).
+    pub fn conn_str(&self) -> &str {
+        &self.conn_str
     }
 
     /// Probe whether the `supabase` CLI is present (sync, like `cuda_present`).
@@ -81,6 +95,10 @@ impl SupabaseLocalDriver {
 impl Driver for SupabaseLocalDriver {
     fn kind(&self) -> DriverKind {
         DriverKind::SupabaseLocal
+    }
+
+    fn dump_url(&self) -> Option<String> {
+        Some(self.conn_str.clone())
     }
 
     fn capabilities(&self) -> Capabilities {

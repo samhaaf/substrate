@@ -25,6 +25,7 @@
 //! - [`introspect`]  — schema introspection SQL
 //! - [`logs`]        — edge / db logs (deferred-heavy)
 //! - [`promote`]     — the promote invariant gate + `doctor`
+//! - [`snapshot`]    — full-database catastrophic-recovery snapshot (create-only)
 //! - [`tree`]        — worktree stage envs + reap-safety (M7)
 
 pub mod audit;
@@ -40,6 +41,7 @@ pub mod outbox;
 pub mod pg;
 pub mod promote;
 pub mod query;
+pub mod snapshot;
 pub mod tree;
 
 use std::path::{Path, PathBuf};

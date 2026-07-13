@@ -122,6 +122,18 @@ pub enum Command {
         fix: bool,
     },
 
+    /// Full-database catastrophic-recovery snapshot (create-only, read-only against
+    /// source): schema DDL + data + cron + edge functions + extensions/roles + a manifest,
+    /// written into a timestamped directory.
+    Snapshot {
+        /// Output directory (defaults to ./.db-snapshots/<env>-<UTCstamp>/).
+        #[arg(long)]
+        out: Option<String>,
+        /// App schemas to capture in full (repeatable; defaults to the standard set).
+        #[arg(long = "schema")]
+        schema: Vec<String>,
+    },
+
     // ── flat aliases on the hot path (design §11) ──────────────────────────
     /// Alias for `migrate up`.
     Up {

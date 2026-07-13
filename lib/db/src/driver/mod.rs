@@ -204,6 +204,15 @@ pub trait Driver: Send + Sync {
     fn kind(&self) -> DriverKind;
     fn capabilities(&self) -> Capabilities;
 
+    /// A direct Postgres connection URL suitable for `pg_dump` / `supabase db dump`, if
+    /// this driver can expose one WITHOUT a secret it does not hold. The local driver
+    /// returns its Docker Postgres URL; cloud/sqlite return `None` (the cloud DB password
+    /// is not in this crate — the snapshot path resolves it from `DB_DUMP_URL` instead and
+    /// records the gap). Read-only: the caller only ever dumps FROM this URL.
+    fn dump_url(&self) -> Option<String> {
+        None
+    }
+
     // ── SQL core — implemented by ALL drivers ──────────────────────────────
 
     /// Apply raw SQL against `env` (binds `:SCHEMA` per env; sqlite rewrites to a

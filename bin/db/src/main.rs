@@ -179,6 +179,37 @@ async fn dispatch(db: &Db, cli: &Cli, dry_run: bool, fmt: OutputFormat) -> Resul
                 anyhow::bail!("doctor found failing checks");
             }
         }
+
+        // ── snapshot (full catastrophic-recovery backup) ────────────────────
+        Command::Snapshot { out, schema } => {
+            let opts = substrate_db::snapshot::SnapshotOptions {
+                out: out.as_ref().map(std::path::PathBuf::from),
+                app_schemas: schema.clone(),
+            };
+            let report = substrate_db::snapshot::run(db, &opts).await.map_err(anyhow_err)?;
+            let m = &report.manifest;
+            println!("snapshot written to {}", report.out_dir.display());
+            println!(
+                "  env={} driver={} taken_at={} ({}) total_bytes={}",
+                m.env, m.driver, m.taken_at, m.taken_at_source, m.total_bytes
+            );
+            println!("  app schemas captured: {}", m.app_schemas_captured.join(", "));
+            for c in &m.components {
+                let tag = match c.status {
+                    substrate_db::snapshot::Status::Captured => "ok",
+                    substrate_db::snapshot::Status::Skipped => "skip",
+                    substrate_db::snapshot::Status::Failed => "FAIL",
+                };
+                println!("  [{tag}] {} ({} bytes) — {}", c.name, c.bytes, c.detail);
+            }
+            if !m.gaps.is_empty() {
+                println!("  RECOVERY GAPS:");
+                for g in &m.gaps {
+                    println!("    - {g}");
+                }
+            }
+            println!("  manifest: {}", report.manifest_md_path.display());
+        }
     }
     Ok(())
 }

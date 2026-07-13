@@ -678,3 +678,145 @@ fn u_query_is_write_classification() {
     assert!(is_write("update t set a=1"));
     assert!(is_write("DROP TABLE t"));
 }
+
+// ── A.7 Snapshot (full catastrophic-recovery backup) ─────────────────────────
+
+use substrate_db::snapshot::{
+    self, compact_stamp, default_out_dir, is_managed_schema, schema_csv, Component, Manifest,
+    Status,
+};
+
+#[test]
+fn u_snap_01_compact_stamp_strips_punctuation() {
+    // An ISO-8601 UTC stamp collapses to a filesystem-safe alnum run.
+    assert_eq!(compact_stamp("2026-07-13T17:23:49Z"), "20260713T172349Z");
+    // Degenerate input never yields an empty (would-be-invalid) directory name.
+    assert_eq!(compact_stamp("::::"), "unknown");
+}
+
+#[test]
+fn u_snap_02_default_out_dir_shape() {
+    let d = default_out_dir("prod", "2026-07-13T17:23:49Z");
+    assert_eq!(
+        d,
+        std::path::PathBuf::from(".db-snapshots").join("prod-20260713T172349Z")
+    );
+}
+
+#[test]
+fn u_snap_03_schema_csv_and_managed_classification() {
+    assert_eq!(
+        schema_csv(&["public".into(), "core".into(), "ops".into()]),
+        "public,core,ops"
+    );
+    // Supabase-managed schemas are presence-only (never dumped); app schemas are not.
+    assert!(is_managed_schema("auth"));
+    assert!(is_managed_schema("storage"));
+    assert!(is_managed_schema("cron")); // classified managed; captured specially
+    assert!(!is_managed_schema("public"));
+    assert!(!is_managed_schema("core"));
+    assert!(!is_managed_schema("mind"));
+}
+
+#[test]
+fn u_snap_04_manifest_json_roundtrips() {
+    let m = sample_manifest();
+    let json = m.to_json();
+    let back: Manifest = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.env, "local");
+    assert_eq!(back.components.len(), m.components.len());
+    assert!(back.read_only, "a snapshot is always read-only against source");
+}
+
+#[test]
+fn u_snap_05_manifest_markdown_surfaces_failures_and_recovery() {
+    let md = sample_manifest().to_markdown();
+    // The human recovering reads this: a FAILED component is loud, gaps are called out,
+    // and the ordered manual recovery steps are present.
+    assert!(md.contains("FAILED"), "a failed component must be visible in the table");
+    assert!(md.contains("Recovery gaps"), "gaps section must render");
+    assert!(md.contains("Apply `roles.sql`, then `schema.sql`, then `data.sql`"));
+    assert!(md.contains("edge_functions/"));
+}
+
+fn sample_manifest() -> Manifest {
+    Manifest {
+        tool: "db snapshot vX".into(),
+        env: "local".into(),
+        driver: "supabase-local".into(),
+        project_ref: Some("some_ref".into()),
+        taken_at: "2026-07-13T17:23:49Z".into(),
+        taken_at_source: "db now()".into(),
+        read_only: true,
+        app_schemas_requested: vec!["public".into(), "core".into()],
+        app_schemas_captured: vec!["public".into()],
+        managed_schemas_present: vec!["auth".into(), "storage".into()],
+        total_bytes: 1234,
+        components: vec![
+            component("schemas", Status::Captured, "all schemas classified", 100),
+            component("data", Status::Captured, "supabase db dump --data-only", 1000),
+            component("cron", Status::Failed, "cron.job not queryable", 0),
+        ],
+        gaps: vec!["cron dump missing".into()],
+    }
+}
+
+fn component(name: &str, status: Status, detail: &str, bytes: u64) -> Component {
+    Component {
+        name: name.into(),
+        status,
+        detail: detail.into(),
+        files: vec![],
+        bytes,
+    }
+}
+
+// A driver-backed end-to-end run WITHOUT Docker/network: the sqlite driver exposes no
+// dump URL and rejects the Postgres-catalog queries, so every component either skips or
+// fails — yet `run()` MUST still complete (create-only, robust) and leave a fully-formed
+// output dir with both manifests. This locks in the "record the gap, never abort" contract.
+#[tokio::test]
+async fn u_snap_06_run_is_robust_and_records_gaps() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sqlite_path = tmp.path().join("snap.sqlite");
+    let edge_missing = tmp.path().join("no-edge-here");
+    let cfg_toml = format!(
+        "default_env = \"sqlite\"\n\
+         [dirs]\n\
+         edge = \"{}\"\n\
+         [env.sqlite]\n\
+         driver = \"sqlite\"\n\
+         path = \"{}\"\n",
+        edge_missing.display(),
+        sqlite_path.display()
+    );
+    let cfg = DbConfig::from_str(&cfg_toml).unwrap();
+    let db = substrate_db::Db::open(cfg, "sqlite", None).unwrap();
+
+    let out = tmp.path().join("snapshot-out");
+    let opts = snapshot::SnapshotOptions { out: Some(out.clone()), app_schemas: vec![] };
+    let report = snapshot::run(&db, &opts).await.expect("snapshot run must not abort");
+
+    // The output dir and BOTH manifests exist.
+    assert!(report.out_dir.exists());
+    assert!(report.manifest_json_path.exists(), "manifest.json written");
+    assert!(report.manifest_md_path.exists(), "MANIFEST.md written");
+    assert!(out.join("schemas.txt").exists(), "schemas.txt always written");
+
+    let m = &report.manifest;
+    assert!(m.read_only, "read-only against source");
+    // No dump URL on sqlite → the pg_dump-backed components are skipped and the gap noted.
+    assert!(
+        m.gaps.iter().any(|g| g.contains("dump URL")),
+        "missing dump URL must be recorded as a gap: {:?}",
+        m.gaps
+    );
+    // The dump components are present as skipped (not silently dropped).
+    for name in ["schema", "data", "cron", "roles"] {
+        let c = m.components.iter().find(|c| c.name == name).expect("component present");
+        assert_eq!(c.status, Status::Skipped, "{name} skipped without a dump URL");
+    }
+    // Edge source dir absent → skipped, recorded.
+    let edge = m.components.iter().find(|c| c.name == "edge_source").unwrap();
+    assert_eq!(edge.status, Status::Skipped);
+}
