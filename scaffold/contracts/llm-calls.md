@@ -1,7 +1,7 @@
 # Contract: llm-calls
 
 ## Parties
-ccd (agents)  ->  inference-node (api, via v1-completion-api)
+ccd (agents)  ->  inference (api, via v1-completion-api)
 
 ## What the edge carries
 CCD/agents make LLM calls through the local inference node's `/v1/` API. Reuses

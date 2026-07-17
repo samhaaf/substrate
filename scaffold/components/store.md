@@ -1,6 +1,6 @@
 # store
 
-**Status:** existing (`lib/store`), kept as-is. **Nesting:** child of inference-node.
+**Status:** existing (`lib/store`), kept as-is. **Nesting:** child of inference.
 
 The SQLite system-of-record for one machine: completions, collections, models,
 result blobs, benchmark runs, KV-cache metadata. All access serialized through a

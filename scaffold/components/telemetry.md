@@ -1,6 +1,6 @@
 # telemetry
 
-**Status:** existing (`lib/telemetry`), kept as-is. **Nesting:** child of inference-node.
+**Status:** existing (`lib/telemetry`), kept as-is. **Nesting:** child of inference.
 
 Two components in one crate: a `SystemSampler` polling CPU/memory/GPU via
 `sysinfo` (GPU utilization real on macOS `ioreg`; VRAM telemetry stubbed at 0 —

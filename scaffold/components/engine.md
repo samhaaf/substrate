@@ -1,6 +1,6 @@
 # engine
 
-**Status:** existing (`lib/engine`), kept as-is. **Nesting:** child of inference-node.
+**Status:** existing (`lib/engine`), kept as-is. **Nesting:** child of inference.
 
 The execution engine: owns the `llama-server` child process, slot lifecycle, and
 the `InferenceBackend` trait seam (stub seams for vLLM/MLX/remote backends). It

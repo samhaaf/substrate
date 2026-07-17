@@ -13,3 +13,14 @@ plane, CCD agent-management). Per the exception rule it is deliberately left
 un-designed here; its anticipated needs instead shape the OTHER components'
 contracts. Possible convergence with an existing prototype (`~/code/career_crafter`,
 branch `Lazarus`) is an open operator question.
+
+**Design note (still a placeholder, not a full design):** this is where the user
+creates the foundation for autonomous organizations, where agents, ripples, and
+AI pipelines take advantage of all the tools in the rest of the repo to run
+organizations autonomously.
+
+**Explicit imports (confirmed this round, minimum set):** `inference`, `ccd`,
+and `db`. (`db` in particular backs Org's own self-restructuring knowledge
+graph — the metacognitive processes that add/restructure nodes in Org's
+org-graph are database operations against `db`.) Everything else about `org`
+remains exactly as previously stubbed — not decomposed further this pass.

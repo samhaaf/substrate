@@ -1,6 +1,6 @@
 # cache
 
-**Status:** existing (`lib/cache`), kept as-is. **Nesting:** child of inference-node.
+**Status:** existing (`lib/cache`), kept as-is. **Nesting:** child of inference.
 
 The disk-backed KV/prefix cache manager. Leverages llama-server slot
 save/restore: after prefill, a slot's KV state is written to a file keyed by

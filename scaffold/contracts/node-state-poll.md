@@ -1,7 +1,7 @@
 # Contract: node-state-poll
 
 ## Parties
-mesh.completion-router (NodeRegistry)  ->  inference-node (api)
+mesh.completion-router (NodeRegistry)  ->  inference (api)
 
 ## What the edge carries
 Read-only polling: `GET /v1/system/state` (running/pending counts, memory

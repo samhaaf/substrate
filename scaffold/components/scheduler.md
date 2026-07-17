@@ -1,6 +1,6 @@
 # scheduler
 
-**Status:** existing (`lib/scheduler`), kept as-is. **Nesting:** child of inference-node.
+**Status:** existing (`lib/scheduler`), kept as-is. **Nesting:** child of inference.
 
 The central scheduling loop: queue management, admission control, swap
 evaluation, preemption, crash recovery, and pluggable selection/swap policies.

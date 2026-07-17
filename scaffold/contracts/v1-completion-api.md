@@ -1,7 +1,7 @@
 # Contract: v1-completion-api
 
 ## Parties
-client / mesh.completion-router  <->  inference-node (api)
+client / mesh.completion-router  <->  inference (api)
 
 ## What the edge carries
 The `/v1/` REST+WS completion surface: submit/status/cancel/priority/result/stream

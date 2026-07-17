@@ -1,6 +1,6 @@
 # models
 
-**Status:** existing (`lib/models`), kept as-is. **Nesting:** child of inference-node.
+**Status:** existing (`lib/models`), kept as-is. **Nesting:** child of inference.
 
 Model lifecycle management: registry sync from config, a resumable download
 pipeline (`hf:`, `https://`, `file://` sources, `.partial` + rename), and

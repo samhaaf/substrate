@@ -43,7 +43,7 @@ principle: decompose by design-difficulty, not line count; thin binary glue
 
 ```
 types                         [existing, as-is] shared contract-types foundation (zero-dep)
-inference-node                [existing, RESHAPE + rename candidate -> "llm"]  per-machine LLM runtime
+inference                     [existing, RESHAPE; name locked as "inference"]  per-machine LLM runtime
   ├─ store                    [existing] SQLite system-of-record (per node)
   ├─ engine                   [existing] llama-server process + InferenceBackend seam
   ├─ scheduler                [existing] admission / swap / preemption / recovery loop
@@ -60,9 +60,10 @@ mesh                          [RESHAPE + EXPAND] network/coordination plane
   └─ completion-router        [RESHAPE] NodeRegistry + model-affinity balancer + forward()
 gateway                       [existing, RESHAPE] aggregation/observability plane (:8400)
 dashboard                     [existing, RESHAPE] Svelte/Vite frontend (gains node dimension)
-db                            [existing, as-is] Postgres/Supabase control-plane crate + `db` CLI
+db                            [existing, as-is; SCOPE CONFIRMED] Postgres/Supabase control-plane crate + `db` CLI
 ccd                           [NEW] Cloud Code Daemon (Marshall/CCM): agent/cloud-code manager
 org                           [NEW, PLACEHOLDER — NOT DECOMPOSED THIS PASS]  agentic-orgs framework
+                                imports: inference, ccd, db
 ```
 
 **Legend:** `[existing, as-is]` = V1 crate kept unchanged; `[existing, RESHAPE]`
@@ -76,17 +77,33 @@ org                           [NEW, PLACEHOLDER — NOT DECOMPOSED THIS PASS]  a
   Contract Harmonizer will reconcile the authored contracts with this existing
   crate rather than generating a greenfield one. Flagged as a seam decision for
   step 3, not resolved here.
-- **`inference-node` rename to `llm`** is an operator idea ("I'm tempted to
-  rename the inference to just like LLM"), not yet locked. The `node -> inference`
-  rename already happened in V1; `inference -> llm` is a *candidate* second
-  rename. Left as `inference-node` in this tree with the rename flagged.
-- **`gc` is dual-role:** it is both a library embedded inside the inference-node
+- **`inference` naming is now LOCKED — no further rename.** A second rename
+  (to `llm`, or to `gen`) was floated ("I'm tempted to rename the inference to
+  just like LLM") after the `node -> inference` rename already done in V1; the
+  operator has since decided against it, on two grounds: (1) the crate is meant
+  to stay modality-agnostic as new generation modalities (text-to-image,
+  text-to-video, etc.) get added — they extend this same crate rather than
+  spinning out separate ones, so a text/LLM-flavored name would misdescribe
+  its future scope; (2) `gen` in particular was rejected because it's a
+  homophone for the name "Jen" once spoken aloud, which is a real problem in a
+  voice-operated project (STT). See `components/inference.md` for the full note.
+- **`gc` is dual-role:** it is both a library embedded inside the inference
   (models/cache/engine register managed dirs for disk-budget enforcement) AND a
   standalone `:8430` daemon proxied by the gateway. Both roles are kept.
 - **`db` vs `store`:** two distinct database concerns. `store` = per-node inference
   SQLite (system of record for completions). `db` = the operational Postgres/
   Supabase control plane (migrations, edge functions, outbox, noun-verb CLI) —
   the "DB thing in a local stack" the operator wants for the Org/game demo.
+- **`db`'s in-scope status is now CONFIRMED** (previously flagged as an
+  open/orthogonal inclusion call in the decompose pass). Two confirmed
+  consumers this round: `org` will depend on `db` for its own self-restructuring
+  knowledge graph (metacognitive node add/restructure operations are `db`
+  operations — see `db-control-plane` / `org.md`), and `inference` will depend
+  on `db` to initialize its own database when standing up on a new mesh node
+  rather than bootstrapping that itself (new edge `db-inference-init`, see
+  `db.md`). `db`'s longer-term aspirational direction (schema-once/deploy-
+  anywhere data-model layer, field-change triggers, eventual ORM/query
+  virtualization) is noted in `db.md` as future-only, not scoped this pass.
 - **`mesh` absorbs the expanded scope as four children.** The Tailscale-query
   surface EARNED its own (nested) component: the operator explicitly wants it
   "standardized" and "extensible" ("add new tools as we go"), and it is consumed
@@ -117,6 +134,14 @@ edges and design notes so their contracts are shaped for a maximalist consumer
 from the start (see `service-lookup`, `v1-completion-api`, `agent-management`,
 `db-control-plane`, `org-on-ccd`).
 
+**Confirmed this round (still placeholder-level, not a full design):** Org's
+design note is now "this is where the user creates the foundation for
+autonomous organizations, where agents, ripples, and AI pipelines take
+advantage of all the tools in the rest of the repo to run organizations
+autonomously," and its explicit minimum import list is locked as `inference`,
+`ccd`, and `db` — see `components/org.md`. Nothing else about Org changes; it
+remains un-decomposed.
+
 ## Contract graph (every edge)
 
 Edges are named; each has a stub in `contracts/<edge-name>.md`. Direction noted
@@ -126,17 +151,18 @@ where a caller/callee asymmetry matters.
 
 | Edge | Parties | Carries (one line) |
 |------|---------|--------------------|
-| `v1-completion-api` | client / mesh -> inference-node (api) | The `/v1/` REST+WS completion surface: submit/status/cancel/priority/result/stream, collections, models, estimate. Mesh forwards it transparently. |
-| `node-state-poll` | mesh.completion-router -> inference-node | `GET /v1/system/state` + `GET /v1/models` reads that feed the NodeRegistry (health, load, per-node model inventory). |
-| `inference-events` | gateway <- inference-node | Per-node WS event stream + REST proxy the gateway subscribes to (one subscription per node). |
+| `v1-completion-api` | client / mesh -> inference (api) | The `/v1/` REST+WS completion surface: submit/status/cancel/priority/result/stream, collections, models, estimate. Mesh forwards it transparently. |
+| `node-state-poll` | mesh.completion-router -> inference | `GET /v1/system/state` + `GET /v1/models` reads that feed the NodeRegistry (health, load, per-node model inventory). |
+| `inference-events` | gateway <- inference | Per-node WS event stream + REST proxy the gateway subscribes to (one subscription per node). |
 | `gc-events` | gateway <- gc | GC daemon WS event stream + REST proxy (`:8430`). |
 | `mesh-registry-read` | gateway -> mesh | Gateway resolves node endpoints + fleet state via mesh's NodeRegistry / service-registry (`/api/nodes`, `/api/mesh/stats`). |
 | `dashboard-feed` | gateway -> dashboard | Aggregated `GET /events` WS fan-out + REST + static hosting the dashboard renders. |
-| `llm-calls` | ccd -> inference-node | CCD/agents make model calls through the node's `/v1/` API (LLM calls run on local inference). |
+| `llm-calls` | ccd -> inference | CCD/agents make model calls through the node's `/v1/` API (LLM calls run on local inference). |
 | `service-registration` | ccd <-> mesh.service-registry | CCD registers its own slug->endpoint and resolves other services by slug. |
 | `agent-management` | ccd <-> cloud-code agents | Spawn / track / route cloud-code (Claude Code) agent processes; the multi-agent substrate CCD owns. |
 | `org-on-ccd` | org -> ccd (+ maximalist reads) | Org built atop CCD for inter-agent comms; also the shaped-for edge bundling Org's broad reads of inference/state/registry/db. |
 | `db-control-plane` | db <-> consumers (Org/game-demo) | Noun-verb DB control plane: migrations, edge functions, query, outbox, over Postgres/SQLite. |
+| `db-inference-init` | inference -> db | **NEW this round.** A new `inference` node standing up on a fresh mesh node initializes its own database through `db` rather than bootstrapping it itself. |
 
 ### mesh-internal edges
 
@@ -147,7 +173,7 @@ where a caller/callee asymmetry matters.
 | `service-lookup` | mesh.service-registry <-> any device | `register(slug, host:port)` / `resolve(slug) -> endpoint`; eventually consistent, queryable from any device. |
 | `registry-replication` | service-registry <-> service-registry (peers) | The eventual-consistency replication/gossip edge between per-device registry instances. |
 
-### inference-node-internal edges (rethinking crate contracts)
+### inference-internal edges (rethinking crate contracts)
 
 | Edge | Parties | Carries |
 |------|---------|---------|
@@ -202,7 +228,7 @@ to flag for the operator, not to specify in this pass.
 - CCD siting: "does CCD live inside the Substrate workspace or stand alone?" —
   the operator's own open question; affects whether `ccd` is a workspace member
   or a sibling repo. Left open.
-- `inference-node -> llm` rename: not locked; flagged above.
+- ~~`inference -> llm` rename~~: RESOLVED this round — name stays `inference`; see notes above.
 - Org convergence: a separate prototype ("autonomous org", `~/code/career_crafter`
   branch `Lazarus`) may become Org instead of a from-scratch build — the operator
   flagged this as a blocking question. Out of scope to resolve here; noted so Org's

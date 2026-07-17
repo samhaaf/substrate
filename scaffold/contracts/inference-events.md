@@ -1,7 +1,7 @@
 # Contract: inference-events
 
 ## Parties
-gateway  <-  inference-node
+gateway  <-  inference
 
 ## What the edge carries
 Per-node WebSocket event stream + REST proxy the gateway subscribes to (one

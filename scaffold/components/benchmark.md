@@ -1,6 +1,6 @@
 # benchmark
 
-**Status:** existing (`lib/benchmark`), kept as-is. **Nesting:** child of inference-node.
+**Status:** existing (`lib/benchmark`), kept as-is. **Nesting:** child of inference.
 
 The benchmark orchestrator: idle-period detection and priority-0,
 `request_full_system` sweep collections that characterize throughput across an

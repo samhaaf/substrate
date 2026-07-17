@@ -1,7 +1,7 @@
 # Contract: service-lookup
 
 ## Parties
-mesh.service-registry  <->  any device / service (gateway, ccd, org, inference-node)
+mesh.service-registry  <->  any device / service (gateway, ccd, org, inference)
 
 ## What the edge carries
 `register(slug, host:port)` / `resolve(slug) -> endpoint` over a distributed,
