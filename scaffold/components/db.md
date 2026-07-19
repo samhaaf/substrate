@@ -148,11 +148,28 @@ three backends) is the natural seed this layer grows from. Still true: "we're
 building it one layer at a time as we need it" — direction is locked, the
 design pass is not authorized here.
 
-**Relationship to the new `stack` component (working framing, rounds 4–5):**
+**Relationship to the new `stack` component (working framing, rounds 4–5 —
+now explicitly THE operator's most-nebulous OPEN question, round-6):**
 `db` = the control-plane / virtualization / query interface over databases;
 `stack` = the runtime that *hosts* a database (the daemon around a
 SQLite-file-in-the-VFS with SQL + Deno/TS handlers). See
 `components/stack.md`.
+
+**Round-6: the stack-vs-db boundary is recorded as the operator's
+most-nebulous open question — do NOT force it.** The live tension, in brief
+(full verbatim in `components/stack.md`): stack is "a pattern" (db-driven
+triggers/handlers calling third parties) and much of it already lives in db —
+which **really does deploy edge functions to Supabase today** — so there's a
+strong case to fold stack into db (and run the knowledge graph through db,
+pushing db hard); the alternative is keeping db boring as a utility under a
+bigger eventual-consistency system in the mesh. The operator also coined
+**VDB**: a virtualized-database service using `db` under the hood, databases
+treated like services under mesh's restart/upgrade protocol, with the
+confirmed copy/verify/switch + let-edge-functions-finish migration mechanics.
+Recorded faithfully as OPEN with the VDB idea attached; nothing resolved
+here. **Provenance note (round-6 cross-cutting):** whatever shape wins,
+provenance is FIRST-ORDER — every handler touch of data traced from the very
+beginning (see `overview.md`'s standing principle).
 
 **Flagged implication (not resolved here): the NO-DOCKER rule.** Rounds 4–5
 locked a hard rule — no Docker locally, ever; containers only in the AWS

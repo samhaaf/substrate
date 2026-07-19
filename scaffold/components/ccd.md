@@ -37,7 +37,11 @@ placeholder — see `overview.md`) **queries CCD** (and other spend sources) for
 this data; CCD does not push to spend. Also locked: **threads must be linkable
 to projects, and optionally to environments within projects** (see
 `components/environments.md`) — the usage database's thread records carry
-those links.
+those links. **NEW round-6 (2026-07-19): CCD consumes the `rollup` system for
+its plugin/prompt assembly** — specialized plugins for its specialized
+agents, built from fragments and generated on demand ("CCD ideally would be
+built on top of this prompt rollup"); see `components/rollup.md` and the
+`rollup-ccd` edge below.
 
 > **SUPERSEDED (2026-07-18): "routes agents' LLM calls to the local inference
 > fleet."** The previously-flagged BIG open question (route agents' LLM calls
@@ -140,6 +144,15 @@ clumping into mesh or inference:
 - **surface-schema** (see scaffold/contracts/surface-schema.md) — like every
   service, CCD publishes its observable-surface schema (budget state, agent
   roster, limit meters) for the mesh dashboard to render.
+- **rollup** via `rollup-ccd` (see scaffold/contracts/rollup-ccd.md) —
+  **NEW round-6.** CCD consumes rollup for its plugin/prompt assembly:
+  fragments + slots rolled up into specialized plugins for specialized
+  agents, generated on demand with no symlinks or file-copying. CCD is the
+  consumer; requirements-only. (Also anticipated round-6: mesh's new
+  dead-letter queues escalate into a **ccd agent investigation** — same
+  escalation pattern as the execution engine's loop-depth hook; see
+  `components/mesh.md` concern 14. No new contract stub; rides the existing
+  ccd surfaces until designed.)
 - **spend** (future placeholder, renamed from `finance` — rounds 4–5) — spend
   QUERIES CCD's usage database (sessions, tokens, limits) as one of its spend
   sources; pull-shaped, inbound-to-CCD only. No contract stub yet (spend is

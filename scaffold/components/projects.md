@@ -22,6 +22,11 @@ Requirements:
   dashboard's render/interaction schema and the mesh dashboard mounts it.
 - **Per-project metadata and finances** eventually attach here (see the `spend`
   placeholder — renamed from finance, rounds 4–5 — in `overview.md`'s future section).
+- **.mind workspace-schema migration — CONFIRMED (round-6, enthusiastically).**
+  The operator's long-developed `.mind` workspace schema migrates **directly
+  into projects**: **coordinator communication protocols**, **artifacts**,
+  and **tasks** all come along — and the **rollup engine integrates with it**
+  ("tasks are rolled up"; see `components/rollup.md`).
 
 **Future note — `artifacts` (layer-six placeholder, no component file).**
 Operator, verbatim-grade: "once we migrate to projects, no more files —
@@ -45,6 +50,9 @@ deterministic." **Projects depends on it** once it exists. Named in
   itself, pushes project/dashboard registrations, and its published dashboards
   become navigable from the mesh dashboard
   (scaffold/contracts/projects-mesh.md).
+- **rollup** (round-6) — the migrated `.mind` workspace schema integrates the
+  rollup engine ("tasks are rolled up"); edge naming deferred (see
+  `components/rollup.md`).
 
 ## Nesting
 

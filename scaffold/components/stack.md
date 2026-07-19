@@ -44,13 +44,68 @@ Requirements:
 - **Graceful auto-upgrade SQLite → Postgres.** If a database attached to a
   project/environment needs something SQLite can't do, it "gracefully,
   automatically upgrades from SQLite to a Postgres database." **Mechanism
-  OPEN** — and constrained by the no-Docker rule: where that Postgres comes
-  from (a native local Postgres process vs. a cloud target) is undecided.
-- **Relationship to `db` (working framing):** `db` = the
+  PARTIALLY RESOLVED round-6 (supersedes "Mechanism OPEN"):** the migration
+  mechanics are confirmed — **copy/verify/switch under a lock** ("exactly
+  right"); during a critical upgrade, **let running edge functions finish
+  against the old DB, swap the database underneath, write results back,
+  resume triggering**. Databases get treated like services under mesh's
+  restart/upgrade protocol (via db-as-daemon or the VDB idea — see the
+  stack-vs-db section below). Still open, and still constrained by the
+  no-Docker rule: where that Postgres comes from (see the Postgres-ambiguity
+  section below).
+- **Provenance is FIRST-ORDER (round-6 cross-cutting principle).** Every
+  handler touch of data is traced from the very beginning —
+  healthcare-data-engineer-grade provenance; see `overview.md`'s standing
+  principle and the shared execution engine's causal-chain tracking.
+- **Relationship to `db` (working framing — now explicitly the operator's
+  most-nebulous OPEN question; see the section below):** `db` = the
   control-plane / virtualization / query interface over databases; `stack` =
   the runtime that HOSTS a database. A stack-hosted SQLite file is one of the
   backends `db`'s now-in-scope query/virtualization layer standardizes over.
   See `components/db.md`.
+
+## The stack-vs-db boundary — THE operator's most-nebulous OPEN question (round-6; do NOT force it)
+
+Recorded verbatim-grade, deliberately NOT resolved. Operator: stack "is a
+pattern — database-driven triggers and handlers that can do database updates
+and call third-party systems. I don't know how many places it's going to show
+up or how much can be standardized. A lot of it's already in db (db already
+deploys edge functions to Supabase). There's a strong case we put it in db
+and use db to run the knowledge graph — but then db also has to do eventual
+consistency across multiple databases, and we're really pushing db. Or we
+leave db boring as a utility used within the system that does eventual
+consistency across databases in the mesh. I don't know. Open question."
+
+Options on the table:
+
+1. **Fold stack into db** — and run the knowledge graph through db too,
+   pushing db hard (db stops being boring).
+2. **Keep db boring** as a utility used within a bigger
+   eventual-consistency system in the mesh.
+
+**VDB (operator-coined, same round — attached to this open question, not a
+resolution of it):** a **virtualized-database SERVICE** that uses `db` under
+the hood, treating **databases like services under the same mesh
+restart/upgrade protocol** (`mesh.md` concerns 12–13). The confirmed
+migration mechanics fold in here: **copy/verify/switch under a lock**, and
+during a critical upgrade **let running edge functions finish against the
+old DB, swap the database underneath, write results back, resume
+triggering**. VDB is an idea on the table; the boundary question above stays
+OPEN.
+
+## Postgres ambiguity (round-6 — flagged, UNRECONCILED)
+
+In response to the native-vs-cloud Postgres question, the operator floated:
+"I think that's the line — it standardizes Postgres and we can just have one
+Postgres Docker machine, multiple databases in the same Postgres Docker. The
+only downside is on a small device like a Raspberry Pi I'd rather be running
+SQLite or even directly installing Postgres. So I'm not sure." **"One
+Postgres Docker" sits in direct tension with the emphatic HARD no-Docker
+rule above — flagged, not reconciled; needs explicit operator
+reconciliation before any design leans on it.** Related, the operator's own
+counter-question: "it's worth talking about why we would ever want to
+[upgrade SQLite → Postgres] if we're able to get our full stack working on
+top of SQLite."
 
 ## Relationships / edges (stubs only)
 
@@ -74,4 +129,8 @@ Parent: none | Children: none (this pass).
 ## Thoroughness level
 
 **requirements-only** — verbatim requirements capture; no design pass yet.
-Open: the SQLite→Postgres upgrade mechanism (no-Docker-constrained).
+Open (round-6 revision): the **stack-vs-db boundary** (the operator's
+most-nebulous open question — VDB idea attached), the **Postgres source /
+Docker tension** (unreconciled), and whether SQLite→Postgres upgrade is even
+needed ("why ever upgrade past SQLite"); the migration *mechanics* themselves
+are now confirmed (copy/verify/switch, let-edge-functions-finish).

@@ -61,6 +61,30 @@
 > pairwise service dependencies + minimal-restart rolling updates preferred;
 > commit-as-release-set NOT adopted; mixed-version update protocol OPEN.
 
+> **ROUND-6 LOCK (2026-07-19, applied on top of commit `ea715af`):**
+> (A) **mesh init-supervision ANSWERED (3rd ask)** — mesh starts and
+> supervises the local services; services expose an observable
+> interruptibility state; non-critical updates wait for idle; **port-handoff
+> update pattern** (new version on new port → registry flip → old port down);
+> plus a **two-way, priority-laddered graceful-restart protocol** built into
+> EVERY service from the beginning (exact ladder: latitude granted, discuss)
+> and new internal **queues + dead-letter queues** (SQS-modeled; dead-letter
+> escalation → ccd investigation) — see `mesh.md` concerns 12–14. `locks`
+> gains a required catchable partition-merge error type. (B) **three new
+> requirements-only components:** **`vault`** (secrets — agents/LLMs
+> use-without-seeing), **`rollup`** (the prompt/plugin rollup system; crate
+> name OPEN: rollup/plugins/other; CCD ideally built on top of it), and
+> **`repo`** (**fork RESOLVED** — repo IS its own crate on top of the VFS;
+> both stay boring). (C) the **stack-vs-db boundary recorded as THE
+> operator's most-nebulous OPEN question** (+ the **VDB** idea; Postgres/
+> Docker ambiguity flagged unreconciled) — see `stack.md`/`db.md`.
+> (D) **PROVENANCE IS FIRST-ORDER** — new standing cross-cutting principle.
+> (E) bandits clarified NOT-mesh (in-app concern — `environments.md`); `org`
+> gains per-application owning agents + the inter-agent negotiation protocol;
+> `projects` gains the confirmed .mind workspace-schema migration.
+> (F) **pairwise data contracts affirmed verbatim as the operating model**
+> (see the note at the contract graph).
+
 ## Scope of this pass
 
 Combined scope across three sources:
@@ -118,7 +142,9 @@ mesh                          [RESHAPE + EXPAND — "the operating system"] coor
                                 from vfs). Rounds 4–5: port LOCKED :3649; internal layering ANSWERED —
                                 internal utility LIBS (replicated KV, locks, cron, S3 adapter, pub/sub
                                 relay), never standalone; sticky (system-level resurrection); zombie-
-                                killing; single-port locality; two addressing classes
+                                killing; single-port locality; two addressing classes. Round-6: starts/
+                                supervises local services (port-handoff updates); two-way graceful-
+                                restart protocol; queues + dead-letter queues (SQS-modeled)
   ├─ tailscale-query          [NEW] standardized, extensible Tailscale-status query surface
   ├─ network-topology         [NEW] live WS: device on/off + self-connectivity-loss events
   ├─ service-registry         [NEW] distributed, eventually-consistent slug -> host:port registry
@@ -133,7 +159,14 @@ kg                            [NEW round-3 second batch, requirements-only] dist
                                 pointers, S3 cross-boundary sync via mesh; consistency model OPEN)
 projects                      [NEW round-3, requirements-only] graphical FS / knowledge graph straddling
                                 kg + vfs (graph encodes project structure; nodes point at vfs files);
-                                centralized push registry for dashboards + source; app-building layer
+                                centralized push registry for dashboards + source; app-building layer;
+                                round-6: the .mind workspace schema migrates in (coordinator protocols,
+                                artifacts, tasks; rollup-engine integration — "tasks are rolled up")
+repo                          [NEW round-6, requirements-only; fork RESOLVED] its own crate built ON TOP
+                                of the VFS (git-in-the-VFS rejected): push/sync between VFS and
+                                git/GitHub repos; branches, worktrees, branches attachable to
+                                environments; "the only non-boring thing about it is that it sits on
+                                the VFS"
 db                            [existing, as-is; SCOPE CONFIRMED] Postgres/Supabase control-plane crate + `db` CLI;
                                 rounds 4–5: query/virtualization layer now in-scope DIRECTION
                                 (standardized query interface over SQLite-in-VFS / Supabase / RDS)
@@ -146,10 +179,19 @@ environments                  [NEW rounds 4–5, requirements-only] environment 
                                 chained blue/green deployments; bandit feature balancing (placement OPEN)
 cicd                          [NEW rounds 4–5, requirements-only] pipelines consuming environments;
                                 hierarchy vs environments OPEN (sibling-with-dependency assumed)
+vault                         [NEW round-6, requirements-only] secrets crate; agents/LLMs can NEVER
+                                directly read a secret but CAN use one in context (use-without-seeing,
+                                enforced at the access-pattern level); everything else open
+rollup                        [NEW round-6, requirements-only; crate name OPEN: rollup/plugins/other]
+                                prompt/plugin rollup: fragments referencing fragments via a syntax,
+                                slots taking variables at reference time; specialized plugins generated
+                                on demand (CCD ideally built on top of it); generalization ladder
+                                string-rollup → file-rollup → directory-rollup
 ccd                           [NEW; TOP-LEVEL CONFIRMED round-3] Cloud Code Daemon (Marshall/CCM):
                                 cloud-code manager + Claude-Code-usage-limits budget engine; rounds 4–5:
                                 owns its own usage database (sessions/tokens/limits; queried by spend);
-                                threads linkable to projects + optionally environments
+                                threads linkable to projects + optionally environments; round-6:
+                                consumes rollup for its plugin/prompt assembly
 org                           [NEW, PLACEHOLDER — NOT DECOMPOSED THIS PASS]  agentic-orgs framework
                                 imports: inference, ccd, db
 ```
@@ -251,6 +293,18 @@ v1 handler/execution engine.)
 
 ## Contract graph (every edge)
 
+> **PAIRWISE DATA CONTRACTS — AFFIRMED VERBATIM (round-6) as the whole point
+> and THE OPERATING MODEL for all future updates:** "Clean data contracts
+> between all the services... if one service ever needs another in a way the
+> contract doesn't support, we go into a design session about the updated
+> contract and how it ripples into other services' contracts. Data contracts
+> between each pair of services, mediated by mesh, is how we support future
+> updates elegantly with low technical debt." Contracts sit between each
+> service pair, mediated by mesh; **any contract change triggers a design
+> session analyzing its ripple effects** across the other contracts. ("Ripples"
+> in that quote is the operator's ordinary-English verb, not the RESERVED
+> term — see the future section.)
+
 Edges are named; each has a stub in `contracts/<edge-name>.md`. Direction noted
 where a caller/callee asymmetry matters.
 
@@ -279,6 +333,10 @@ where a caller/callee asymmetry matters.
 | `kg-vfs` | kg -> vfs | **NEW round-3 second batch (requirements-only).** KG nodes point at VFS files; existence validation of the pointed-at file. |
 | `stack-vfs` | stack -> vfs | **NEW rounds 4–5 (requirements-only).** The single SQLite file each stack daemon wraps is stored in / accessed through the VFS. |
 | `stack-mesh` | stack <-> mesh | **NEW rounds 4–5 (requirements-only).** Registration via the local mesh daemon (:3649, single-port locality) + distributed-handler coordination via mesh's `locks` lib. |
+| `vault-mesh` | vault <-> mesh | **NEW round-6 (requirements-only).** Vault registration/resolution via the local mesh daemon; the use-without-seeing secret-brokerage shape is TBD. |
+| `rollup-ccd` | ccd -> rollup | **NEW round-6 (requirements-only).** CCD consumes rollup for its plugin/prompt assembly — fragments + slots rolled up into specialized plugins for specialized agents, generated on demand. |
+| `repo-vfs` | repo -> vfs | **NEW round-6 (requirements-only).** Repo sits on top of the VFS: repo state materialized through VFS storage; push/sync between VFS trees and git/GitHub repos. |
+| `repo-environments` | repo <-> environments | **NEW round-6 (requirements-only).** Branches/worktrees attachable to environments; deploy-into-environment activates the pipeline (the environments-branches relationship is flagged "strange" for public-website deployments). |
 
 **Collapsed edge:** `mesh-registry-read` (was gateway -> mesh) no longer exists —
 with gateway absorbed, that read is mesh consulting its own registry in-process;
@@ -346,12 +404,31 @@ registry.
 the seam implies reworking every currently-static endpoint config to resolve via
 `service-lookup`: the absorbed observability plane's `inference_url`/`gc_url`
 (now mesh-internal config), the mesh's node list,
-CCD's endpoints, Org's service map, and the new `vfs`/`kg`/`projects`/`stack`
-services. The
+CCD's endpoints, Org's service map, and the new
+`vfs`/`kg`/`projects`/`stack`/`vault`/`repo` services. The
 mesh-design-synthesis
 already anticipated the observability-plane change (OQ-style, written pre-merge
 against gateway). This is a cross-cutting refactor
 to flag for the operator, not to specify in this pass.
+
+## Standing cross-cutting principles (NEW section, round-6)
+
+- **PROVENANCE IS FIRST-ORDER, from the very beginning.** Operator, verbatim:
+  "Traces on executions in our runtime stack are first-order. I want
+  provenance from the very beginning. I'm a long-term data engineer in
+  healthcare — I want to see everything that led to the current state of our
+  database, every time data gets touched by a handler."
+  Healthcare-data-engineer-grade provenance is a design input to EVERY
+  component from day one, never a retrofit: **traces on every execution** in
+  the runtime stack, and **a trace every time data gets touched by a
+  handler**. Concretely wired in already: the shared handler/execution
+  engine's causal-chain tracking (below), `kg.md` (graph-data provenance via
+  the shared engine), and `stack.md` (handler-touch traces); every future
+  design pass must treat provenance as a first-order requirement.
+- **Pairwise data contracts are the operating model** (round-6 affirmation —
+  see the note at the top of the contract graph): contract changes trigger
+  design sessions analyzing ripple effects; this is how all future updates
+  land.
 
 ## Shared libraries (NEW section, rounds 4–5)
 
@@ -370,7 +447,9 @@ operator-locked shared lib.)
   coordinates via mesh's internal `locks` lib. **Guardrails are designed-in
   from day one:**
   - **causal chain tracking** per handler invocation (what change caused
-    what);
+    what) — round-6: this is one concrete instance of the FIRST-ORDER
+    provenance principle (see the standing cross-cutting principles above);
+    every handler touch of data is traced from the very beginning;
   - **LOOP detection with a loop-depth threshold** — not a naive
     cascade-depth cutoff: "It's hard to set an arbitrary [cascade] depth
     [with tons of services cascading into each other]. It has to track loops
@@ -405,10 +484,11 @@ layer; none is decomposed, designed, or given a `components/` file this pass:
   (sessions/tokens/limits; see `components/ccd.md`) first among them — rather
   than sources pushing to spend.
 - **AUI / interfaces** — a voice interface over the whole mesh.
-- **`repo`** (OPEN FORK, rounds 4–5 — recorded in the open questions below) —
-  a crate managing push/sync between the VFS and git/GitHub repos, OR git
-  semantics built into the VFS itself. Named here so nothing squats on the
-  name; not decided.
+- ~~**`repo`** (OPEN FORK, rounds 4–5)~~ — **RESOLVED + PROMOTED round-6:**
+  repo is a real build-now component (its own crate on top of the VFS;
+  git-in-the-VFS rejected; both stay boring) — no longer a placeholder; see
+  `components/repo.md`. This entry is kept as a tombstone so the name's
+  history stays traceable.
 - **`ripples` — RESERVED TERM, out of v1 scope, do not design or discuss in
   v1.** The word "ripples" belongs to a future KG micro-agent system: LLM
   micro-agents that respond to other micro-agents, rippling through a
@@ -434,27 +514,60 @@ layer; none is decomposed, designed, or given a `components/` file this pass:
 - **`locks` partition semantics (NEW rounds 4–5, needs real care):** the
   slug+UUID identity sketch handles partition twins, but the full
   partition/merge semantics are OPEN — "it has to generalize to be reliable
-  in an infinite set of circumstances." See `mesh.md` concern 10.
-- **`stack` SQLite→Postgres auto-upgrade mechanism (NEW rounds 4–5):** OPEN,
-  constrained by the no-Docker rule (native local Postgres process vs. cloud
-  target, undecided). See `stack.md`.
+  in an infinite set of circumstances." Round-6 locks one requirement within
+  them: a specific, **catchable error type for "lock threshold exceeded
+  because two network partitions merged," handled per-application** (CAP
+  honesty blessed — "we cannot violate the laws of physics"). See `mesh.md`
+  concern 10.
+- **The stack-vs-db boundary (round-6) — THE operator's MOST-NEBULOUS open
+  question; do NOT force it.** Stack is "a pattern" (database-driven
+  triggers/handlers calling third parties); much of it already lives in `db`
+  (which really does deploy edge functions to Supabase today). Options on
+  the table: fold stack into db (and run the KG through db — pushing db
+  hard) vs. keep db boring as a utility under a bigger eventual-consistency
+  system in the mesh. The operator also coined **VDB** — a
+  virtualized-database service using `db` under the hood, databases treated
+  like services under mesh's restart/upgrade protocol, with the confirmed
+  copy/verify/switch + let-edge-functions-finish migration mechanics.
+  Recorded faithfully as OPEN with VDB attached, not resolved. Full verbatim
+  in `stack.md`; see also `db.md`.
+- **`stack` SQLite→Postgres upgrade (rounds 4–5; PARTIALLY RESOLVED
+  round-6):** the migration *mechanics* are confirmed (copy/verify/switch
+  under a lock; let running edge functions finish, swap underneath, write
+  back, resume). Still OPEN: where Postgres comes from — the operator's "one
+  Postgres Docker machine" line sits **unreconciled against the hard
+  no-Docker rule** — and his own counter-question "why ever upgrade past
+  SQLite if the full stack works on SQLite." See `stack.md`.
 - **`environments` vs `cicd` hierarchy (NEW rounds 4–5):** sibling vs. child
-  OPEN; sibling-with-dependency is the working assumption. And bandit-based
-  feature load-balancing placement (inside environments vs. interacting with
-  mesh routing) is OPEN. See `environments.md` / `cicd.md`.
-- **`repo` crate vs git-in-the-VFS (NEW OPEN FORK, rounds 4–5):** either a
-  `repo` crate managing push/sync between the VFS and git/GitHub repos, or
-  git semantics built into the VFS itself — which then means branches inside
-  the VFS, branches attachable to environments, and worktree support ("I like
-  worktrees. I like workspaces"). Not decided. **Prior art:** the operator's
-  `.mind` workspace schema already links worktrees + Claude Code threads —
-  reuse it when this is designed.
-- **Versioning / update protocol (rounds 4–5):** the APPROACH is decided —
-  pairwise service dependencies with minimal-restart rolling updates ("each
-  individual service only gets restarted if it needs to get restarted");
-  commit-as-release-set was proposed and NOT adopted. The concrete update
-  protocol between nodes running mixed versions is OPEN. See `mesh.md`
-  concern 6.
+  OPEN; sibling-with-dependency is the working assumption. ~~And bandit-based
+  feature load-balancing placement~~ — **RESOLVED round-6: bandits are NOT a
+  mesh concern; they are complex in-app behavior** inside a public-facing
+  website deployed via projects/environments. Standing note recorded:
+  environments must be boring/predictable/stable but not overly rigid; the
+  environments-branches relationship is flagged "strange" for public-website
+  deployments. See `environments.md` / `cicd.md`.
+- ~~**`repo` crate vs git-in-the-VFS (OPEN FORK, rounds 4–5)**~~ —
+  **RESOLVED round-6: repo IS its own crate, built on top of the VFS**;
+  git-in-the-VFS rejected; both VFS and repo stay boring ("the only
+  not-boring thing about repo is that it's built on top of a virtual file
+  system"). Branches, worktrees, and branches-attachable-to-environments
+  now live in `components/repo.md`. **Prior art still applies:** the
+  operator's `.mind` workspace schema already links worktrees + Claude Code
+  threads — reuse it when repo is designed.
+- **Versioning / update protocol (rounds 4–5; NARROWED round-6):** the
+  APPROACH is decided — pairwise service dependencies with minimal-restart
+  rolling updates ("each individual service only gets restarted if it needs
+  to get restarted"); commit-as-release-set was proposed and NOT adopted.
+  Round-6 supplies the per-service mechanics: port-handoff updates + the
+  two-way graceful-restart protocol (`mesh.md` concerns 12–13). Still OPEN:
+  the concrete update protocol between nodes running mixed versions, and the
+  exact restart-priority ladder ("latitude granted, discuss"). See `mesh.md`
+  concerns 6, 12–13.
+- **`rollup` naming + syntax (NEW round-6):** the crate name is OPEN
+  (rollup / plugins / other), as are the fragment-reference/slot syntax; the
+  operator has built ~two prior versions in other projects — a prior-art
+  scan is underway separately and should seed the design pass. See
+  `components/rollup.md`.
 - **GC rolled into VFS vs. called-as-tool (NEW round-3):** GC is now the
   per-node tool VFS calls; "might need to get rolled up into the VFS." Open —
   see `gc.md` / `vfs.md`.

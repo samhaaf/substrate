@@ -42,6 +42,12 @@ entire mesh**. Requirements:
   loop-depth threshold, escalation hook). **Distributed trigger execution
   coordinates via mesh's `locks` lib** (so a trigger fires once across the
   mesh, not once per node) — see `components/mesh.md` concern 10.
+- **Provenance is FIRST-ORDER (round-6, cross-cutting standing principle).**
+  Traces on every execution and on every handler touch of graph data, from
+  the very beginning — healthcare-data-engineer-grade provenance ("I want to
+  see everything that led to the current state"); see `overview.md`'s
+  standing principle. KG's trigger/handler execution inherits this via the
+  shared engine's causal-chain tracking.
 - **Cross-boundary sync with AWS/S3.** KGs need eventual consistency with the
   AWS/S3 side too — use case: an external agent extracts a user's intent into a
   KG and it shows up in the mesh. Per the same-day S3-adapter decision, this

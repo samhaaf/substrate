@@ -19,6 +19,18 @@ service-registry, completion-router}.
 > (6) new internal libs **`locks`** (concern 10 — partition semantics OPEN)
 > and **`cron`** (concern 11).
 
+> **ROUND-6 LOCK (2026-07-19, applied on top of commit `ea715af`):**
+> (1) **init-supervision ANSWERED (3rd ask)** — mesh STARTS and supervises the
+> local services (concern 12: observable interruptibility state, wait-for-idle
+> non-critical updates, port-handoff update pattern);
+> (2) the **two-way graceful-restart protocol** locked in shape — priority-
+> laddered, built into EVERY service from the beginning (concern 13; the exact
+> ladder is "latitude granted, discuss");
+> (3) new internal capability: **queues + dead-letter queues, SQS-modeled**
+> (concern 14; dead-letter escalation hooks into ccd investigation);
+> (4) `locks` gains a **required catchable error type** for lock-threshold-
+> exceeded-on-partition-merge, handled per-application (concern 10).
+
 ## Charter
 
 `mesh` is Substrate's **operating system** — the network / coordination plane
@@ -77,6 +89,18 @@ And, new in the rounds-4–5 lock (2026-07-18):
     concern 8.
 13. **Single-port locality + two addressing classes** — every service talks
     ONLY to its local mesh daemon on `:3649`; see concern 9.
+
+And, new in the round-6 lock (2026-07-19):
+
+14. **Service supervision (ANSWERED, 3rd ask)** — mesh starts and supervises
+    the local services on its node; each service exposes an observable
+    interruptibility state; non-critical updates wait for idle; updates use
+    the port-handoff pattern. See concern 12.
+15. **The two-way graceful-restart protocol** — priority-laddered restart
+    requests built into EVERY service from the beginning. See concern 13.
+16. **Queues + dead-letter queues** — an internal, SQS-modeled queue
+    capability (same internal-lib discipline as `locks`/`cron`); dead-letter
+    escalation hooks into ccd investigation. See concern 14.
 
 > **SUPERSEDED (2026-07-18): the mesh/gateway sibling split.** This file
 > previously drew a hard boundary: "It does not own the aggregation/
@@ -270,7 +294,10 @@ version-relationships/dependencies BETWEEN services — "when a service is updat
 it looks at what versions of other services it depends on — we just track the
 requirements and the boot order" — and (c) the boot order derived from those
 requirements. Scope note: mesh *tracks and answers*; it is not a package manager
-or installer this pass. Requirements-only; no design yet. (The internal-layering
+or installer this pass. **Partially SUPERSEDED round-6:** mesh now also STARTS
+and supervises the services (concern 12) — the boot order it tracks is one it
+executes; the not-a-package-manager/installer boundary still stands.
+Requirements-only; no design yet. (The internal-layering
 question this used to drive is now ANSWERED — internal libs, boring layers; see
 the Charter. The versioning *approach* is also now constrained: pairwise
 service dependencies with minimal-restart rolling updates is the operator's
@@ -338,6 +365,14 @@ a crate/service), riding the replicated KV store:
   "There's definitely a design question there — it has to generalize to be
   reliable in an infinite set of circumstances." Do not treat the slug+UUID
   sketch as the finished design.
+- **Required catchable error type (NEW round-6; CAP honesty blessed):** the
+  operator blessed the CAP-honesty framing ("You have my explicit
+  understanding — we cannot violate the laws of physics") and requires a
+  **specific, catchable ERROR TYPE for "lock threshold exceeded because two
+  network partitions merged," handled per-application**. (Color: a walk-along
+  Raspberry Pi that goes offline and rejoins later.) The full partition/merge
+  semantics above remain OPEN; this error type is a locked requirement within
+  them.
 
 Consumers already known: the shared handler/execution engine's distributed
 trigger execution (kg + stack) coordinates via `locks` — see `overview.md`'s
@@ -349,6 +384,55 @@ Scheduled tasks as an internal mesh lib, in two flavors matching the
 addressing classes: **"run on node N"** and **"run anywhere"** ("Tasks that
 need to be run on specific nodes; tasks that just need to be run somewhere.
 Cron should be something available to mesh"). Requirements-only.
+
+### 12. Service supervision + port-handoff updates (ANSWERED round-6, 3rd ask)
+
+**Mesh starts and supervises the local services** — the question asked three
+times across rounds is now resolved yes. Requirements:
+
+- **Observable interruptibility state:** each service exposes an observable
+  state so mesh can tell when it's doing something that shouldn't be
+  interrupted.
+- **Non-critical updates wait for idle.**
+- **Port-handoff update pattern:** start the new version of a service on a
+  new port, flip the registry entry old→new, bring down the old port.
+  (Interacts with concern 8's zombie-killing — here the old copy is brought
+  down deliberately as part of the handoff; zombie-killing is the backstop if
+  it lingers.)
+
+Requirements-only; no design yet.
+
+### 13. Two-way graceful-restart protocol (round-6; shape LOCKED, ladder = latitude granted)
+
+A **two-way protocol built into EVERY service from the beginning**: mesh
+signals a restart need with a priority, and the service participates in
+deciding when it yields. The priority ladder, requirements-grade:
+
+- **low** — mesh just waits for idle;
+- **higher** — "finish what you're doing, then relinquish" (the service
+  decides when its current work completes);
+- **critical** — "I'm interrupting regardless — you have ~10 seconds to
+  save";
+- **beyond that** — kill outright, no warning.
+
+**Compatibility-driven restarts are HIGH priority.** The exact ladder is
+delegated — operator, verbatim: "whether we do priority levels on the restart
+is up to you — something to discuss there" — **latitude granted, discuss with
+the operator before locking the levels**. The two-way, service-participates
+shape is LOCKED. Requirements-only.
+
+### 14. Internal capability: queues + dead-letter queues (round-6, requirements-only)
+
+**SQS-modeled queues** as an internal mesh capability (same internal-lib
+discipline as `locks` and `cron` — never a standalone crate/service).
+Operator, verbatim: "Model it after SQS in Amazon, so someday you can deploy
+Mind OS directly into your Amazon account and there's a native system to take
+advantage of" — i.e. the queue semantics must be deployable someday straight
+onto real SQS via mesh's AWS adapter. **Dead-letter queues included**, with a
+**dead-letter escalation hook into a ccd agent investigation** (confirmed as
+a good guardrail — the same escalation pattern as the shared execution
+engine's loop-depth hook; see `overview.md`'s shared-libraries section).
+Requirements-only.
 
 ### CLI surface (new operator requirement)
 
@@ -407,6 +491,9 @@ Edges match the contract graph in `overview.md`. Grouped by which child owns the
   (scaffold/contracts/kg-mesh.md)
 - projects via `projects-mesh` — project registry push + published-dashboard
   surfacing (scaffold/contracts/projects-mesh.md)
+- vault via `vault-mesh` — **NEW round-6 (requirements-only).** Vault
+  registration/resolution; the use-without-seeing secret-brokerage shape is
+  TBD (scaffold/contracts/vault-mesh.md)
 
 **observability / dashboard plane (absorbed from gateway):**
 - inference via `inference-events` (mesh <- inference, one subscription per
@@ -465,6 +552,11 @@ Rounds-4–5 additions (concerns 7–11: pub/sub protocol, port/stickiness/
 zombie-killing, single-port locality + addressing classes, `locks`, `cron`)
 are **requirements-only** across the board, with `locks`' partition semantics
 explicitly flagged OPEN.
+
+Round-6 additions (concerns 12–14: supervision + port-handoff, the
+graceful-restart protocol, queues + dead-letter queues; plus `locks`'
+partition-merge error type) are likewise **requirements-only**, with the
+restart-priority ladder explicitly "latitude granted, discuss."
 
 ## Assigned design-depth
 
