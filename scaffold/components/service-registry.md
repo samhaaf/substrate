@@ -38,7 +38,7 @@ fleet (that is completion-router's `NodeRegistry`).
 
 ## Relationships / edges
 
-- any device/service (ccd, org, inference, vfs, projects, mesh CLI) via `service-lookup`
+- any device/service (ccd, org, inference, vfs, kg, projects, mesh CLI) via `service-lookup`
   — register/resolve; the seam (scaffold/contracts/service-lookup.md)
 - ccd via `service-registration` — first-class registrant+resolver
   (scaffold/contracts/service-registration.md)

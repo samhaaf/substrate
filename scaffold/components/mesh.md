@@ -36,6 +36,15 @@ URL — and, new in the round-3 lock:
    browser WebSocket clients; the dashboard renders every service's component
    from that service's published **surface schema** (see the boring-surface-schema
    section below and `scaffold/contracts/surface-schema.md`).
+9. **The S3 adapter** (round-3 second batch, 2026-07-18 — moved here from
+   `vfs`, superseding the S3-as-VFS-feature framing): since mesh owns ALL
+   eventual-consistency/replication in the system, the AWS/S3 adapter lives in
+   mesh — the overflow tier when the personal mesh runs out of space, using S3
+   cold-storage classes, with **client-side encryption before upload** (not
+   merely encrypted-at-rest). `vfs` and `kg` talk to mesh; **mesh distributes
+   into S3 through this adapter** — including KG's cross-boundary sync (a KG
+   written on the AWS side by an external agent becomes eventually consistent
+   with the mesh; see `components/kg.md`). requirements-only.
 
 > **SUPERSEDED (2026-07-18): the mesh/gateway sibling split.** This file
 > previously drew a hard boundary: "It does not own the aggregation/
@@ -94,7 +103,7 @@ children is exactly the open internal-layering question in the Charter.)
   library candidate I am flagging now rather than letting logic duplicate: the
   `register(slug, endpoint)` / `resolve(slug) -> endpoint` HTTP client that hits
   the **local** mesh daemon's registry. Every service (`ccd`,
-  `inference`, `vfs`, `projects`, `org`) needs this at boot; if it lived inside `lib/mesh` they would
+  `inference`, `vfs`, `kg`, `projects`, `org`) needs this at boot; if it lived inside `lib/mesh` they would
   all have to depend on the whole mesh (tailscale + router + axum). A ~one-file
   client crate keeps the seam cheap and is exactly the "extract shared logic"
   target a later pass would create anyway — cheaper to seed it here. (Final
@@ -128,7 +137,7 @@ children is exactly the open internal-layering question in the Charter.)
   slug pointing at its own `:8419`**, because the mesh *is* the fleet's
   transparent front door (it load-balances internally via the router's
   `NodeRegistry`, which discovers nodes by Tailscale tag). Singleton services
-  (`db`, `ccd`, `vfs`, `projects`, `org`) each register their own slug ->
+  (`db`, `ccd`, `vfs`, `kg`, `projects`, `org`) each register their own slug ->
   their own endpoint (the `dashboard` slug is mesh's own surface now — mesh
   serves it directly, no separate registrant). So two discovery mechanisms coexist deliberately: **tag-based
   fleet discovery** (router) and **slug registry** (singletons + the `inference`
@@ -259,7 +268,7 @@ Edges match the contract graph in `overview.md`. Grouped by which child owns the
   discovery (scaffold/contracts/tailscale-status.md)
 
 **service-registry (the seam):**
-- any device/service (ccd, org, inference, vfs, projects, **and the mesh CLI**)
+- any device/service (ccd, org, inference, vfs, kg, projects, **and the mesh CLI**)
   via `service-lookup` — register/resolve; THE wiring seam
   (scaffold/contracts/service-lookup.md)
 - ccd via `service-registration` — CCD as a first-class registrant+resolver
@@ -269,8 +278,11 @@ Edges match the contract graph in `overview.md`. Grouped by which child owns the
   contract file is a tombstone (scaffold/contracts/mesh-registry-read.md)
 - service-registry (peer instances) via `registry-replication` — anti-entropy
   merge (scaffold/contracts/registry-replication.md)
-- vfs via `vfs-mesh` — VFS registration + topology awareness
-  (scaffold/contracts/vfs-mesh.md)
+- vfs via `vfs-mesh` — VFS registration + topology awareness; S3 overflow now
+  flows through mesh's own S3 adapter (scaffold/contracts/vfs-mesh.md)
+- kg via `kg-mesh` — KG registration + graph replication across nodes and into
+  S3 through mesh's adapter; graph consistency model OPEN
+  (scaffold/contracts/kg-mesh.md)
 - projects via `projects-mesh` — project registry push + published-dashboard
   surfacing (scaffold/contracts/projects-mesh.md)
 

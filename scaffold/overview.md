@@ -22,6 +22,17 @@
 > (6) New named future placeholders: `agents`, OpenRouter-management, finance,
 > AUI/interfaces.
 
+> **ROUND-3 LOCK, SECOND BATCH (2026-07-18, same day, applied on top of commit
+> `356b6af`):** (A) new build-now component **`kg`** (Knowledge Graph service;
+> requirements-only stub-plus — distributed graph across the whole mesh,
+> schema-locked nodes+edges, versioned graph templates, VFS file pointers,
+> AWS/S3 cross-boundary sync; consistency model OPEN); `projects` now straddles
+> kg + vfs. (B) new layer-six future placeholder **`artifacts`** ("no more
+> files — artifacts": typed, schema'd, interactable; projects depends on it).
+> (C) **the S3 adapter moves INSIDE mesh** — supersedes the round-3
+> S3-as-VFS-feature framing; mesh owns all eventual-consistency/replication, so
+> vfs and kg reach S3 through mesh's adapter.
+
 ## Scope of this pass
 
 Combined scope across three sources:
@@ -73,7 +84,9 @@ gc                            [existing, RESHAPE round-3] per-node storage-enfor
                                 open: rolled into vfs vs. called-as-tool)
 mesh                          [RESHAPE + EXPAND — "the operating system"] coordination plane; absorbs
                                 gateway (dashboard hosting + event fan-out + rollups); adds service-
-                                version/requirements/boot-order tracking (internal layering OPEN)
+                                version/requirements/boot-order tracking (internal layering OPEN) and
+                                the S3 adapter (cold-storage overflow, client-side encryption — round-3
+                                second batch, moved from vfs)
   ├─ tailscale-query          [NEW] standardized, extensible Tailscale-status query surface
   ├─ network-topology         [NEW] live WS: device on/off + self-connectivity-loss events
   ├─ service-registry         [NEW] distributed, eventually-consistent slug -> host:port registry
@@ -81,9 +94,13 @@ mesh                          [RESHAPE + EXPAND — "the operating system"] coor
 dashboard                     [existing, RESHAPE] Svelte/Vite frontend (per-node dimension; served BY
                                 mesh; rendering becomes surface-schema-driven)
 vfs                           [NEW round-3, requirements-only] boring distributed flat file system
-                                (per-dir policies, replication factor, warm/cold RAID-ish nodes,
-                                encrypted S3 overflow tier; calls gc per node)
-projects                      [NEW round-3, requirements-only] graphical FS / knowledge graph over vfs;
+                                (per-dir policies, replication factor, warm/cold RAID-ish nodes;
+                                calls gc per node; S3 overflow now via mesh's adapter)
+kg                            [NEW round-3 second batch, requirements-only] distributed knowledge-graph
+                                service (schema-locked nodes+edges, versioned templates, VFS file
+                                pointers, S3 cross-boundary sync via mesh; consistency model OPEN)
+projects                      [NEW round-3, requirements-only] graphical FS / knowledge graph straddling
+                                kg + vfs (graph encodes project structure; nodes point at vfs files);
                                 centralized push registry for dashboards + source; app-building layer
 db                            [existing, as-is; SCOPE CONFIRMED] Postgres/Supabase control-plane crate + `db` CLI
 ccd                           [NEW; TOP-LEVEL CONFIRMED round-3] Cloud Code Daemon (Marshall/CCM):
@@ -206,6 +223,8 @@ where a caller/callee asymmetry matters.
 | `vfs-mesh` | vfs <-> mesh | **NEW round-3 (requirements-only).** VFS registration + node/drive topology awareness + per-node perf reporting (uptime, read/write latency). |
 | `projects-vfs` | projects -> vfs | **NEW round-3 (requirements-only).** The knowledge graph points into sections of the flat VFS; project artifacts stored through it. |
 | `projects-mesh` | projects <-> mesh | **NEW round-3 (requirements-only).** Registry push (dashboards + source) + surfacing project dashboards on the mesh dashboard via surface schemas. |
+| `kg-mesh` | kg <-> mesh | **NEW round-3 second batch (requirements-only).** KG registration + graph replication across nodes and into S3 through mesh's adapter; graph-merge consistency model OPEN ("the superset" of the registry's LWW KV). |
+| `kg-vfs` | kg -> vfs | **NEW round-3 second batch (requirements-only).** KG nodes point at VFS files; existence validation of the pointed-at file. |
 
 **Collapsed edge:** `mesh-registry-read` (was gateway -> mesh) no longer exists —
 with gateway absorbed, that read is mesh consulting its own registry in-process;
@@ -267,7 +286,7 @@ registry.
 the seam implies reworking every currently-static endpoint config to resolve via
 `service-lookup`: the absorbed observability plane's `inference_url`/`gc_url`
 (now mesh-internal config), the mesh's node list,
-CCD's endpoints, Org's service map, and the new `vfs`/`projects` services. The
+CCD's endpoints, Org's service map, and the new `vfs`/`kg`/`projects` services. The
 mesh-design-synthesis
 already anticipated the observability-plane change (OQ-style, written pre-merge
 against gateway). This is a cross-cutting refactor
@@ -282,6 +301,12 @@ layer; none is decomposed, designed, or given a `components/` file this pass:
 - **`agents`** — a future generalization layered ON TOP of CCD for non-Claude-
   Code agent types (which CAN choose models and may use local inference); CCD
   itself stays top-level and is NOT merged into this umbrella.
+- **`artifacts`** (round-3 second batch) — "once we migrate to projects, no
+  more files — artifacts": typed, schema'd, interactable files (e.g. an
+  HFT-strategy artifact evaluated against asset artifacts via a versioned
+  controller against a simulator); implies a script execution engine; built out
+  incrementally; "might have to be its own standalone tool, really boring and
+  deterministic." `projects` depends on it (see `components/projects.md`).
 - **OpenRouter-management** — a service managing OpenRouter API keys: per-key
   creation with per-key budgets, dashboard-managed.
 - **finance** — cost tracking, per-project (eventually attaching to `projects`'
@@ -301,6 +326,10 @@ layer; none is decomposed, designed, or given a `components/` file this pass:
 - **GC rolled into VFS vs. called-as-tool (NEW round-3):** GC is now the
   per-node tool VFS calls; "might need to get rolled up into the VFS." Open —
   see `gc.md` / `vfs.md`.
+- **KG distributed-consistency model (NEW round-3 second batch):** a graph of
+  interconnected nodes is "the superset" of the registry's naive
+  timestamp-wins KV — its merge/consistency design is open. See `kg.md` /
+  `contracts/kg-mesh.md`.
 - **Surface-schema language shape (NEW round-3):** the `types` schema language
   for the boring surface schema is requirements-only; a step-3 / Contract
   Harmonizer design concern. See `contracts/surface-schema.md`.
