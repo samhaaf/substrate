@@ -38,6 +38,18 @@ service-registry, completion-router}.
 > per-case seam; a dead-letter queue is just a queue; "the entire contract
 > of the system is basically built off the queueing mechanism" (concern 14).
 
+> **ROUND-8 LOCK (2026-07-19, applied on top of commit `35039b7`):**
+> (1) **VOCABULARY LOCKED — queues / events / triggers / handlers**
+> (concern 14): queues hold **typed EVENTS** (standardized event-type
+> struct in `types`); **TRIGGERS** are one-to-one queue→handler (many
+> triggers per queue), FILTER by event type + payload content, and
+> ASSEMBLE the handler's payload (the trigger, not the event, dictates
+> handler input; assembly may call rollup); **HANDLERS** receive the
+> assembled payload; the event-ID semaphore becomes a **per-trigger
+> choice** (supersedes round-7's blanket every-pull rule).
+> (2) the `vault` registrant is renamed **`secrets`** (`vault-mesh` →
+> `secrets-mesh`; see `components/secrets.md`).
+
 ## Charter
 
 `mesh` is Substrate's **operating system** — the network / coordination plane
@@ -428,7 +440,7 @@ is up to you — something to discuss there" — **latitude granted, discuss wit
 the operator before locking the levels**. The two-way, service-participates
 shape is LOCKED. Requirements-only.
 
-### 14. Internal capability: queues + dead-letter queues (round-6, requirements-only; queue-pull semantics round-7)
+### 14. Internal capability: queues + dead-letter queues (round-6, requirements-only; queue-pull semantics round-7; vocabulary LOCKED round-8)
 
 **SQS-modeled queues** as an internal mesh capability (same internal-lib
 discipline as `locks` and `cron` — never a standalone crate/service).
@@ -447,10 +459,35 @@ engine's loop-depth hook; see `overview.md`'s shared-libraries section).
   This approximates **exactly-once on top of at-least-once delivery**;
   **duplicate-handling remains a per-case seam** ("with a seam for
   [duplicate handling] on a per-case basis").
+  **(SUPERSEDED in blanket form round-8: the semaphore requirement becomes
+  a PER-TRIGGER choice — see the vocabulary block below. The locks+queues
+  composition and the ~exactly-once framing stand.)**
 - **A dead-letter queue is just a queue** — no special mechanism.
 - Operator's framing, verbatim: "the entire contract of the system is
   basically built off the queueing mechanism" — the system's whole contract
   fabric rides this, with the more-than-once edge handled per-case.
+
+**VOCABULARY LOCKED (round-8, 2026-07-19): queues, events, triggers,
+handlers.** This four-term vocabulary SUPERSEDES any simpler queue→handler
+wording anywhere in the scaffold:
+
+- **EVENTS are TYPED** — "I want a standardized struct for event types";
+  the standardized event-type struct lives in `types` (see
+  `components/types.md`). Events of different types go into queues; a
+  queue holds typed events.
+- **TRIGGERS are one-to-one from a queue to a handler**, with **many
+  triggers per queue**. A trigger does two jobs: it **FILTERS** (by event
+  type, and by payload content per event type), and it **ASSEMBLES the
+  handler's payload** — "it's not the event which dictates the payload
+  going into the handler, it's the trigger." Assembly can call the
+  **rollup** system for injection (see `components/rollup.md`). "The
+  trigger is actually a really powerful mechanism."
+- **HANDLERS receive the trigger-assembled payload** — never the raw event
+  directly.
+- **Semaphore generalization (supersedes round-7's blanket rule): the
+  event-ID semaphore is a per-trigger (per-handler) choice** — each
+  trigger declares whether pulling through it requires acquiring the
+  event-ID semaphore.
 
 Requirements-only.
 
@@ -511,9 +548,12 @@ Edges match the contract graph in `overview.md`. Grouped by which child owns the
   (scaffold/contracts/kg-mesh.md)
 - projects via `projects-mesh` — project registry push + published-dashboard
   surfacing (scaffold/contracts/projects-mesh.md)
-- vault via `vault-mesh` — **NEW round-6 (requirements-only).** Vault
+- secrets via `secrets-mesh` — **NEW round-6 (requirements-only); RENAMED
+  round-8** (was vault / `vault-mesh` — Supabase Vault / AWS Secrets Manager
+  name collisions; see `components/secrets.md`). Secrets
   registration/resolution; the use-without-seeing secret-brokerage shape is
-  TBD (scaffold/contracts/vault-mesh.md)
+  TBD; round-8 adds distribution across nodes / replication ~3
+  (scaffold/contracts/secrets-mesh.md)
 
 **observability / dashboard plane (absorbed from gateway):**
 - inference via `inference-events` (mesh <- inference, one subscription per
@@ -578,7 +618,9 @@ graceful-restart protocol, queues + dead-letter queues; plus `locks`'
 partition-merge error type) are likewise **requirements-only**, with the
 restart-priority ladder explicitly "latitude granted, discuss." The round-7
 queue-pull semantics (semaphore-keyed-by-event-ID pulls, `locks` + queues
-composing; concern 14) are also requirements-only.
+composing; concern 14) are also requirements-only, as is the round-8
+queues/events/triggers/handlers vocabulary (typed events, filtering +
+payload-assembling triggers, per-trigger semaphore choice; concern 14).
 
 ## Assigned design-depth
 

@@ -72,7 +72,7 @@
 > escalation → ccd investigation) — see `mesh.md` concerns 12–14. `locks`
 > gains a required catchable partition-merge error type. (B) **three new
 > requirements-only components:** **`vault`** (secrets — agents/LLMs
-> use-without-seeing), **`rollup`** (the prompt/plugin rollup system; crate
+> use-without-seeing; **RENAMED `secrets` round-8**), **`rollup`** (the prompt/plugin rollup system; crate
 > name OPEN: rollup/plugins/other; CCD ideally built on top of it), and
 > **`repo`** (**fork RESOLVED** — repo IS its own crate on top of the VFS;
 > both stay boring). (C) the **stack-vs-db boundary recorded as THE
@@ -105,7 +105,7 @@
 > LLM-feeding services default `llm_safe=true`; raw requests fail or degrade
 > to ID-plus-warning; **no secret ever reaches an LLM**; rollup must never
 > resolve a vault raw reference in LLM-bound content — see
-> `vault.md`/`rollup.md`. (E) **queue-pull semantics** — pulls acquire a
+> `secrets.md` (was `vault.md`; renamed round-8)/`rollup.md`. (E) **queue-pull semantics** — pulls acquire a
 > semaphore keyed by the event ID (`locks` + queues compose; ~exactly-once
 > over at-least-once; duplicate-handling a per-case seam); a dead-letter
 > queue is just a queue; "the entire contract of the system is basically
@@ -113,6 +113,44 @@
 > (F) **provenance SCOPED** — configured per-project/per-database; **VDB is
 > its primary home**; VFS carries only a lighter requirement (see the
 > standing principles below and `stack.md`/`vfs.md`).
+
+> **ROUND-8 LOCK (2026-07-19, applied on top of commit `35039b7`):**
+> (A) **the VDB/db/KG LAYERING IS LOCKED — the stack-vs-db "most-nebulous"
+> open question is RESOLVED.** Operator, verbatim: "VDB becomes the daemon
+> which tracks the execution, and it takes advantage of the db crate to
+> actually run the actions against specific databases — we extend db as
+> necessary to support VDB. And KG we build on top of VDB." **VDB = the
+> daemon tracking/executing the stack pattern; `db` = the crate VDB uses
+> to run actions (extended as needed); KG builds ON TOP of VDB; VFS sits
+> BELOW VDB** (the SQLite files live in the VFS). Layer order:
+> **VFS < VDB < KG** — see `stack.md`/`db.md`/`kg.md`/`vfs.md` and the
+> resolved entry in the open questions below. (B) **KG routing +
+> registry** — each graph links to a project+environment; the environment
+> routes storage (local → SQLite, cloud → promoted to Supabase/AWS);
+> don't over-constrain (a local-purpose KG may support a cloud
+> environment); KG stays a **GLOBAL registry of ALL graphs**
+> (cross-project reuse, schema referencing); each graph routes to a
+> location in VDB and/or VFS — see `kg.md`. (C) **`vault` RENAMED →
+> `secrets`** ("vault" collides with Supabase Vault, "SM" with AWS Secrets
+> Manager; "secrets is the name because that's what it is") —
+> `components/secrets.md`, contract `vault-mesh` → `secrets-mesh`; new
+> requirements: **distributed across nodes (or replication factor ~3)**;
+> **adapters pushing secrets into Supabase Vault, AWS Secrets Manager,
+> and GitHub Actions secrets**; interfaces with VDB, db, projects,
+> environments, repo. `lib/db`'s real, existing Supabase-Vault module +
+> keychain convention audited and recorded in `db.md`; `secrets` is the
+> owner going forward, db reconciles to consume it. (D) **repo gains
+> GitHub Actions management** — managing workflows on repos + linking
+> secrets into GH Actions workflows — see `repo.md`. (E) **VOCABULARY
+> LOCKED: queues / events / triggers / handlers** — queues hold **typed
+> EVENTS** (standardized event-type struct in `types`); **TRIGGERS** are
+> one-to-one queue→handler (many triggers per queue), FILTER by event
+> type + payload content, and ASSEMBLE the handler's payload (the
+> trigger, not the event, dictates handler input; assembly may call
+> rollup); **HANDLERS** receive the assembled payload; the event-ID
+> semaphore becomes a **per-trigger choice** (supersedes round-7's
+> blanket every-pull rule) — see `mesh.md` concern 14, `types.md`, and
+> the shared-libraries section.
 
 ## Scope of this pass
 
@@ -175,7 +213,10 @@ mesh                          [RESHAPE + EXPAND — "the operating system"] coor
                                 supervises local services (port-handoff updates); two-way graceful-
                                 restart protocol; queues + dead-letter queues (SQS-modeled). Round-7:
                                 queue pulls acquire a semaphore keyed by event ID (locks + queues
-                                compose; ~exactly-once over at-least-once)
+                                compose; ~exactly-once over at-least-once). Round-8: vocabulary locked
+                                — typed EVENTS in queues; TRIGGERS (1:1 queue→handler, many per queue)
+                                filter + assemble handler payloads; HANDLERS receive assembled
+                                payloads; the event-ID semaphore is a per-trigger choice
   ├─ tailscale-query          [NEW] standardized, extensible Tailscale-status query surface
   ├─ network-topology         [NEW] live WS: device on/off + self-connectivity-loss events
   ├─ service-registry         [NEW] distributed, eventually-consistent slug -> host:port registry
@@ -184,10 +225,16 @@ dashboard                     [existing, RESHAPE] Svelte/Vite frontend (per-node
                                 mesh; rendering becomes surface-schema-driven)
 vfs                           [NEW round-3, requirements-only] boring distributed flat file system
                                 (per-dir policies, replication factor, warm/cold RAID-ish nodes;
-                                calls gc per node; S3 overflow now via mesh's adapter)
+                                calls gc per node; S3 overflow now via mesh's adapter); round-8: sits
+                                BELOW VDB in the locked layering — VDB's SQLite files live here
+                                (VFS < VDB < KG)
 kg                            [NEW round-3 second batch, requirements-only] distributed knowledge-graph
                                 service (schema-locked nodes+edges, versioned templates, VFS file
-                                pointers, S3 cross-boundary sync via mesh; consistency model OPEN)
+                                pointers, S3 cross-boundary sync via mesh; consistency model OPEN);
+                                round-8: BUILT ON TOP of VDB (VFS < VDB < KG); each graph links to a
+                                project+environment (environment routes storage: local→SQLite,
+                                cloud→Supabase/AWS); GLOBAL registry of all graphs; graphs route to a
+                                location in VDB and/or VFS
 projects                      [NEW round-3, requirements-only] graphical FS / knowledge graph straddling
                                 kg + vfs (graph encodes project structure; nodes point at vfs files);
                                 centralized push registry for dashboards + source; app-building layer;
@@ -197,29 +244,40 @@ repo                          [NEW round-6, requirements-only; fork RESOLVED] it
                                 of the VFS (git-in-the-VFS rejected): push/sync between VFS and
                                 git/GitHub repos; branches, worktrees, branches attachable to
                                 environments; "the only non-boring thing about it is that it sits on
-                                the VFS"
+                                the VFS"; round-8: GitHub Actions management — managing workflows on
+                                repos + linking secrets into GH Actions workflows
 db                            [existing, as-is; SCOPE CONFIRMED] Postgres/Supabase control-plane crate + `db` CLI;
                                 rounds 4–5: query/virtualization layer now in-scope DIRECTION
                                 (standardized query interface over SQLite-in-VFS / Supabase / RDS);
                                 round-7: its Capabilities-gated drivers are the seed of VDB's
-                                adapter matrix
+                                adapter matrix; round-8: the crate VDB USES to run actions against
+                                specific databases — extended as necessary to support VDB; its
+                                existing secret handling (real Supabase-Vault module + keychain
+                                convention) reconciles toward consuming `secrets`
 stack                         [NEW rounds 4–5, requirements-only] lightweight database-with-handlers
                                 runtime: daemon around a single SQLite-file-in-the-VFS, SQL + Deno/TS
                                 handlers on row/table changes; NO DOCKER locally (hard rule);
                                 round-7: VDB elevated to the deploy-anywhere stack-pattern
                                 implementation (local SQLite daemon / Supabase / AWS RDS+Lambda);
                                 local-Postgres decision GATED on a required SQLite-sufficiency
-                                analysis
+                                analysis; round-8: LAYERING LOCKED — VDB is the daemon that
+                                tracks/executes the stack pattern, USING the db crate to run actions
+                                (db extended as needed); KG on top of VDB; VFS below (VFS < VDB < KG);
+                                the stack-vs-db open question is RESOLVED
 environments                  [NEW rounds 4–5, requirements-only] environment = subset of a project;
                                 CICD pipeline attachable; deploy-into-environment activates it;
                                 chained blue/green deployments; bandit feature balancing (placement OPEN)
 cicd                          [NEW rounds 4–5, requirements-only] pipelines consuming environments;
                                 hierarchy vs environments OPEN (sibling-with-dependency assumed)
-vault                         [NEW round-6, requirements-only] secrets crate; agents/LLMs can NEVER
-                                directly read a secret but CAN use one in context (use-without-seeing,
-                                enforced at the access-pattern level); round-7: llm_safe mechanism
-                                locked (raw/ID addressing; raw requests fail or degrade to
-                                ID-plus-warning; no secret ever reaches an LLM)
+secrets                       [NEW round-6, requirements-only; RENAMED from `vault` round-8 —
+                                Supabase Vault / AWS Secrets Manager collisions] secrets crate/service;
+                                agents/LLMs can NEVER directly read a secret but CAN use one in context
+                                (use-without-seeing, enforced at the access-pattern level); round-7:
+                                llm_safe mechanism locked (raw/ID addressing; raw requests fail or
+                                degrade to ID-plus-warning; no secret ever reaches an LLM); round-8:
+                                distributed across nodes (replication ~3); adapters push secrets into
+                                Supabase Vault, AWS Secrets Manager, GitHub Actions secrets;
+                                interfaces with VDB, db, projects, environments, repo
 rollup                        [NEW round-6, requirements-only; crate name OPEN: rollup/plugins/other]
                                 prompt/plugin rollup: fragments referencing fragments via a syntax,
                                 slots taking variables at reference time; specialized plugins generated
@@ -285,9 +343,11 @@ org                           [NEW, PLACEHOLDER — NOT DECOMPOSED THIS PASS]  a
   noted in `db.md` as future-only — **partially SUPERSEDED rounds 4–5: the
   query/virtualization layer is now an in-scope DIRECTION** (standardized
   query interface over SQLite-in-VFS / Supabase / RDS backends), though its
-  design pass is still not authorized. Working framing vs. the new `stack`:
-  `db` = control-plane/virtualization/query interface; `stack` = the runtime
-  hosting a database. See `db.md` / `stack.md`.
+  design pass is still not authorized. Working framing vs. the new `stack`
+  — **superseded round-8 by the locked layering:** VDB = the daemon
+  tracking/executing the stack pattern; `db` = the crate VDB uses to run
+  actions against specific databases (extended as needed); VFS < VDB < KG.
+  See `db.md` / `stack.md`.
 - **`mesh` absorbs the expanded scope as four children.** The Tailscale-query
   surface EARNED its own (nested) component: the operator explicitly wants it
   "standardized" and "extensible" ("add new tools as we go"), and it is consumed
@@ -372,7 +432,7 @@ where a caller/callee asymmetry matters.
 | `kg-vfs` | kg -> vfs | **NEW round-3 second batch (requirements-only).** KG nodes point at VFS files; existence validation of the pointed-at file. |
 | `stack-vfs` | stack -> vfs | **NEW rounds 4–5 (requirements-only).** The single SQLite file each stack daemon wraps is stored in / accessed through the VFS. |
 | `stack-mesh` | stack <-> mesh | **NEW rounds 4–5 (requirements-only).** Registration via the local mesh daemon (:3649, single-port locality) + distributed-handler coordination via mesh's `locks` lib. |
-| `vault-mesh` | vault <-> mesh | **NEW round-6 (requirements-only).** Vault registration/resolution via the local mesh daemon; the use-without-seeing secret-brokerage shape is TBD. |
+| `secrets-mesh` | secrets <-> mesh | **NEW round-6 (requirements-only); RENAMED round-8 (was `vault-mesh`).** Secrets registration/resolution via the local mesh daemon; the use-without-seeing secret-brokerage shape is TBD; round-8 adds distribution across nodes (replication ~3). |
 | `rollup-ccd` | ccd -> rollup | **NEW round-6 (requirements-only).** CCD consumes rollup for its plugin/prompt assembly — fragments + slots rolled up into specialized plugins for specialized agents, generated on demand. |
 | `repo-vfs` | repo -> vfs | **NEW round-6 (requirements-only).** Repo sits on top of the VFS: repo state materialized through VFS storage; push/sync between VFS trees and git/GitHub repos. |
 | `repo-environments` | repo <-> environments | **NEW round-6 (requirements-only).** Branches/worktrees attachable to environments; deploy-into-environment activates the pipeline (the environments-branches relationship is flagged "strange" for public-website deployments). |
@@ -444,7 +504,7 @@ the seam implies reworking every currently-static endpoint config to resolve via
 `service-lookup`: the absorbed observability plane's `inference_url`/`gc_url`
 (now mesh-internal config), the mesh's node list,
 CCD's endpoints, Org's service map, and the new
-`vfs`/`kg`/`projects`/`stack`/`vault`/`repo` services. The
+`vfs`/`kg`/`projects`/`stack`/`secrets`/`repo` services. The
 mesh-design-synthesis
 already anticipated the observability-plane change (OQ-style, written pre-merge
 against gateway). This is a cross-cutting refactor
@@ -506,6 +566,19 @@ operator-locked shared lib.)
     like: what happened?").
   - **Naming guardrail:** this engine and its propagation must NOT be called
     "ripples" anywhere — that word is RESERVED (see the future section).
+  - **Trigger vocabulary (LOCKED round-8, 2026-07-19) — shared with mesh's
+    queues; supersedes any simpler queue→handler wording:** queues hold
+    **typed EVENTS** (a standardized event-type struct in `types` — see
+    `components/types.md`); **TRIGGERS** are **one-to-one from a queue to a
+    handler**, with **many triggers per queue** — a trigger **FILTERS** (by
+    event type, and by payload content per event type) and **ASSEMBLES the
+    handler's payload** ("it's not the event which dictates the payload
+    going into the handler, it's the trigger"), optionally calling the
+    **rollup** system during assembly; **HANDLERS** receive the assembled
+    payload. **Each trigger declares whether pulling through it requires
+    the event-ID semaphore** (per-trigger choice — supersedes round-7's
+    blanket rule; the `locks`+queues composition stands). See
+    `components/mesh.md` concern 14.
 
 ## Future / placeholder concepts (named only — NO component files)
 
@@ -565,25 +638,31 @@ layer; none is decomposed, designed, or given a `components/` file this pass:
   because two network partitions merged," handled per-application** (CAP
   honesty blessed — "we cannot violate the laws of physics"). See `mesh.md`
   concern 10.
-- **The stack-vs-db boundary (round-6) — THE operator's MOST-NEBULOUS open
-  question; do NOT force it.** Stack is "a pattern" (database-driven
-  triggers/handlers calling third parties); much of it already lives in `db`
-  (which really does deploy edge functions to Supabase today). Options on
-  the table: fold stack into db (and run the KG through db — pushing db
-  hard) vs. keep db boring as a utility under a bigger eventual-consistency
-  system in the mesh. The operator coined **VDB** — round-6 a
+- ~~**The stack-vs-db boundary (round-6) — THE operator's MOST-NEBULOUS open
+  question; do NOT force it.**~~ — **RESOLVED round-8 (2026-07-19): the
+  VDB/db/KG layering is LOCKED.** Operator, verbatim: "VDB becomes the
+  daemon which tracks the execution, and it takes advantage of the db crate
+  to actually run the actions against specific databases — we extend db as
+  necessary to support VDB. And KG we build on top of VDB." History: stack
+  is "a pattern" (database-driven triggers/handlers calling third parties);
+  round-6 posed fold-stack-into-db vs. keep-db-boring and coined **VDB** (a
   virtualized-database service using `db` under the hood, databases treated
   like services under mesh's restart/upgrade protocol, with the confirmed
-  copy/verify/switch + let-edge-functions-finish migration mechanics —
-  **and round-7 ELEVATED it to the working name for the deploy-anywhere
-  implementation of the stack pattern** (one abstract runtime; local
-  SQLite-stack-daemon / Supabase / AWS RDS+Lambda adapters; `db`'s
-  Capabilities-gated drivers as the seed). Attached OPEN questions
-  (round-7): how the stack pattern gets "baked into" VDB, and **whether KG
-  should be BUILT ON VDB** ("is the knowledge graph just a special version
-  of VDB, living as a distributed service via the mesh? I actually think
-  that's a worthwhile question" — see `kg.md`). The boundary itself remains
-  OPEN. Full verbatim in `stack.md`; see also `db.md`.
+  copy/verify/switch + let-edge-functions-finish migration mechanics);
+  round-7 ELEVATED VDB to the deploy-anywhere implementation of the stack
+  pattern (one abstract runtime; local SQLite-stack-daemon / Supabase / AWS
+  RDS+Lambda adapters; `db`'s Capabilities-gated drivers as the seed) with
+  two attached open questions. **Round-8 closes all of it with the
+  decomposition: VDB is the DAEMON that tracks/executes the stack pattern;
+  `db` is the crate VDB USES to run actions against specific databases
+  (extended as needed to support VDB); KG is BUILT ON TOP of VDB (the
+  KG-on-VDB question answers YES — see `kg.md`); VFS sits BELOW VDB (the
+  SQLite files live in the VFS). Locked layer order: VFS < VDB < KG.**
+  Neither round-6 option won outright — db is not swallowed by stack, and
+  db does not stay frozen: it stays the boring action-runner under the VDB
+  daemon. Still open nearby: the Postgres source / Docker tension and the
+  SQLite-sufficiency gate (next bullet). Full supersession note in
+  `stack.md`; see also `db.md`.
 - **`stack` SQLite→Postgres upgrade (rounds 4–5; PARTIALLY RESOLVED
   round-6; GATED round-7):** the migration *mechanics* are confirmed
   (copy/verify/switch under a lock; let running edge functions finish, swap
@@ -629,8 +708,9 @@ layer; none is decomposed, designed, or given a `components/` file this pass:
   in other projects — a prior-art scan is underway separately and should
   seed the design pass. Round-7 locks the **raw-vs-reference insert-type
   axis** (extending the prior art's prompt/slot/file/prompt-file markers)
-  and the **no-vault-raw-in-LLM-bound-content rule**. See
-  `components/rollup.md` / `components/vault.md`.
+  and the **no-secrets-raw-in-LLM-bound-content rule**. See
+  `components/rollup.md` / `components/secrets.md` (was `vault.md`;
+  renamed round-8).
 - **GC rolled into VFS vs. called-as-tool (NEW round-3):** GC is now the
   per-node tool VFS calls; "might need to get rolled up into the VFS." Open —
   see `gc.md` / `vfs.md`.

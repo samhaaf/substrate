@@ -177,9 +177,24 @@ driver architecture** (`supabase-cloud` / `supabase-local` / `sqlite`,
 selected through the single `Driver` trait + per-driver `Capabilities`
 flags) is **the natural seed of VDB's adapter matrix** — the same
 incapable-driver-degrades-early seam, grown into deploy-target adapters.
-Open questions attached (verbatim in `components/stack.md`): how the stack
-pattern gets "baked into" VDB, and whether KG should be BUILT ON VDB (see
-`components/kg.md`). The stack-vs-db boundary itself remains OPEN.
+The two round-7 attached open questions (how the stack pattern gets "baked
+into" VDB; whether KG should be BUILT ON VDB) and the boundary itself are
+**RESOLVED round-8 — see the next paragraph.**
+
+**Round-8 (2026-07-19): the VDB/db/KG LAYERING IS LOCKED — the stack-vs-db
+boundary (the former most-nebulous open question) is RESOLVED.** Operator,
+verbatim: "VDB becomes the daemon which tracks the execution, and it takes
+advantage of the db crate to actually run the actions against specific
+databases — we extend db as necessary to support VDB. And KG we build on
+top of VDB." So: **VDB is the DAEMON tracking/executing the stack pattern;
+`db` is the CRATE VDB uses to run actions against specific databases —
+and `db` gets EXTENDED as necessary to support VDB** (this supersedes, as
+direction, the Charter's "no implementation changes to `db`" posture:
+extensions are now an anticipated, operator-authorized direction, though no
+specific change is designed in this pass). **KG builds ON TOP of VDB; VFS
+sits BELOW VDB** (the SQLite files live in the VFS). Locked layer order:
+**VFS < VDB < KG.** See `components/stack.md` (supersession note) and
+`components/kg.md`.
 **Provenance note (round-6 cross-cutting; SCOPED round-7):** whatever shape
 wins, provenance is FIRST-ORDER — every handler touch of data traced from
 the very beginning (see `overview.md`'s standing principle) — and it is
@@ -193,3 +208,45 @@ above still says it "wraps ... Docker" via the `supabase-local` driver — that
 local-Docker path is now in tension with the rule and presumably deprecates
 toward `stack`/native/cloud backends. Flagged for the operator/harmonizer,
 not silently rewritten.
+
+## Secret handling in `db` today — FACTS (round-8 audit, 2026-07-19) + reconciliation direction
+
+The operator recalled that `db` "may already contain its own vault stub"
+(he once intended `db` to own vault). **Verified against `lib/db`'s actual
+source this round — it is more than a stub:**
+
+- **A real, working Supabase-Vault module:** `lib/db/src/vault.rs`
+  implements secret management as plain SQL against the `vault` schema
+  installed by the `supabase_vault` extension — `set` (create-or-update via
+  `vault.create_secret`/`vault.update_secret`), `list` (name + description,
+  NEVER the plaintext), `get` (decrypted, via `vault.decrypted_secrets`),
+  `remove`, `exists`, plus `reference_sql` (renders the canonical
+  `(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = …)`
+  expression so migrations/handlers reference a secret at runtime by name
+  and never store plaintext). All free-form values are bound parameters
+  (injection-safe). It flows over the `Driver` seam: identical code drives
+  `supabase-local` and `supabase-cloud`; the `sqlite` driver has no Vault
+  and degrades to a typed `NotImplemented`.
+- **A CLI surface:** `bin/db`'s `db vault set/list/get/rm` — `get` refuses
+  to print plaintext without `--reveal`; the mutating verbs (`set`/`rm`)
+  gate through the protected-ref guard and honor `--dry-run`.
+- **Tests:** `lib/db/tests/vault_it.rs` (Docker-gated integration tests
+  against a real local Supabase Vault; green-skip when absent) and unit
+  tests (`u_vault_01/02`, and `u_cfg_05_secrets_not_in_toml`).
+- **The documented keychain convention:** `etc/db.example.toml` line 2 —
+  "Secrets NEVER live here: PAT / service-role come from the OS keychain at
+  runtime" — restated in `lib/db/src/config.rs` ("Secrets never live
+  here — PATs / service-role keys come from the keychain at runtime"), and
+  honored by `lib/db/src/driver/supabase_cloud.rs` (the Management-API PAT
+  is "fetched from the OS keychain" at runtime).
+
+**Reconciliation direction (round-8):** the **`secrets` service
+(`components/secrets.md`, RENAMED from `vault` this round) becomes the
+OWNER of secret management going forward.** `db`'s own secret handling —
+the Supabase-Vault module and the keychain-at-runtime convention — gets
+**reconciled to CONSUME `secrets`**: the existing `vault.rs` surface is the
+natural seed of `secrets`' Supabase-Vault push adapter, and the direct
+keychain reads become `secrets`-mediated. **A real `db`-crate update is
+operator-authorized when that design lands** ("this might be one of the
+times where we actually have to update the db crate"). Nothing in `lib/db`
+is changed this pass — facts and direction recorded only.

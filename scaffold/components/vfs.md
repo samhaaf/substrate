@@ -15,6 +15,11 @@ components (notably `projects`) build on. Requirements:
   VFS" — **OPEN question: rolled-in vs. called-as-tool.** See `gc.md`.
 - **Self-tracked performance** — VFS tracks its own performance like inference
   does: uptime, per-node read/write latency.
+- **Layering (round-8 lock, 2026-07-19): VFS sits BELOW VDB.** In the locked
+  VDB/db/KG decomposition (see `components/stack.md`), the SQLite database
+  files VDB manages **live in the VFS** ("the SQLite files must live
+  somewhere"). Locked layer order: **VFS < VDB < KG**. KG graphs route to a
+  location in VDB and/or VFS (see `components/kg.md`).
 - **Provenance: a LIGHTER design requirement here (round-7 scoping,
   2026-07-19).** The FIRST-ORDER provenance principle (`overview.md`) is
   configured per-project/per-database with **VDB as its primary home**;
@@ -49,6 +54,9 @@ components (notably `projects`) build on. Requirements:
   (scaffold/contracts/kg-vfs.md).
 - **projects** via `projects-vfs` — `projects` is the graphical/knowledge layer
   built on top of this flat store (scaffold/contracts/projects-vfs.md).
+- **stack/VDB** via `stack-vfs` — the SQLite file each stack/VDB daemon wraps
+  lives in the VFS; round-8: this is the locked VFS-below-VDB layering
+  (scaffold/contracts/stack-vfs.md).
 
 ## Nesting
 

@@ -32,6 +32,16 @@ it is the shared language every edge's schema is written in.
 > publishers and subscribers expect"; mesh relays them where they need to
 > go). See `components/mesh.md` concern 7. Requirements-only; shapes
 > undesigned (a Contract Harmonizer concern, like surface-schema).
+> **Third planned addition (round-8 lock, 2026-07-19): a standardized
+> EVENT-TYPE struct module** (e.g. `event.rs`) — operator, verbatim: "I
+> want a standardized struct for event types." Under the round-8
+> queues/events/triggers/handlers vocabulary (see `components/mesh.md`
+> concern 14), mesh's queues hold TYPED events; triggers filter by event
+> type and by payload content per event type, then assemble the handler's
+> payload. The standardized event struct is the shared vocabulary that
+> filtering/assembly is written against. Requirements-only; shape
+> undesigned (Contract Harmonizer concern; likely related to, but distinct
+> from, the pub/sub envelope module).
 
 It remains on a growth path (mesh's OQ-3 `NodeInfo`/`NodeCapabilities`
 enrichment, the surface-schema module, the WS pub/sub envelope module, and
@@ -139,8 +149,9 @@ round-3 **surface-schema module is `requirements-only`** (named and scoped —
 render + interaction description language — but its type shapes are undesigned;
 a step-3 / Contract Harmonizer concern together with
 `scaffold/contracts/surface-schema.md`). The rounds-4–5 **WS pub/sub envelope
-module is likewise `requirements-only`** (see the planned-additions note in
-the Charter).
+module** and the round-8 **standardized event-type struct module** are
+likewise **`requirements-only`** (see the planned-additions notes in the
+Charter).
 
 ## Assigned design-depth
 

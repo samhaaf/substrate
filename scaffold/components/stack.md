@@ -1,6 +1,7 @@
 # stack
 
-**Status:** NEW (rounds 4–5 lock, 2026-07-18; round-7 update, 2026-07-19).
+**Status:** NEW (rounds 4–5 lock, 2026-07-18; round-7 update, 2026-07-19;
+**round-8 lock, 2026-07-19 — the stack-vs-db boundary is RESOLVED**).
 **Nesting:** top-level.
 **Stub-plus — requirements captured from the operator; NOT a full design.**
 
@@ -64,16 +65,33 @@ Requirements:
   the file system — usually only in the database and the stack pattern");
   VFS carries only a lighter provenance design requirement (see
   `components/vfs.md`).
-- **Relationship to `db` (working framing — now explicitly the operator's
-  most-nebulous OPEN question; see the section below):** `db` = the
-  control-plane / virtualization / query interface over databases; `stack` =
-  the runtime that HOSTS a database. A stack-hosted SQLite file is one of the
-  backends `db`'s now-in-scope query/virtualization layer standardizes over.
-  See `components/db.md`.
+- **Relationship to `db` — RESOLVED round-8 (supersedes the "most-nebulous
+  OPEN question" framing; see the section below):** the locked decomposition
+  is **VDB = the daemon that tracks and executes the stack pattern; `db` =
+  the crate VDB uses to run actions against specific databases (extended as
+  necessary to support VDB); KG built on top of VDB; VFS below VDB**. Layer
+  order: **VFS < VDB < KG**. See `components/db.md`.
 
-## The stack-vs-db boundary — THE operator's most-nebulous OPEN question (round-6; do NOT force it)
+## The stack-vs-db boundary — RESOLVED round-8 (was THE operator's most-nebulous OPEN question, round-6)
 
-Recorded verbatim-grade, deliberately NOT resolved. Operator: stack "is a
+> **RESOLVED (round-8, 2026-07-19) — SUPERSEDES the round-6 "do NOT force
+> it" OPEN status.** The resolving decomposition, operator verbatim: **"VDB
+> becomes the daemon which tracks the execution, and it takes advantage of
+> the db crate to actually run the actions against specific databases — we
+> extend db as necessary to support VDB. And KG we build on top of VDB."**
+> Layering fact: VDB sits ON VFS (the SQLite files must live somewhere), so
+> the locked layer order is **VFS < VDB < KG**. Neither round-6 option won
+> outright: stack is NOT folded into `db`, and `db` is not left untouched —
+> `db` stays the boring action-runner crate UNDER the VDB daemon, extended
+> as needed to support it. Both round-7 attached open questions close with
+> this: (a) the stack pattern is "baked into" VDB by VDB **being** the
+> daemon that tracks/executes it, and (b) **KG IS built on top of VDB**
+> (see `components/kg.md`). The sections below are preserved as history of
+> how the question stood before the lock.
+
+**History (round-6 capture — superseded by the resolution above):**
+recorded verbatim-grade, at the time deliberately NOT resolved. Operator:
+stack "is a
 pattern — database-driven triggers and handlers that can do database updates
 and call third-party systems. I don't know how many places it's going to show
 up or how much can be standardized. A lot of it's already in db (db already
@@ -110,15 +128,18 @@ Operator, verbatim:
 > Should the knowledge graph be built on top of VDB? I actually think that's
 > a worthwhile question."
 
-Two OPEN questions attached, verbatim-grade: (a) **how the stack pattern
-gets "baked into" VDB**, and (b) **whether KG should be BUILT ON VDB** ("is
-the knowledge graph just a special version of VDB, living as a distributed
-service via the mesh? I actually think that's a worthwhile question") — see
-`components/kg.md`. `db`'s existing Capabilities-gated driver architecture
-(supabase-cloud / supabase-local / sqlite) is the natural seed of VDB's
-adapter matrix — see `components/db.md`. The stack-vs-db boundary question
-above stays OPEN; VDB's elevation names the implementation vehicle, it does
-not resolve the boundary.
+Two OPEN questions were attached round-7, verbatim-grade: (a) **how the
+stack pattern gets "baked into" VDB**, and (b) **whether KG should be BUILT
+ON VDB** ("is the knowledge graph just a special version of VDB, living as
+a distributed service via the mesh? I actually think that's a worthwhile
+question") — see `components/kg.md`. `db`'s existing Capabilities-gated
+driver architecture (supabase-cloud / supabase-local / sqlite) is the
+natural seed of VDB's adapter matrix — see `components/db.md`.
+**Round-8: BOTH attached questions are ANSWERED and the boundary is
+RESOLVED** (see the supersession note at the top of this section): VDB is
+the daemon tracking/executing the stack pattern, `db` is the crate it uses
+to run actions (extended as needed), KG builds on top of VDB, VFS sits
+below (VFS < VDB < KG).
 
 ## Postgres ambiguity (round-6 — flagged, UNRECONCILED)
 
@@ -157,16 +178,22 @@ version belongs in stack/VDB's full component design.
 
 - **vfs** via `stack-vfs` — the single SQLite file each stack daemon wraps is
   stored in (and read/written through) the VFS
-  (scaffold/contracts/stack-vfs.md).
+  (scaffold/contracts/stack-vfs.md). **Round-8: this is the locked layering
+  fact — VFS sits BELOW VDB** (the SQLite files must live somewhere);
+  VFS < VDB < KG.
 - **mesh** via `stack-mesh` — registration in the service registry via the
   local mesh daemon (single-port locality), plus distributed-handler
   coordination via mesh's `locks` lib (scaffold/contracts/stack-mesh.md).
 - **shared handler/execution engine** — internal library dependency
   (stack-tables adapter), deliberately NOT a contract stub (see `overview.md`
   shared-libraries section).
-- **db** (framing, not a contract yet) — `db`'s query/virtualization layer
-  reaches stack-hosted SQLite databases; edge naming deferred until that
-  layer is designed.
+- **db** (not a contract yet; **layering LOCKED round-8**) — the VDB daemon
+  USES the `db` crate to run actions against specific databases (`db`
+  extended as necessary to support VDB); `db`'s query/virtualization layer
+  reaches stack/VDB-hosted SQLite databases. Edge/dependency naming
+  deferred until VDB's design pass.
+- **kg** (not a contract yet; **layering LOCKED round-8**) — KG is built ON
+  TOP of VDB (see `components/kg.md`); layer order VFS < VDB < KG.
 
 ## Nesting
 
@@ -175,11 +202,13 @@ Parent: none | Children: none (this pass).
 ## Thoroughness level
 
 **requirements-only** — verbatim requirements capture; no design pass yet.
-Open (round-7 revision): the **stack-vs-db boundary** (the operator's
-most-nebulous open question — **VDB now elevated to the deploy-anywhere
-implementation vehicle**, with its two attached open questions:
-stack-baked-into-VDB, KG-on-VDB), the **Postgres source / Docker tension**
-(unreconciled), and whether SQLite→Postgres upgrade is even needed — now
-explicitly **gated on the REQUIRED SQLite-sufficiency analysis** (section
-above); the migration *mechanics* themselves are confirmed
-(copy/verify/switch, let-edge-functions-finish).
+**RESOLVED round-8:** the stack-vs-db boundary (the former most-nebulous
+open question) — **VDB is the daemon tracking/executing the stack pattern,
+using `db` to run actions against specific databases (db extended as
+needed); KG builds on top of VDB; VFS sits below VDB (VFS < VDB < KG)**;
+both round-7 attached questions (stack-baked-into-VDB, KG-on-VDB) closed
+with it. Still open: the **Postgres source / Docker tension**
+(unreconciled), and whether SQLite→Postgres upgrade is even needed — still
+**gated on the REQUIRED SQLite-sufficiency analysis** (section above); the
+migration *mechanics* themselves are confirmed (copy/verify/switch,
+let-edge-functions-finish).

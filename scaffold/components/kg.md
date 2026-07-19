@@ -1,6 +1,8 @@
 # kg
 
-**Status:** NEW (round-3 lock, second batch, 2026-07-18). **Nesting:** top-level.
+**Status:** NEW (round-3 lock, second batch, 2026-07-18; **round-8 lock,
+2026-07-19: KG IS BUILT ON VDB + routing/registry semantics**).
+**Nesting:** top-level.
 **Stub-plus — requirements captured from the operator; NOT a full design.**
 Build-now, not a placeholder — operator's framing, verbatim: build it now
 "because it's boring... very important, very useful."
@@ -55,15 +57,39 @@ entire mesh**. Requirements:
   replication; KG talks to mesh, mesh distributes into S3) — see
   `components/mesh.md`.
 
-- **OPEN question (round-7, 2026-07-19): should KG be BUILT ON VDB?** With
-  VDB elevated to the deploy-anywhere implementation of the stack pattern
-  (one abstract runtime; local-SQLite-daemon / Supabase / AWS RDS+Lambda
-  adapters — see `components/stack.md` and `components/db.md`), the operator
-  explicitly wants this explored — verbatim: "are there reusable components
-  for the knowledge graph — is the knowledge graph just a special version of
-  VDB, living as a distributed service via the mesh? Should the knowledge
-  graph be built on top of VDB? I actually think that's a worthwhile
-  question." Recorded as an open design question, NOT a decision.
+- ~~**OPEN question (round-7, 2026-07-19): should KG be BUILT ON VDB?**~~ —
+  **RESOLVED (round-8, 2026-07-19): YES — KG IS BUILT ON TOP OF VDB.**
+  Operator, verbatim: "And KG we build on top of VDB." Part of the locked
+  VDB/db/KG decomposition that resolves the stack-vs-db boundary: **VDB is
+  the daemon that tracks/executes the stack pattern, using the `db` crate
+  to run actions against specific databases (db extended as needed); VFS
+  sits below VDB** (the SQLite files live in the VFS). Locked layer order:
+  **VFS < VDB < KG.** The round-7 exploration prompt ("is the knowledge
+  graph just a special version of VDB…?") is preserved in
+  `components/stack.md`'s history. See `components/stack.md` /
+  `components/db.md`.
+
+## Routing + registry semantics (round-8 lock, 2026-07-19)
+
+- **Each graph links to a project + environment**, and **the environment
+  routes storage**: a **local** environment → **SQLite**; a **cloud**
+  environment → **promoted to Supabase/AWS** (the operator's own routing
+  rule, consistent with round-7's yes-block: "local environment → SQLite,
+  cloud → promote").
+- **Do-not-over-constrain nuance (recorded, deliberately open):** a
+  **local-purpose KG can support a cloud environment** — the
+  environment-routes-storage rule is the default, not a straitjacket; the
+  linkage must not be over-constrained. Flagged as an open nuance for the
+  design pass.
+- **KG remains a GLOBAL registry of ALL graphs** — "a place where we can
+  access ALL the knowledge graphs": one graph may serve multiple projects
+  (cross-project reuse), or be referenced purely for its **schema**. The
+  project+environment link does not scope a graph's visibility to that
+  project.
+- **Each graph routes to a location in VDB and/or VFS** — the graph's
+  storage resolves to a concrete home in the layers beneath it (a
+  VDB-managed database and/or VFS-resident files), per the VFS < VDB < KG
+  layering.
 
 **Consumer note:** `projects` straddles KG + VFS — the graph encodes project
 structure, and graph nodes point at project files in the VFS (see
@@ -86,6 +112,10 @@ structure, and graph nodes point at project files in the VFS (see
   dependency (kg-nodes adapter), deliberately NOT a contract stub; its
   distributed coordination rides mesh's `locks` (see `overview.md`
   shared-libraries section).
+- **VDB** (round-8, LOCKED layering; not a contract stub yet) — KG is
+  BUILT ON TOP of VDB; each graph routes to a location in VDB and/or VFS
+  (VFS < VDB < KG). Edge/dependency naming deferred to VDB's/KG's design
+  passes. See `components/stack.md`.
 
 ## Nesting
 
@@ -95,4 +125,7 @@ Parent: none | Children: none (this pass).
 
 **requirements-only** — verbatim requirements capture; no design pass yet. The
 distributed-consistency model for interconnected graph state is the flagged
-open question, joined round-7 by the KG-on-VDB question (see the Charter).
+open question. The round-7 KG-on-VDB question is **RESOLVED round-8 (YES —
+KG builds on VDB; VFS < VDB < KG)**; the round-8 routing/registry semantics
+are locked (environment routes storage; global registry of all graphs),
+with the local-KG-supporting-cloud-environment nuance deliberately open.
