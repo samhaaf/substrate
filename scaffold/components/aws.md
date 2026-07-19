@@ -158,15 +158,20 @@ transfer design. Two paths:
   leaves the mesh (a deliberate exception to "everything over WebSockets",
   INTENT #28), and the consumer node needs direct S3 egress.
 
-**Recommendation (flagged controversial):** make transfer mode a **negotiated
-field per request**, defaulting to **Path B (presigned) for the VFS bulk data
-path** (`aws-vfs`) and **Path A (inline/relay) for KV snapshots** (`aws-mesh`,
-bounded kernel state). The contract carries a `Transfer` enum so a consumer
-that must stay strictly on-mesh can request `Relay` and a consumer optimizing
-for scale gets `Presigned`. This is the honest engineering call for cold bulk
-data; the operator's single-port-locality principle is preserved as the
-*fallback* and the *default for small payloads*. **Surfaced for the operator's
-clarification round** (open question below).
+**CONFIRMED (friction-round 1, INTENT #114) — direct-upload with mesh-issued
+presigned permission.** Transfer mode is a **negotiated field per request**,
+defaulting to **Path B (presigned) for the VFS bulk data path** (`aws-vfs`)
+and **Path A (inline/relay) for KV snapshots** (`aws-mesh`, bounded kernel
+state). The contract carries a `Transfer` enum so a consumer that must stay
+strictly on-mesh can request `Relay` and a consumer optimizing for scale gets
+`Presigned`. The operator confirmed the flow after the presigned-URL mechanism
+was explained: the deliberate exception to "everything over WebSockets"
+(INTENT #28) for bulk bytes is accepted; single-port locality remains the
+fallback and the default for small payloads. **Routing note (operator's
+framing):** the mesh, as router, **locates the node holding the data and tells
+it to send to the presigned URL** — and this instruction may ride the queue OR
+a direct service-router path: "queues are for generic application logic and
+operating-system logic," so this specific flow doesn't have to use one.
 
 ### 4. Client-side encryption boundary — `aws` stores opaque ciphertext
 
@@ -311,8 +316,9 @@ decomposition, the credential/encryption boundaries, the transfer-mode model,
 the not-built-now stub posture, and the four contract shapes are all decided),
 but **the SDK implementation itself is a deliberate STUB in v1** — so the
 component as a *shipped runtime* is intentionally requirements/approach-level
-while its *contracts* are implementation-ready. Genuinely open: the transfer
-mode default (Path A vs B — operator clarification), and everything downstream
+while its *contracts* are implementation-ready. The transfer-mode default is
+**CONFIRMED** (presigned direct-upload for bulk, friction-round 1 — INTENT
+#114, concern 3); genuinely open: everything downstream
 of a live account (RDS/Lambda provisioning shapes firm up when VDB's cloud
 target is actually built).
 

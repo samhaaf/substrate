@@ -265,6 +265,37 @@ cross-platform (`open`/`xdg-open`). The CLI is just another local client of
 `:3649` (reuses the registry query path); it surfaces a clean error, never a silent
 hang, if no local daemon (or reachable peer) is up.
 
+### 9. Mesh time authority — NEW design requirement (friction-round 1, INTENT #116), approach-sketched
+
+**Mesh owns time.** The operator's friction-round hardening goes beyond
+`replicated-kv`'s HLC ratchet (which stays): time itself is a kernel service,
+"a consistent timestamp-based race-condition management system built into the
+mesh, **as hardened as is physically possible**." Requirements, verbatim-grade:
+
+- **Enforced UTC sync across devices** — mesh actively verifies/enforces that
+  every node's clock is UTC-synced, not merely assumes NTP.
+- **Possibly mesh-daemon-issued timestamps:** services/libs acquire timestamps
+  FROM the local mesh daemon rather than each reading its own device clock —
+  "mesh can handle its own device-specific offset by pinging its neighbors and
+  keeping the times in sync" (neighbor-ping offset correction, NTP-style, over
+  the existing `PeerLink`s).
+- The corrected clock feeds everything timestamp-ordered: `replicated-kv`
+  `Version`s (its HLC wall-clock input — see replicated-kv concern 1), `locks`'
+  nanosecond-timestamped semaphore acquisitions (the queue-ownership discovery
+  claim, INTENT #112), lease expiry, and provenance `emitted_at`.
+
+**Approach sketch (to be pinned at mesh-core's fill):** a Ring-0
+`TimeAuthority` beside `LocalStore`/`PeerTransport` — owns the node's offset
+estimate (maintained by periodic neighbor pings over `PeerLink`, exchanging
+send/receive timestamps and smoothing an offset, with the fleet converging on
+a shared UTC view), exposes `now_utc()` (offset-corrected) and a monotonic
+component for the HLC, surfaces per-node offset/drift on the surface schema,
+and flags a node whose offset exceeds a threshold (dashboard alarm; possibly
+refusing timestamp-sensitive operations). Whether services get daemon-issued
+timestamps via a `mesh-client` call or only the in-process rings consume the
+authority is a fill-time decision. This is a **design item for mesh-core's
+fill** — approach-sketched here, not implementation-ready.
+
 ## Relationships / edges
 
 mesh-core's *contract* edges (cross-process WS/wire) are the daemon-shell seam;
@@ -307,6 +338,8 @@ the directory layout (flat `components/`).
 DOWN-seam traits, the `Address` model + dispatcher, port acquisition/squatter-kill,
 zombie-kill + child re-adoption, stickiness, the boot sequence, the local-SQLite
 decision, and the CLI tree are all decided and specified. **approach-sketched** for
+the mesh **time authority** (concern 9 — a NEW friction-round-1 design
+requirement, INTENT #116, to be pinned at fill) and for
 the two proposed contract *wire shapes* (`mesh-transport`, `restart-protocol`) —
 their fields are recorded in the Contracts section's notes but the byte-level framing and the per-lib
 message-kind registry are deliberately left to the per-pair contract round + the

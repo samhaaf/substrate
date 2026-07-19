@@ -41,6 +41,7 @@ struct Envelope {
 
 struct Provenance {
     service: Slug,                   // publishing service (daemon-verified vs registry lease)
+    #[serde(default)] service_version: Option<SemVer>, // LOCKED (INTENT #113): sender version stamp
     node_id: NodeId,
     emitted_at: DateTime<Utc>,       // millis-resolution
     seq: u64,                        // per-(service,node) monotonic; resets on service restart
@@ -135,6 +136,19 @@ fleet, INTENT #66). `Envelope.v` is the anchor.
   path grammar, or making the relay parse payloads. Requires an operator round
   and drives `RestartReason::Compatibility` restarts (see restart-protocol).
 - Relay sites operate on the opaque `Envelope` and MUST NOT `deny_unknown_fields`.
+- **LOCKED (friction-round 1, INTENT #113) — sender version stamping.** Every
+  mesh-crossing message carries the sending service's **name AND version**:
+  `Provenance.service` + the new `service_version` (stamped by the daemon
+  alongside `node_id`/`emitted_at`/`seq`, verified against the registry lease).
+  A subscriber MAY enforce a **version floor** ("only accepting messages from
+  nodes with service version greater than X") — a floored message is rejected
+  at the subscriber edge with a **catchable** error
+  (`VersionBelowFloor`-shaped), never a silent drop. On a schema change, a
+  receiver offers **backwards compatibility for one version** and attaches a
+  **please-update warning back to the sender** (delivered on the sender's own
+  connection/topic) telling it to update. The relay itself stays
+  payload-opaque and never enforces floors — flooring is a receiver-edge
+  policy.
 - `provenance.seq` is per-(service,node) and **resets on service restart**;
   subscribers must read a backward `seq` jump as "publisher restarted," not
   corruption. The daemon folds the registry lease generation into provenance so

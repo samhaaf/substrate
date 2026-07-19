@@ -155,6 +155,15 @@ Non-errors by design: `SendEvent` to a queue with no matching triggers succeeds
 
 **HIGH** — events and trigger definitions cross nodes and **persist** in
 `replicated-kv` across a mixed-version fleet (INTENT #66).
+- **LOCKED (friction-round 1, INTENT #113) — sender version stamping.** Every
+  event crossing the mesh carries the sending service's **name AND version**
+  (rides `Provenance` — `service` + the new `service_version`, see
+  `types::provenance` / `pubsub-protocol`). A receiver (handler or daemon) MAY
+  enforce a **version floor** ("only accepting messages from nodes with service
+  version greater than X"); a floored message is rejected with a **catchable**
+  error (`VersionBelowFloor`-shaped, delivered as a delivery outcome / nack,
+  never a silent drop). On a schema change, offer **backwards compatibility for
+  one version**, and attach a **please-update warning back to the sender**.
 - **Additive-safe:** any new `EventType` string (an open identifier, NEVER a
   closed enum — mirrors pubsub-relay's payload-opaque property; a new type flows
   through an older daemon untouched); new `#[serde(default)]` fields; new
@@ -189,11 +198,22 @@ Non-errors by design: `SendEvent` to a queue with no matching triggers succeeds
   only its half of each (the DLQ escalation arm and the assembly-time rollup
   consumer flag). Those are separate contract pairs (`ccd-escalation`,
   `rollup-mesh`) outside this cluster; recorded as cross-references only.
-- **Queue-ownership fork (flagged, NOT resolved here — operator call):** queues
-  leans *replicated-everywhere + event-ID semaphore* (matches INTENT #32's blessed
-  naive-LWW and gives `locks` its reason to exist) over *single-owner-node per
-  queue with failover*. This contract's schema assumes the replicated + semaphore
-  model; the fork is surfaced to the operator, not decided by the reconciler.
+- **Queue-ownership fork — LOCKED (friction-round 1, 2026-07-19, INTENT #112).**
+  The provisional assumption this schema was written against is now confirmed:
+  **replicated-everywhere + event-ID semaphore; all nodes process; whoever
+  discovers an event may try to claim ownership via the semaphore** (which, on
+  acquisition, "creates a UTC timestamp down to the nanosecond — whoever gets
+  it"). *Single-owner-node per queue with failover* is rejected — operator,
+  verbatim: "I don't think having one processor makes sense. All processors —
+  whoever discovers it can try to claim ownership." A few seconds of
+  semaphore-acquisition latency is explicitly acceptable; the operator's
+  reliability-over-speed rationale, verbatim: "What we're going for is
+  reliability, not speed. The way we maximize our leverage isn't by getting from
+  three seconds down to a tenth of a second — it's by keeping things running all
+  the time and having our leverage create more leverage." His partition insight:
+  queue-pull semaphore collisions between disjoint partitions aren't a real
+  worry — if the event reached both nodes, those nodes were connected. No schema
+  change required; the contract as written IS the locked model.
 
 ## Example data
 

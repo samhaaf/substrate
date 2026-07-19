@@ -208,14 +208,27 @@ The event-ID semaphore is what makes that safe:
   escalation) handles it. This is the concrete place the operator's "handled per
   application" seam lives.
 
-**Queue ownership model — a genuine fork (flagged).** The above is the
-*replicated-everywhere + semaphore* model. An alternative is *single-owner-node
-per queue with failover* (one daemon leases the queue via `locks`, is the only
-dispatcher, hands off on death) — simpler, no cross-node double-dispatch window,
-but loses "drain anywhere" resilience if the owner is unreachable. I lean
-replicated-everywhere-plus-semaphore (matches INTENT #32's blessed naive LWW and
-`locks`' whole reason to exist), but this is a real design fork for the operator —
-see Friction points.
+**Queue ownership model — RESOLVED, LOCKED (friction-round 1, INTENT #112).**
+The fork is closed: **replicated-everywhere + event-ID semaphore, all nodes
+process, discovery-claims-ownership** — exactly the model this file designed.
+Operator, verbatim: "I don't think having one processor makes sense. All
+processors — whoever discovers it can try to claim ownership. The semaphore,
+when you try to acquire it, creates a UTC timestamp down to the nanosecond —
+whoever gets it." The single-owner-node-with-failover alternative (one daemon
+leases the queue via `locks`, is the only dispatcher, hands off on death) is
+REJECTED. A few seconds of semaphore-acquisition latency is explicitly fine —
+the operator's reliability-over-speed rationale, verbatim:
+
+> "What we're going for is reliability, not speed. The way we maximize our
+> leverage isn't by getting from three seconds down to a tenth of a second —
+> it's by keeping things running all the time and having our leverage create
+> more leverage."
+
+And his partition insight, resolving the double-dispatch worry directly:
+queue-pull semaphore collisions between disjoint partitions aren't a real
+worry — **if the event reached both nodes, those nodes were connected.** (The
+`locks` partition-merge error path above remains as the honest backstop for
+the residual case, but it is a backstop, not a design driver.)
 
 ### 5. Idempotency is a load-bearing handler contract, not a nicety
 
@@ -294,8 +307,8 @@ seams per `mesh-core.md`, **not** contract edges (INTENT #45).
   `AssemblyTemplate`, `SemaphoreChoice`, `HandlerRef`, …) whose shape this design
   authors. Proposed to the batch-1 `types` designer via the `queues-api` boundary
   flag they raised.
-- **`locks`** (Ring-3 sibling) — the event-ID semaphore composition (concern 4) and
-  the queue-owner lease (if the single-owner fork is chosen). Consumed in-process
+- **`locks`** (Ring-3 sibling) — the event-ID semaphore composition (concern 4;
+  the queue-owner-lease alternative died with the fork — INTENT #112). Consumed in-process
   via `locks`' `trait` seam; `locks` owns `locks-api` and the partition-merge error
   type. Co-batched (batch 2, `queues ⇄ locks`) — I depend on that error type and
   the acquire/release surface; flagged for mid-batch draft-sharing.
@@ -326,8 +339,9 @@ the pub/sub tee are all decided and specified. The three proposed contract *wire
 shapes* (`queues-api`, `ccd-escalation` DLQ half, `rollup-mesh` consumer view) are
 **approach-sketched** — fields authored, reconciled in the per-pair round
 with `locks` (error type), `rollup` (assembly-resolve API), `execution-engine`
-(shared trigger model), and `ccd` (escalation receiver). Two genuine forks are left
-for the operator, not silently chosen (queue-ownership model; FIFO) — see Friction.
+(shared trigger model), and `ccd` (escalation receiver). The queue-ownership fork
+is **LOCKED** (replicated-everywhere + semaphore, INTENT #112 — concern 4); FIFO
+remains the one genuine fork left for the operator — see Friction.
 
 ## Assigned design-depth
 
@@ -369,9 +383,10 @@ are superseded by them.
   - Contract resolution: the flagged trigger-struct home question closed
     concordant — home = `types::trigger`, shape authored by queues (shared
     unchanged with execution-engine).
-  - Still open in the contract, operator call: the queue-ownership fork
-    (replicated-everywhere + event-ID semaphore, which the schema assumes, vs
-    single-owner-node with failover).
+  - The queue-ownership fork the contract flagged is now **LOCKED** (friction-
+    round 1, INTENT #112): replicated-everywhere + event-ID semaphore — the
+    model the schema assumed is confirmed; single-owner-node-with-failover is
+    rejected. See concern 4 for the operator's verbatim rationale.
 - `ccd-escalation` (producers mesh.queues + execution-engine → consumer ccd;
   one union `EscalationRequest` shape) — queues authors the `DeadLetter` arm,
   fired by an ordinary DLQ trigger. → `scaffold/contracts/ccd-escalation.md`

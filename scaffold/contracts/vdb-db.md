@@ -1,5 +1,20 @@
 # Contract: vdb-db
 
+> **[FROZEN — operator flagged possible drift; do not build; discussion
+> pending (friction-round 1, 2026-07-19, INTENT #115).]** This whole contract
+> rides the `db serve` daemon mode, which the operator has flagged as possible
+> design drift. His recollection, verbatim: "We explicitly were keeping the db
+> crate as a standalone crate that you call as a tool, and we talked about
+> having a virtual database VDB service accessed through the mesh. I'm going
+> to push back and say I believe there was some drift that happened, and we
+> need to talk about it before I commit to anything with respect to the
+> database statement." I.e. db = standalone CLI tool; VDB = the mesh-accessed
+> daemon — the daemon role may belong to VDB, with vdb reaching `lib/db`'s
+> capabilities some other way (to be discussed). The design below is
+> deliberately RETAINED, not deleted, as the discussion input. Note also:
+> mesh may use db via **direct CLI execution** for its own database (no
+> daemon, no mesh dependency).
+
 ## Parties
 `vdb` daemon (`bin/vdb` on a database-hosting node) → `db` daemon (`db serve`
 on the SAME node). Cross-app, **WS over the local mesh daemon `:3649`, never

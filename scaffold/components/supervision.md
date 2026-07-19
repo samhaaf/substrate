@@ -245,11 +245,22 @@ framing** (which placed stickiness + squatter-kill inside supervision) — see
 Friction points; the split follows mesh-core's already-designed exclusive
 ownership of OS primitives, and keeps supervision purely policy.
 
-### 9. Pairwise-compatibility rolling update + the mixed-version protocol (v1 answer to the STANDING-OPEN question)
+### 9. Pairwise-compatibility rolling update + the mixed-version protocol — CONFIRMED (friction-round 1, INTENT #113)
 
-INTENT #66 wants minimal-restart rolling updates with pairwise deps and leaves
-**the update protocol between nodes running mixed versions OPEN**. Here is a
-concrete, buildable v1 answer, flagged as such:
+INTENT #66 wants minimal-restart rolling updates with pairwise deps and left
+**the update protocol between nodes running mixed versions OPEN**. The v1
+answer below is now **CONFIRMED by the operator** — his framing: "the
+conversation is moot" — **the restart-priority system IS the answer**, tied
+explicitly to the LOCKED 4-level ladder (concern 4): **non-critical updates
+wait for idle** (`WaitForIdle`/routine levels — mixed versions in the interim
+are fine, that's the point of the design); **critical incompatible updates go
+out to every instance at HIGH priority** (the L3 `Compatibility` push, INTENT
+#77). Organic-newest-wins rollout stands. On top of it the operator added a
+NEW LOCKED cross-cutting requirement — **sender version stamping on every
+mesh-crossing message** (name + version, receiver version floors, one-version
+back-compat + please-update warning) — homed in `types`/`pubsub-protocol`/
+`queues-api`, consumed here as the data that makes version floors enforceable.
+The protocol:
 
 **The core move: there is no flag-day and no global barrier. Mixed-version
 safety comes from additive-only contracts, and each node's supervision
@@ -297,13 +308,14 @@ independently reconciles a globally-eventually-consistent desired state.**
    present, it marks the service `Degraded` and surfaces it (dashboard + ccd) —
    **never silently runs an incompatible pairing.**
 
-6. **Still OPEN / flagged (not solved here):** (a) binary delivery + per-node
-   build cache (INTENT #33) — supervision's hard dependency, out of scope; (b)
-   organic-newest-wins vs an operator fleet-pin as the *default* rollout trigger
-   — I propose organic default + optional pin, flagged for the operator; (c)
-   whether a breaking roll should ever be *coordinated* (drain-all-then-flip)
-   rather than routing-absorbed — I propose never-coordinate for v1
-   (personal-mesh scale), flagged. See Open questions.
+6. **Dispositions after friction-round 1 (INTENT #113):** (a) binary delivery +
+   per-node build cache (INTENT #33) — still OPEN, supervision's hard
+   dependency, out of scope; (b) organic-newest-wins as the default rollout
+   trigger (+ optional operator pin) — **CONFIRMED** ("the conversation is
+   moot"; the restart-priority ladder is the mechanism); (c) coordinated
+   (drain-all-then-flip) breaking rolls — **CONFIRMED never-coordinate**: a
+   critical incompatible update is instead a **high-priority (L3) push to
+   every instance**, which is the ladder doing the coordination organically.
 
 ### 10. Databases-as-services genericity (INTENT #86) — design note, not a VDB design
 
@@ -361,12 +373,13 @@ Never a standalone crate (INTENT #54). The client half of its protocol is
 derivation, the interruptibility state model, the 4-level ladder state machine +
 level-selection + escalation rules, the six-step port-handoff choreography, the
 zombie-kill decision boundary, the crash-restart backoff + crash-loop policy, the
-two-tier supervision-tree split, and a concrete v1 mixed-version protocol are all
+two-tier supervision-tree split, and the **operator-confirmed** v1 mixed-version
+protocol (friction-round 1, INTENT #113) are all
 decided and specified against frozen seams (mesh-core's `ProcessControl`/
 `Supervisor`, `types::restart`, `service-registry`'s LWW registry). **Genuinely
 downstream / left open:** (a) binary delivery + build cache (INTENT #33) — an
-out-of-scope hard dependency, not a gap in this module; (b) the three flagged
-mixed-version policy choices in concern 9.6 (operator's call); (c) exact backoff
+out-of-scope hard dependency, not a gap in this module; (b) — resolved: the
+concern-9.6 policy choices are confirmed per INTENT #113; (c) exact backoff
 constants + crash-loop window (fill-time tuning knobs, not design forks); (d) the
 `restart-protocol` wire is `approach-sketched` here and reconciled in the per-pair
 round with `types`/`mesh-client`/mesh-core.

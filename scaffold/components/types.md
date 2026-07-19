@@ -75,6 +75,22 @@ crate at once). Four guardrails, in order of teeth:
    guardrail is what lets the mesh do minimal-restart rolling updates (INTENT
    #66/#76) without a flag-day: two nodes on adjacent versions must interoperate.
 
+   **LOCKED addendum (friction-round 1, INTENT #113) — sender version stamping.**
+   Every message/event crossing the mesh carries the **sending service's name
+   AND version**. The home is `Provenance` (which already carries `service`): a
+   new additive `service_version: SemVer` field, `#[serde(default)]`, stamped by
+   the daemon/`mesh-client` alongside the existing provenance fields, so every
+   envelope, event, and queue delivery is version-attributed with no per-service
+   effort. Receivers MAY enforce a **version floor** ("I'm only accepting
+   messages from nodes with service version greater than X"); a floored message
+   is rejected with a **catchable** error (a named, matchable variant — e.g.
+   `MeshError::VersionBelowFloor { service, have, floor }` in `error/mesh.rs` —
+   never a silent drop). On a schema change, a receiver offers **backwards
+   compatibility for one version**, but attaches a **please-update warning back
+   to the sender** telling it to update. This is the runtime data that makes
+   supervision's version floors and compatibility restarts enforceable at the
+   message level (see `supervision.md` concern 9).
+
 **Sharper instance of concern 3 — the error taxonomy restructuring (now built
 for real).** `SubstrateError` is today ONE flat enum growing by domain-tagged,
 string-payload leaves per consuming crate (`Store`, `Db`, `Engine`, `Transport`,
@@ -147,6 +163,7 @@ causation/correlation triple.
 pub struct Provenance {
     pub origin_node: NodeId,           // which device emitted it
     pub origin_service: String,        // slug of the emitting service
+    #[serde(default)] pub service_version: Option<SemVer>, // LOCKED (INTENT #113): sender version stamp
     pub emitted_at: DateTime<Utc>,
     pub causation_id: Option<Uuid>,    // the envelope/event that directly caused this
     pub correlation_id: Option<Uuid>,  // the root of the causal chain (stable across hops)

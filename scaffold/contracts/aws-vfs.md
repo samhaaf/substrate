@@ -124,9 +124,13 @@ Two proposers; the transfer model is the real disagreement:
    to any object size. **Losing position preserved:** vfs's strictly-on-mesh
    relay is retained as `TransferPref::Relay` (a consumer that must not leave the
    mesh requests it) — vfs's view is not dropped, it is the non-default mode. The
-   Presigned-default itself is **flagged for the operator's clarification round**
-   (aws.md concern 3: presigned bulk data deliberately leaves the "everything over
-   WebSockets" principle, INTENT #28).
+   Presigned-default is **CONFIRMED by the operator** (friction-round 1, INTENT
+   #114): direct-upload-with-mesh-issued-presigned-permission — the deliberate
+   exception to "everything over WebSockets" (INTENT #28) for bulk bytes is
+   accepted. Routing note: the mesh, as router, locates the node holding the
+   data and tells it to send to the presigned URL; that instruction may ride
+   the queue OR a direct service-router path ("queues are for generic
+   application logic and operating-system logic" — this flow needn't use one).
 
 2. **`S3Ref` vs `ObjKey`+`ObjMeta` — aws wins.** vfs's `S3Ref { bucket, key,
    storage_class }` is superseded by aws's `ObjKey { bucket_ns, key }` (identity)

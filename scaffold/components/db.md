@@ -76,7 +76,20 @@ call-frequency and boot-safety — never linking:**
   `promote` runs. Structured output via `--format json`. This is "call it as a
   command-line tool" — explicitly blessed by #29.
 
-- **(b) `db serve` — a thin daemon over the mesh (warm, hot-path).** New this
+- **(b) `db serve` — a thin daemon over the mesh (warm, hot-path).**
+  **[FROZEN — operator flagged possible drift; do not build; discussion
+  pending (friction-round 1, INTENT #115).]** The operator's recollection,
+  verbatim: "We explicitly were keeping the db crate as a standalone crate
+  that you call as a tool, and we talked about having a virtual database VDB
+  service accessed through the mesh. I'm going to push back and say I believe
+  there was some drift that happened, and we need to talk about it before I
+  commit to anything with respect to the database statement." I.e. **db = the
+  standalone CLI tool; VDB = the mesh-accessed daemon** — the `db serve`
+  daemon mode may be the drift (the daemon role belongs to VDB). The design
+  below is deliberately RETAINED, not deleted, pending that discussion. Also
+  noted by the operator: **mesh managing its own database may use the db
+  crate via direct CLI execution** (no daemon, no mesh dependency — db does
+  not depend on mesh), consistent with path (a). New this
   wave. `db serve` registers the `db` slug with the **local** mesh daemon
   (`mesh-client`, single-port locality `:3649`), publishes a boring
   `SurfaceSchema`, participates in `restart-protocol`/`pubsub-protocol`, and
@@ -91,7 +104,10 @@ call-frequency and boot-safety — never linking:**
   **This is the net-new surface of the wave.** `db` today has no daemon and no
   network surface; `secrets.md` (batch 3) and `stack.md` already *assume* a
   "`db-control-plane` WS call," so the direction is cross-consistent — this
-  design makes it real and concrete.
+  design makes it real and concrete. **(All of the above is inside the FROZEN
+  scope: the warm-handle need is real, but whether the daemon that holds warm
+  handles is `db serve` or lives inside VDB is exactly the pending
+  discussion.)**
 
 **Single-writer discipline (the load-bearing rule that makes two access shapes
 safe).** For any database the daemon has opened (especially **SQLite, which is
@@ -317,7 +333,8 @@ split is the existing internal convention, not a scaffold nesting.
 ## Thoroughness level
 
 **implementation-ready** for the refit's *shape* — the access model (CLI
-subprocess + `db serve` daemon, never linked), the driver-matrix disposition, the
+subprocess + `db serve` daemon, never linked; the daemon half is **FROZEN
+pending the INTENT #115 drift discussion** — concern 1), the driver-matrix disposition, the
 provenance-atomic-in-`ops` design, change-capture on sqlite, structured
 introspection, the query/virtualization formalization, the `supabase-local`
 deprecation, the SQLite-in-VFS non-edge, and the secrets reconciliation are all
@@ -356,8 +373,8 @@ The per-pair contract round authored these edges; the contract files are
 authoritative (including their Reconciliation notes). The detailed proposals
 formerly in this section are superseded by the authored contracts.
 
-- `vdb-db` (vdb → db) — the execution arm: `db serve` daemon sessions (db's second public surface). → `scaffold/contracts/vdb-db.md`
-- `db-control-plane` (db ↔ consumers) — the noun-verb control plane. → `scaffold/contracts/db-control-plane.md`
+- `vdb-db` (vdb → db) — the execution arm: `db serve` daemon sessions (db's second public surface). **[FROZEN — the `db serve` daemon bearer is under INTENT #115 discussion; do not build.]** → `scaffold/contracts/vdb-db.md`
+- `db-control-plane` (db ↔ consumers) — the noun-verb control plane (CLI half stands; the `db serve` WS bearer is FROZEN per INTENT #115). → `scaffold/contracts/db-control-plane.md`
 - `db-inference-init` (inference → db) — fresh-node bootstrap. → `scaffold/contracts/db-inference-init.md`
 - `db-secrets` (db ↔ secrets) — the Supabase Vault push adapter, reused over the wire. → `scaffold/contracts/db-secrets.md`
 

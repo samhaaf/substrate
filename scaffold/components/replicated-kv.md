@@ -81,6 +81,21 @@ naive core ("pretty much everything's going to be driven from my laptop") and
 it is why `locks` must never encode contended state as one shared key
 (concern 6).
 
+**NEW (friction-round 1, INTENT #116) — mesh owns time; the ratchet is not
+enough.** The HLC ratchet **stays exactly as designed** — but the operator has
+ADDED a mesh time-authority requirement on top of it: harden time itself
+inside mesh. Enforced UTC sync across devices; possibly timestamps are
+acquired FROM the local mesh daemon rather than by each device ("mesh can
+handle its own device-specific offset by pinging its neighbors and keeping
+the times in sync"); "a consistent timestamp-based race-condition management
+system built into the mesh, as hardened as is physically possible." For this
+lib the consequence is: the HLC's wall-clock input SHOULD come from mesh-core's
+time authority (a Ring-0 seam, e.g. a `TimeAuthority`/clock handle beside
+`LocalStore`) rather than a raw `SystemTime::now()` call, so offset correction
+benefits every `Version` issued. The time-authority design itself is
+**mesh-core's design item** (approach-sketched there, to be pinned at
+mesh-core's fill) — see `mesh-core.md`.
+
 ### 2. The entry model — value, lease, tombstone in ONE record shape
 
 One record shape serves all consumers; there are no special cases in the
@@ -315,7 +330,11 @@ pub enum WatchCause { LocalPut, LocalDelete, Merge { from_node: NodeId },
   pubsub-relay's own decision that its interest tables are volatile and NOT
   in KV — no circularity between the two libs.
 
-### 9. The VFS layering question — flagged honestly
+### 9. The VFS layering question — BLESSED (friction-round 1, INTENT #108)
+
+> **OPERATOR-BLESSED (2026-07-19).** The kernel-KV-outside-VFS exception is
+> confirmed. Operator, verbatim: "Makes sense because everything depends on
+> it. It's the one exception." The design below stands as written.
 
 VFS is L3 and is a mesh *client*: it registers via service-lookup, learns
 topology from mesh, and (per the locked order VFS < VDB < KG) is the storage
@@ -330,8 +349,8 @@ plain OS filesystem, excluded from VFS, VDB, and gc by construction** — the
 same way a real OS's filesystem-driver metadata is not a userland file. What
 VFS *does* get is observability: KV row counts, store size, sync lag, peer
 cursors — published via mesh's surface schema, not via file access. This is
-a deliberate, load-bearing exception to "everything lives in VFS" instincts
-and is surfaced as a friction point for the operator to bless.
+a deliberate, load-bearing exception to "everything lives in VFS" instincts —
+**operator-blessed at friction-round 1 as "the one exception"** (INTENT #108).
 
 ### 10. Keyspaces — the registration surface and the known tenants
 

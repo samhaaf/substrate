@@ -398,6 +398,13 @@ which is why the upgrade target is only ever cloud (round-9 lock).
 
 ### 7. `db` as the execution arm — the call mechanism (co-designed with db, batch 4; proposal + flag)
 
+> **[FROZEN — the `db serve` daemon mode is under operator drift review; do
+> not build; discussion pending (friction-round 1, INTENT #115).]** The
+> operator's recollection: db = a standalone CLI tool; VDB = the mesh-accessed
+> daemon — the daemon role may belong here in vdb, not in db. This concern's
+> design is retained as discussion input; see `db.md` concern 1 and
+> `contracts/vdb-db.md` for the full annotation.
+
 The locked decomposition makes `db` the crate that "actually runs the actions
 against specific databases," and INTENT #29 forbids linking it. The mechanism
 proposal (db's designer runs concurrently — this is vdb's preferred shape,

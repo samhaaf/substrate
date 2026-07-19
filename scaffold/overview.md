@@ -5,6 +5,14 @@
 > name." **"Substrate" remains the repo/folder/GitHub name until version one
 > publishes.** (Mycelium rejected; ripple-derived names rejected — "ripples"
 > is a RESERVED term, see the placeholder section.)
+>
+> **NAMING PIN (friction-round 1, 2026-07-19, INTENT #117): "Mind OS" is
+> already taken by an existing service.** Candidates: **Mesh OS**
+> (transcription-soundness unverified) and **Broomstick OS** ("probably
+> unique" — and used naturally by the operator moments later: "org is going
+> to take full advantage of the entire Broomstick OS"). **Pinned, NOT
+> decided** — the scaffold keeps "Mind OS" as the working name until the
+> operator decides; the repo stays `substrate` regardless.
 
 ## Wave 2 — COMPLETE (status block)
 
@@ -47,9 +55,66 @@ What exists at close-out:
   authoritative (including their Reconciliation notes). Detail lives there,
   not here.
 
-**Governing precedence:** INTENT items (#1–#107, harness workspace) win over
+**Governing precedence:** INTENT items (#1–#118, harness workspace) win over
 scaffold text; contract files win over component-file proposals;
 `wave2-plan.md` remains the module-inventory record of the decompose step.
+
+## Friction-round 1 — operator answers folded in (2026-07-19, INTENT #108–#118)
+
+The first clarification round after wave-2 close-out. Dispositions (detail and
+verbatim rationale live in the named files):
+
+- **Queue-ownership fork — LOCKED** (INTENT #112): replicated-everywhere +
+  event-ID semaphore; **all nodes process; whoever discovers an event may
+  claim ownership via the semaphore** (nanosecond UTC timestamp, whoever gets
+  it). Single-owner-node rejected. Rationale: reliability over speed
+  ("keeping things running all the time and having our leverage create more
+  leverage"); partition insight: if an event reached both nodes, those nodes
+  were connected. → `components/queues.md` concern 4,
+  `contracts/queues-api.md` (its provisional assumption is now the locked
+  model).
+- **Kernel-KV-outside-VFS — BLESSED** (INTENT #108): mesh's own SQLite/KV
+  state sits below the storage plane, on the plain OS filesystem — "Makes
+  sense because everything depends on it. It's the one exception." →
+  `components/replicated-kv.md` concern 9.
+- **Mixed-version updates — CONFIRMED, no longer open** (INTENT #113): "the
+  conversation is moot" — the restart-priority ladder IS the answer.
+  Non-critical updates wait for idle (mixed versions fine, that's the point);
+  critical incompatible updates go out to every instance at HIGH priority.
+  Organic-newest-wins stands. **NEW LOCKED cross-cutting requirement on top:
+  sender version stamping** — every mesh-crossing message/event carries the
+  sending service's name AND version; receivers may enforce a version floor
+  (catchable rejection); schema changes offer one version of back-compat plus
+  a please-update warning attached back to the sender. →
+  `components/supervision.md` concern 9, `components/types.md` guardrail 4,
+  `contracts/pubsub-protocol.md`, `contracts/queues-api.md`.
+- **S3 bulk flow — CONFIRMED** (INTENT #114): direct-upload with mesh-issued
+  presigned permission (the Presigned default); the mesh as router locates
+  the data-holding node and tells it to send to the presigned URL — via queue
+  OR a direct service-router path. → `components/aws.md` concern 3,
+  `contracts/aws-vfs.md`.
+- **Clock discipline — HARDENED, new design item** (INTENT #116): the HLC
+  ratchet stays; ADDED a **mesh time-authority requirement** — mesh owns
+  time: enforced UTC sync, possibly mesh-daemon-issued timestamps with
+  neighbor-ping offset correction, race-condition management "as hardened as
+  is physically possible." Approach-sketched; a design item for mesh-core's
+  fill. → `components/mesh-core.md` concern 9,
+  `components/replicated-kv.md` concern 1.
+- **`db serve` daemon — FROZEN** (INTENT #115): operator flagged possible
+  drift ("db = a standalone crate you call as a tool; VDB = the mesh-accessed
+  service"); **do not build; discussion pending**. Design annotated, not
+  deleted. Mesh may use db via direct CLI execution for its own database (no
+  daemon, no mesh dependency). → `components/db.md` concern 1,
+  `contracts/vdb-db.md`, `contracts/db-control-plane.md`.
+- **Naming — PINNED, undecided** (INTENT #117): see the header note.
+- **App-dev framework — noted, future scope** (INTENT #118): see the
+  placeholder section.
+- Still genuinely open after this round: FIFO queues (no operator ask),
+  binary delivery / per-node build cache (INTENT #33), the cloud node
+  (INTENT #110 — topics for discussion), disaster-recovery design (INTENT
+  #109 — direction rich, design pending), and the remaining wave-2 friction
+  items awaiting later clarification rounds (per INTENT #111, the loop
+  continues, curated by the friction report).
 
 ## The OS layering — final component tree
 
@@ -130,7 +195,8 @@ design-only + creds + S3 CSE keys + genesis rule) · `openrouter-secrets`
 
 **Data & execution plane:**
 `db-control-plane` · `db-inference-init` · `vdb-db` (the `db serve` session
-protocol — db's second public surface) · `vdb-vfs` (SQLite-file-in-VFS;
+protocol — db's second public surface; **FROZEN pending the INTENT #115
+db-serve drift discussion**) · `vdb-vfs` (SQLite-file-in-VFS;
 renamed from `stack-vfs`) · `vdb-mesh` (registration/catalog/locks; renamed
 from `stack-mesh`) · `aws-vdb` (RDS+Lambda target, design-only v1) ·
 `kg-vdb` (KG built ON VDB) · `kg-vfs` (node→file pointers) · `kg-mesh` ·
@@ -182,8 +248,11 @@ URL. Records ride `replicated-kv` (leases + heartbeats + LWW tombstones), so
   stores `requires`; supervision topo-sorts and mesh STARTS local services),
   the 4-level restart ladder (`restart-protocol`), port-handoff updates
   (new port → health check → registry flip → drain old), minimal-restart
-  rolling updates. The mixed-version update protocol remains OPEN (friction
-  report).
+  rolling updates. The mixed-version update protocol is **CONFIRMED**
+  (friction-round 1, INTENT #113): the restart-priority ladder IS the answer
+  — non-critical waits for idle; critical incompatible updates push to every
+  instance at high priority — plus the LOCKED sender-version-stamping
+  requirement (friction-round section above).
 - The assembler (skeleton phase) touches exactly this seam; each crate's
   private composition root (`InferenceService::start`, mesh's ring layering)
   is NOT the seam.
@@ -191,7 +260,7 @@ URL. Records ride `replicated-kv` (leases + heartbeats + LWW tombstones), so
 ## Standing cross-cutting principles
 
 1. **INTENT wins.** Where scaffold text conflicts with the INTENT ledger
-   (#1–#107), INTENT governs.
+   (#1–#118), INTENT governs.
 2. **Provenance is first-order** — healthcare-grade traces on every handler
    touch; scoped per-project/per-database; VDB is its primary home; VFS
    carries a lighter requirement.
@@ -202,8 +271,10 @@ URL. Records ride `replicated-kv` (leases + heartbeats + LWW tombstones), so
    convention: `:8420`. In-process linking across app boundaries forbidden
    (INTENT #29).
 5. **Boring layers on boring layers** — mesh utilities are internal libs,
-   never standalone services; replicated state is LWW (naive by blessing,
-   HLC-ratchet hardening pending operator confirmation — friction report).
+   never standalone services; replicated state is LWW (naive by blessing);
+   the HLC ratchet stands and is now exceeded by the mesh time-authority
+   requirement — mesh owns time (friction-round 1, INTENT #116; approach-
+   sketched in `mesh-core.md` concern 9).
 6. **Triggers are declarative** — filter expression + payload-assembly
    template, registered as DATA; code lives only in handlers. One trigger
    data model shared by queues and the execution-engine's two adapters.
@@ -215,7 +286,11 @@ URL. Records ride `replicated-kv` (leases + heartbeats + LWW tombstones), so
 9. **Wire-struct version discipline** (types guardrail 4): additive-only,
    `#[serde(default)]`, `#[serde(other)]` enum tolerance, explicit `v`
    fields on persisted/replicated shapes — the qualifier on INTENT #45's
-   "no runtime version tracking for shared libs" (friction report).
+   "no runtime version tracking for shared libs". PLUS the LOCKED
+   sender-version-stamping requirement (friction-round 1, INTENT #113):
+   every mesh-crossing message carries sender service name + version;
+   receiver version floors are catchable; one version of back-compat with a
+   please-update warning to the sender.
 10. **Naming guardrails:** the module is `vdb`, "stack" is the pattern;
     "ripples" is RESERVED and names nothing in v1; `inference` will not be
     renamed.
@@ -234,6 +309,10 @@ generalization ON TOP of ccd — never absorbs it), `aui` (voice interface over
 the mesh), `openrouter-mgmt` (per-key budgets). **`ripples` — RESERVED
 TERM**: a future KG micro-agent system; not designed, not discussed, and the
 word must not name the execution-engine or any propagation mechanism.
+**App-development framework (INTENT #118, future scope, noted only):** "We
+need a whole system built around designing applications built on top of our
+mesh OS" — an application-development framework for the OS; not designed, not
+scheduled.
 
 ## History
 
