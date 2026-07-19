@@ -420,11 +420,11 @@ via `mesh-client`):
   injection-on-push: repo names the linkage, secrets' adapter pushes the value
   (concern 6). Aligns with `secrets.md`'s already-authored `repo-secrets`
   counterpart (`GhSecretPush`/`GhSecretRemove`/`GhPushReceipt`).
-  *(MISSING in inventory — proposed below; secrets.md authored its side.)*
+  *(authored: scaffold/contracts/repo-secrets.md; secrets.md authored its side.)*
 - **environments** via `repo-environments` — branch/worktree → environment
   attachment + the deploy-into-environment event that triggers the pipeline
   (concern 7). *(scaffold/contracts/repo-environments.md — exists,
-  requirements-only; content proposed below.)*
+  content authored at the contract round.)*
 - **cicd** via `cicd-repo` — cicd triggers/chains/observes workflows through repo
   (concern 8; repo authors its side; cicd is a batch-7 stub).
   *(scaffold/contracts/cicd-repo.md — exists, requirements-only, layer-6.)*
@@ -517,139 +517,16 @@ batch-7 stub only for the `cicd-repo` seam shape.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only; the per-pair round reconciles both sides. Structs land in
-`substrate-types` where they cross the wire (guardrail-4 discipline: additive,
-`#[serde(default)]`, `#[serde(other)]` on enums, explicit `v`). I do NOT edit
-`scaffold/contracts/*`. `RepoError` requests a reserved `types::error::repo`
-slot (parallel to `types::error::secrets`). The repo vocabulary
-(`RepoRecord`/`WorktreeRecord`/`SecretLink`/`EnvRef`/`GhSecretScope`) lands in
-`types::repo`; `SecretRef`/`SecretScope` are reused from `types::secrets`.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-```rust
-// types::error::repo
-pub enum RepoError {
-    RepoNotFound { slug: String },
-    WorktreeNotFound { repo: String, name: String },
-    AnchorLocked { path: String },        // another node/op holds the vfs.anchor lock
-    AnchorElsewhere { repo: String, node: NodeId }, // op must run on the anchoring node
-    GitFailed { op: String, detail: String },       // libgit2/CLI error, stringified at the boundary
-    RemoteAuthFailed { remote: String },  // GitHub credential (from secrets) rejected
-    WorkflowInvalid { file: String, detail: String },
-    GhApiFailed { status: u16, detail: String },     // GitHub REST error
-    SecretLinkUnresolved { gh_name: String },        // link points at a SecretRef secrets can't resolve
-    PartitionMergeExceeded,               // locks-api partition twin (INTENT #84), surfaced
-    VfsUnavailable(String),               // repo-vfs surface error
-}
-```
+- `repo-vfs` — (repo → vfs) — NodeAnchored git-tree hosting (vfs.md authored the storage side). → `scaffold/contracts/repo-vfs.md`
+- `repo-secrets` — (repo ↔ secrets) — GitHub auth (use-without-seeing) + injection-on-push (secrets.md authored the push side). → `scaffold/contracts/repo-secrets.md`
+- `repo-environments` — (repo ↔ environments) — branch/worktree attachment + the deploy trigger (environments is a batch-7 stub). → `scaffold/contracts/repo-environments.md`
+- `cicd-repo` — (cicd → repo) — workflow trigger/chain/observe through repo (cicd is a batch-7 stub; repo authors its side). → `scaffold/contracts/cicd-repo.md`
 
-### `repo-vfs` (repo → vfs) — NodeAnchored git-tree hosting (vfs.md authored the storage side)
+Also a party to (authored elsewhere / cross-cutting): `vfs-content` — see `scaffold/contracts/`.
 
-- **Purpose.** repo materializes each repository (`.git` + worktrees) as a single
-  `NodeAnchored` VFS directory tree and drives real git against the real OS path
-  vfs hands it; durability is snapshot-driven at git-natural boundaries (concern
-  1). The `.repo/` manifest (concern 2) rides the same tree.
-- **Message/struct sketch** (repo consumes vfs's authored `vfs-content`/anchor
-  surface — vfs.md's "repo-vfs" storage-side sketch):
-  ```rust
-  // repo -> vfs (vfs owns these — repo is the client)
-  struct OpenAnchored { path: String } -> LocalPath { os_path: String, anchor_lock: HoldToken }
-  struct Snapshot     { path: String } -> Hash            // at commit / completed fetch
-  struct Read  { path: String, cache_local: bool }         // .repo/ manifest reads
-  struct Write { path: String, class: FileClass, replication: Option<u8>, provenance: Option<Provenance> }
-  enum   FileClass { Immutable, NodeAnchored }             // repo trees are NodeAnchored
-  ```
-- **Error cases.** `AnchorLocked`/`NotAnchoredHere` (vfs.md — repo must run on the
-  anchoring node, surfaced as `AnchorElsewhere`); `OutOfCapacity` (placement
-  can't host the clone — repo picks another node); `NotFound`. Transport failures
-  are mesh-transport's.
-- **Version-sensitivity.** LOW-MEDIUM — repo consumes vfs's frozen anchor/snapshot
-  surface; the `.repo/` manifest format versions inside the file (a format tag),
-  opaque to vfs. Reconciled with vfs's authored side in the per-pair round.
-
-### `repo-secrets` (repo ↔ secrets) — GitHub auth (use-without-seeing) + injection-on-push (secrets.md authored the push side)
-
-- **Purpose.** Two facets: (a) repo resolves its **GitHub auth credential**
-  use-without-seeing for clone/push (concern 4 — repo is a non-`llm_safe` service,
-  raw allowed); (b) **injection-on-push** — repo names each secret↔workflow
-  linkage and secrets' GH-Actions adapter pushes the value (concern 6). Aligns
-  with `secrets.md` concern 5's already-authored counterpart.
-- **Message/struct sketch.**
-  ```rust
-  // (a) repo -> secrets: resolve git auth (raw allowed — repo is a trusted non-LLM caller)
-  struct ResolveGitCredential { r#ref: SecretRef, caller: CallerContext } -> SecureValue // llm_safe=false
-  // (b) repo -> secrets: inject linked secrets on push (secrets seals + PUTs; value never returns)
-  struct GhSecretPush   { owner: String, repo: String, gh_name: String, gh_scope: GhSecretScope, r#ref: SecretRef }
-  struct GhSecretRemove { owner: String, repo: String, gh_name: String, gh_scope: GhSecretScope }
-  // secrets -> repo
-  struct GhPushReceipt  { gh_name: String, pushed: bool }   // linkage + identity in; only receipt out
-  ```
-  `SecureValue` (secrets.md) = a confidential in-mesh channel between two trusted
-  services; the GitHub token flows secrets→repo's credential callback and never
-  transits an LLM path (repo runs no completions). `gh_scope` carries concern 5's
-  scoping reality (Repo- vs GitHub-Environment-level Actions secret).
-- **Error cases.** `RemoteAuthFailed` (credential rejected by GitHub);
-  secrets-side `AdapterFailed{GitHubActions, detail}` / `NotFound{ref}`
-  (secrets.md) surfaced to repo as `SecretLinkUnresolved`/`GhApiFailed`.
-- **Version-sensitivity.** LOW — the GH Actions secrets API is stable; the linkage
-  shape is repo's to evolve; `rollup` is EXCLUDED (concern 5), so this edge
-  carries only value push + auth resolution, never templated content. The
-  no-plaintext-returns-to-repo arm is FROZEN (part of the contract, not
-  commentary — repo receives only `GhPushReceipt`).
-
-### `repo-environments` (repo ↔ environments) — branch/worktree attachment + the deploy trigger (environments is a batch-7 stub)
-
-- **Purpose.** repo attaches a branch/worktree to an environment and emits the
-  **deploy-into-environment event** that activates the environment's pipeline
-  (concern 7). repo names the attachment + fires the declarative trigger;
-  `environments`/`cicd` own the pipeline. Because `environments` is a **batch-7
-  L6 stub**, this pins the **v1-facing shape** repo needs — the stub must honor it
-  (wave2-plan §5 flag 2).
-- **Message/struct sketch.**
-  ```rust
-  struct EnvRef { project: String, env: String }   // aligns with SecretScope::Environment
-  // repo -> environments (attachment, recorded on repo's side + optionally environments')
-  struct AttachBranch { repo: String, branch_or_worktree: String, env: EnvRef }
-  // repo -> pubsub (the deploy trigger environments/cicd subscribe to; declarative — INTENT #103)
-  struct DeployedEvent { repo: String, ref_name: String, env: EnvRef, head_sha: String, correlation_id: Uuid }
-  ```
-- **Error cases.** `EnvNotFound` (environments-side, when it exists); repo-side an
-  attachment to a non-existent environment is allowed to be recorded optimistically
-  and reconciled when environments lands (stub-track). The "strange" public-website
-  nuance (environments.md) is carried, not resolved.
-- **Version-sensitivity.** LOW, but the pair is **stub-blocked**: content is
-  v1-facing-shape-only until `environments` leaves the batch-7 stub track. Flagged:
-  repo's v1 capability presupposes `EnvRef` + `DeployedEvent` being honored by the
-  environments stub.
-
-### `cicd-repo` (cicd → repo) — workflow trigger/chain/observe through repo (cicd is a batch-7 stub; repo authors its side)
-
-- **Purpose.** cicd invokes repo's workflow operations; repo is the ONLY component
-  touching the GH-Actions directory/remote surface (concern 8). Designed as an
-  external contract so the OPEN "cicd own-crate vs emerges-from-repo" question
-  (cicd.md; INTENT #104) stays cheap — if cicd emerges from repo, these verbs
-  become repo-internal calls and the contract collapses with no rework.
-- **Message/struct sketch** (cicd → repo, over mesh-transport WS):
-  ```rust
-  struct TriggerWorkflow { repo: String, workflow: String, r#ref: String, inputs: Map<String,String> } -> RunHandle
-  struct RunHandle       { repo: String, run_id: u64, workflow: String }
-  struct ObserveRuns     { repo: String, workflow: Option<String> } -> Vec<RunStatus>
-  struct RunStatus       { run_id: u64, status: RunState, conclusion: Option<RunConclusion>, head_sha: String, logs_url: String }
-  enum   RunState        { Queued, InProgress, Completed }
-  enum   RunConclusion   { Success, Failure, Cancelled, TimedOut, ActionRequired }
-  struct ComposeChain    { repo: String, chain: ChainSpec }   // declarative (YAML edit) or orchestrated
-  enum   ChainSpec { Declarative { workflow: String, on_run: String }, Orchestrated { steps: Vec<String> } }
-  ```
-  The **watch/verify loop** (poll to Completed, SHA-verify what production serves,
-  App-Runner/CloudFront watching, agent-in-loop retry) is **cicd's own scope**
-  (cicd.md) — repo exposes only trigger/observe/compose. `RunStatus` gives cicd
-  the `head_sha` its SHA-verification needs.
-- **Error cases.** `WorkflowInvalid`, `GhApiFailed`, `RepoNotFound` (all
-  `RepoError`); a dispatch on a workflow lacking `on: workflow_dispatch` →
-  `WorkflowInvalid { detail: "not manually dispatchable" }` (repo can offer to add
-  the trigger — a directory change).
-- **Version-sensitivity.** LOW; **stub-blocked** — repo's side is authored now,
-  cicd's consumption is deferred to batch 7. `correlation_id` from a
-  `DeployedEvent` threads into `TriggerWorkflow` so cicd's watch and repo's deploy
-  share one provenance chain (concern 9).

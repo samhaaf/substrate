@@ -328,8 +328,7 @@ not a contract edge — INTENT #29/#45).
   the authoritative **daemon-side** party; the struct home is `types::restart`,
   the client half is `mesh-client`, the kill/handoff execution is mesh-core.
   Cross-cutting, surface-schema-style (one shared document, every service a
-  party). *(scaffold/contracts/restart-protocol.md — MISSING, to be created;
-  proposed below.)*
+  party). *(authored: scaffold/contracts/restart-protocol.md)*
 - **service-registry** (sibling lib) — supervision **reads** version/requirement/
   lease/endpoint records and **writes** the LWW registry flip during a handoff.
   In-process via `trait Resolver` + a KV keyspace, NOT a contract edge. Proposes
@@ -396,142 +395,13 @@ the one place a wrong default silently mis-serves. Sequence **after** `types`,
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-wave2-plan §3b assigns `supervision` exactly one contract pair: **`restart-protocol`**
-— "mesh ↔ every service — the two-way 4-level graceful-restart / supervision
-protocol (interruptibility state, port-handoff choreography)." Modeled as ONE
-shared document naming every service as a party (surface-schema precedent,
-wave2-plan §5.4), not N per-pair files. Proposal only; the per-pair round
-reconciles it with the concurrent `types` (struct home), `mesh-client` (client
-half), and mesh-core (execution) proposals — I consume their shapes and note
-deltas rather than inventing parallel structs.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### Contract: `restart-protocol`
+- `restart-protocol` (mesh ↔ every service) — the 4-level ladder, interruptibility feed, boot ordering, port-handoff choreography (supervision is the daemon side). → `scaffold/contracts/restart-protocol.md`
 
-**Purpose.** The two-way graceful-restart / supervision choreography built into
-EVERY service from the beginning (INTENT #76/#77, ladder LOCKED at 4 levels).
-The service continuously reports interruptibility; mesh (supervision, the daemon
-side) signals a restart need at a laddered level and drives port-handoff + kill.
-This document is the **daemon-side (authoritative) view**; it rides the
-`mesh-client` persistent WS connection (a persistent bidirectional socket is
-mandatory because mesh must *push* an unsolicited restart signal — mesh-client
-concern 1) and multiplexes over the `pubsub-protocol` envelope as typed control
-frames.
+Also a party to (authored elsewhere / cross-cutting): `pubsub-protocol` — see `scaffold/contracts/`.
 
-**Structs — consumed from `types::restart` (I do not redefine; canonical naming).**
-I adopt `types::restart` verbatim as the vocabulary and flag two naming/shape
-reconciliations to the harmonizer:
-
-```rust
-// from types::restart — the LOCKED 4-level ladder (ordered)
-enum RestartPriority { WaitForIdle, FinishAndRelinquish, SaveWindow, Kill }
-enum RestartReason   { Compatibility, Update, OperatorRequested, HealthRemediation, PortConflict }
-struct RestartRequest {
-    v: u16, request_id: Uuid, priority: RestartPriority,
-    reason: RestartReason, save_deadline: Option<Duration>, requested_at: DateTime<Utc>,
-}
-enum RestartResponse {
-    Acknowledged { will_yield_by: Option<DateTime<Utc>> },
-    Busy { state: Interruptibility, retry_after: Option<Duration> }, // honored ONLY below SaveWindow
-    Yielding,                    // finishing-then-relinquishing in progress (L2)
-    Saved,                       // state persisted, ready to be replaced (L3)
-}
-enum Interruptibility { Idle, Interruptible, CriticalSection { until: Option<DateTime<Utc>> } }
-struct PortHandoff { service: Slug, old: SocketHint, new: SocketHint, at: DateTime<Utc> }
-struct SocketHint  { host: String, port: u16 } // pure data, NOT a live socket
-```
-
-**Reconciliation flags (for the per-pair round):**
-- `types` calls level `RestartPriority`; mesh-core/mesh-client sketches called it
-  `RestartLevel`. Adopt **`RestartPriority`** (types is the struct home). One
-  name, fleet-wide.
-- mesh-client's client half models `SaveWindow { deadline: Duration }` as an
-  in-variant field; `types` carries the deadline as `RestartRequest.save_deadline`.
-  Adopt the **`types` shape** (deadline on the request), so the ladder enum stays
-  a clean 4-arm LOCKED enum. Flagged.
-- mesh-client adds a `RestartReason::Other(String)` / `PortHandoff` reason arm;
-  `types` uses a closed set. Keep the closed set + a reserved `#[serde(other)]`
-  catch-all for forward-tolerance (guardrail 4) rather than an open `Other(String)`
-  — matchability matters for level selection. Flagged.
-
-**Daemon → service (supervision-driven, unsolicited push):**
-```rust
-enum SupervisionServerMsg {
-    Restart(RestartRequest),                 // signal a restart need at a level
-    PortHandoffNotice(PortHandoff),          // FYI: your slug's front door moved (old copy)
-    PollInterruptibility,                    // request an immediate state report (rare; feed is push-default)
-}
-```
-
-**Service → daemon (client half, `mesh-client`):**
-```rust
-enum SupervisionClientMsg {
-    InterruptibilityUpdate { state: Interruptibility }, // continuous, on change (concern 3)
-    RestartReply(RestartResponse),                      // Acknowledged/Busy/Yielding/Saved
-    Manifest(ServiceManifest),                          // version + `requires`, at registration (concern 1)
-}
-```
-
-**Error cases (`SuperError` — supervision's domain sub-enum in `types::error::supervision`,
-matchable, never a panic — CAP honesty INTENT #84):**
-- `IncompatibleVersion { slug, have, need }` — pinned (`Node{N}`) resolve of a
-  version outside a caller's pairwise requirement (concern 9.4); catchable,
-  handled per-application. AnyNode prefers a compatible instance instead of
-  raising this.
-- `HandoffStalled { slug }` — new instance never became healthy within
-  `handoff_deadline`; old kept, no flip (concern 5 step 2).
-- `RestartTimeout { slug, request_id }` — a graceful level missed its deadline;
-  drives one-step escalation (concern 4), surfaced for observability.
-- `ServiceUnreachable { slug }` — never acked / interruptibility feed stale past
-  window → escalate toward L4 + zombie-sweep.
-- `DependencyCycle { slugs }` — cyclic `requires` graph at boot-plan derivation
-  (concern 2); hard, operator-visible.
-- `CrashLooping { slug, count }` — crash-loop threshold hit (concern 7); stops
-  restarts, marks `Degraded`, escalates to ccd.
-- **Non-errors by design:** a `Busy` reply below `SaveWindow` is a normal outcome
-  (supervision waits/escalates), not an error; at `SaveWindow`/`Kill` a `Busy`
-  reply is *ignored*; a service already `Idle` on an L1 request needs no push.
-
-**Version-sensitivity.**
-- The **4-level ladder is LOCKED** — the `RestartPriority` enum is stable; adding
-  or removing a level is a breaking change requiring an operator round. Newer
-  daemons MUST NOT introduce a 5th level a client can't parse; an unknown level,
-  if one ever crossed the wire, MUST default to the **most conservative
-  interpretation** (`SaveWindow`, save-and-yield) — never ignore a restart signal
-  (mesh-client concern 7). `RestartReason` grows additively behind `#[serde(other)]`.
-- `RestartRequest.v` / `PortHandoff` carry the wire-crossing `types` guardrail-4
-  discipline (`serde(default)`, no `deny_unknown_fields`) because a daemon on
-  node A may relay a supervision control frame toward a service reached through
-  node B during the skew window — though restart is *primarily node-local*
-  (a service is supervised by its OWN local daemon).
-- **This contract is coupled to the mixed-version protocol (concern 9):** a
-  breaking `pubsub-protocol`/`mesh-transport` `proto` bump is precisely what
-  drives `RestartReason::Compatibility` restarts across nodes. That coupling —
-  the mechanism by which the whole fleet rolls to a new transport floor — is the
-  concern-9 v1 answer; the STANDING-OPEN part (binary delivery, INTENT #33) is
-  flagged, not resolved here.
-
-**Example (one compatibility roll, cross-node, shared example world).**
-```jsonc
-// operator's laptop "mba-01" hosts inference@2.1.0 and db@1.4.0; a new
-// inference@3.0.0 binary lands (proto major bump). supervision on mba-01:
-//   1. port-handoff: spawn inference@3.0.0 on a new port, verify healthy,
-//      flip registry "inference" -> new endpoint.
-//   2. db@1.4.0 declares requires inference "^2" — now violated by 3.0.0.
-//      A compatible db@2.0.0 binary IS present -> HIGH-priority compat restart:
-{
-  "v": 1, "request_id": "r-9c2",
-  "priority": "SaveWindow",
-  "reason": "Compatibility",
-  "save_deadline": { "secs": 10, "nanos": 0 },
-  "requested_at": "2026-07-19T18:20:00Z"
-}
-// db replies, having flushed its outbox:
-{ "type": "Saved" }
-// meanwhile a caller resolving "inference" AnyNode on peer "pi-01" (still on
-// inference@2.1.0, requires-compatible) is simply routed to pi-01's instance —
-// no error, skew absorbed by routing (concern 9.4). A *pinned* Node{mba-01}
-// resolve from a "^2"-requiring caller during the window would instead get:
-// SuperError::IncompatibleVersion { slug:"inference", have:"3.0.0", need:"^2" }
-```

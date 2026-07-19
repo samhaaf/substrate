@@ -4,8 +4,15 @@
 `mesh.network-topology` (producer — one tracker per mesh daemon) → any
 subscriber: **ccd**, **org**, and mesh's own in-process observability hub.
 Delivered as `pubsub-relay` envelopes on topic `net.topology`, relayed across
-services and nodes by the pub/sub plane (rides `pubsub-protocol`; the retained
-`Snapshot` uses the relay's retained-per-topic capability).
+services and nodes by the pub/sub plane (rides `pubsub-protocol`).
+**Harmonization flag (unresolved tension):** this file assumed a relay-side
+retained-per-topic capability for the `Snapshot`, but `pubsub-relay.md`
+concern 4 explicitly scopes retention OUT of the lossy relay (publishers
+replay current state as ordinary publishes), and `pubsub-protocol.md` defines
+no retention. Until the operator/next pass grants pubsub-relay a
+retained-message store, the producer satisfies every "retained `Snapshot`"
+reference below by REPUBLISHING a fresh `Snapshot` on subscriber-join and on
+`seq`-gap resync — same guarantees, producer-side. (Friction report.)
 *(gateway removed as a subscriber 2026-07-18 — merged into mesh; the
 observability fan-out hub now consumes topology in-process, not over this
 edge.)*

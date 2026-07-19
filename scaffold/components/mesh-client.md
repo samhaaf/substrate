@@ -130,11 +130,10 @@ client side only.
   / heartbeat; the wiring seam
   (see scaffold/contracts/service-lookup.md)
 - every service ↔ mesh via `restart-protocol` — client half of the 4-level
-  graceful-restart ladder + interruptibility reporting **(MISSING stub —
-  proposed below)**
+  graceful-restart ladder + interruptibility reporting **(authored: scaffold/contracts/restart-protocol.md)**
 - every service ↔ mesh via `pubsub-protocol` — the multiplexed WS envelope +
   publish/subscribe wrappers (client half of the standard pub/sub protocol)
-  **(MISSING stub — proposed below)**
+  **(authored: scaffold/contracts/pubsub-protocol.md)**
 - every service → mesh via `surface-schema` — publishes this service's boring
   surface schema and keeps it fresh across reconnects
   (see scaffold/contracts/surface-schema.md)
@@ -192,151 +191,14 @@ model-strength one.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Client-half proposals only. Server halves (`service-registry`, `pubsub-relay`,
-mesh-core supervision) propose their sides; a later per-pair round reconciles.
-All structs are expressed in `substrate-types` vocabulary; Rust-flavoured
-pseudocode.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `service-lookup` (client half)
+- `service-lookup` — (client half). → `scaffold/contracts/service-lookup.md`
+- `restart-protocol` (client half) — the RestartParticipant callback + interruptibility feed. → `scaffold/contracts/restart-protocol.md`
+- `pubsub-protocol` (client half) — subscribe/publish over the local daemon. → `scaffold/contracts/pubsub-protocol.md`
+- `surface-schema` — (client half). → `scaffold/contracts/surface-schema.md`
 
-**Purpose.** Let a service register itself under a slug (with a lease it keeps
-renewed) and resolve others by slug, in either addressing class. THE wiring
-seam.
-
-**Sketch.**
-```rust
-// Endpoint is browsable, not a dial target under single-port locality.
-struct Endpoint { scheme: Scheme, host: String, port: u16, health_path: Option<String> }
-enum RegKind { Singleton }        // the `inference` fleet front-door is mesh's own,
-                                  // never set by a client (see service-registry.md)
-enum Address { Anywhere(Slug), OnNode(Slug, NodeId) }
-
-// client -> local daemon (correlated requests over the one socket)
-struct Register   { slug: Slug, endpoint: Endpoint, kind: RegKind,
-                    lease_ttl: Duration, surface: Option<SurfaceSchema> }
-struct RegisterAck{ lease_id: LeaseId, lease_expires_at: Timestamp, renew_before: Duration }
-struct Heartbeat  { lease_id: LeaseId }                 // periodic, < renew_before
-struct Deregister { slug: Slug, lease_id: LeaseId }     // graceful shutdown -> tombstone
-struct Resolve    { addr: Address }
-struct ResolveResp{ endpoint: Option<Endpoint> }        // None = no *live-leased* entry
-struct ResolveAll {}                                    // cheap full snapshot (Org resolves the whole map)
-struct ResolveAllResp { entries: Vec<(Slug, Endpoint, NodeId)> }
-```
-**Error cases.** `LocalDaemonUnreachable` (the door is down — reconnecting);
-`LeaseExpired` (heartbeat arrived after TTL — client must re-register, handled
-automatically on reconnect); `Resolve -> None` (no live owner; NOT an error —
-an empty result, so a pinned resolve of a down node reads cleanly);
-`SlugRejected` (registry refused the slug — reserved/malformed). No
-`SlugConflict`: LWW means the newest `version` simply wins, by design.
-**Version-sensitivity.** `Endpoint` and `RegKind` must grow additively (a newer
-daemon may return a `RegKind` the client doesn't know — treat unknown as opaque,
-never panic). `renew_before` is daemon-advertised so lease timing can change
-without a client rebuild.
-
-### `restart-protocol` (client half) — **proposed new stub**
-
-**Purpose.** The client side of the two-way, LOCKED 4-level graceful-restart
-ladder (INTENT #77) plus continuous interruptibility reporting (INTENT #76).
-Built into every service from the beginning via mesh-client so no service hand-
-rolls it.
-
-**Sketch.**
-```rust
-// client -> daemon: continuous, whenever it changes
-enum Interruptibility { Idle, Busy { note: Option<String> } }
-struct InterruptibilityUpdate { state: Interruptibility }
-
-// daemon -> client: unsolicited push (the reason a persistent WS is required)
-enum RestartLevel {
-    WaitForIdle,                       // L1: mesh just waits; satisfied by the Idle feed
-    FinishAndRelinquish,               // L2: finish current work, then relinquish()
-    SaveWindow { deadline: Duration }, // L3: ~10s to save, then yield regardless
-    Kill,                              // L4: no participation (process killed)
-}
-enum RestartReason { Compatibility, Update, OperatorRequested, PortHandoff, Other(String) }
-struct RestartSignal { level: RestartLevel, reason: RestartReason }
-
-// client -> daemon: yield confirmation (L2/L3)
-struct Relinquished {}
-
-// service-supplied at construction:
-trait RestartParticipant {
-    async fn on_restart(&self, level: RestartLevel) -> Yielded; // resolves when the service has yielded
-}
-```
-**Client behaviour.** L1 needs no handler call (the `Idle` feed is the signal);
-L2 calls `on_restart` and awaits, then sends `Relinquished`; L3 calls
-`on_restart` under `deadline`, sends `Relinquished` on completion **or** yields
-anyway when the deadline elapses (best-effort save); L4 is not delivered to the
-handler. **Compatibility-driven restarts arrive as high-priority levels.**
-**Error cases.** Missing an L3 deadline is *not* a client error — it is the
-protocol working (mesh escalates to L4). `on_restart` panicking is contained
-(the client yields to protect the ladder). **Version-sensitivity.** The ladder
-is LOCKED at four levels, but a *newer* daemon could introduce a level the
-client doesn't recognise; unknown levels MUST default to the **most
-conservative** interpretation (save-and-yield, i.e. treat like L3) — never
-ignore a restart signal. `RestartReason` is freely extensible (`Other`).
-
-### `pubsub-protocol` (client half) — **proposed new stub**
-
-**Purpose.** The multiplexed local-WS **envelope** every frame rides, plus the
-publish/subscribe wrappers and per-completion-ID subscription (INTENT #5). This
-is the substrate under *all* the other client protocols; mesh-client is the
-canonical client party. The envelope struct itself is co-owned with
-`pubsub-relay` + `types` — this proposes the **client-side framing, correlation,
-and reconnect-replay** view of it.
-
-**Sketch.**
-```rust
-struct Envelope { protocol_version: u16, frame: Frame }
-
-enum Frame {
-    // generic RPC — the standing inter-service call path (slug-addressed relay)
-    Request  { corr_id: CorrId, target: Address, method: String, payload: Json },
-    Response { corr_id: CorrId, result: Result<Json, WireError> },
-    // pub/sub — typed events, mesh relays where they need to go
-    Publish   { topic: Topic, event: TypedEvent },
-    Deliver   { topic: Topic, event: TypedEvent, origin_node: NodeId },
-    Subscribe { topic: Topic }, Unsubscribe { topic: Topic },
-    // the other client protocols multiplex here as typed frames:
-    Register(..), Heartbeat(..), Deregister(..), Resolve(..),
-    InterruptibilityUpdate(..), RestartSignal(..), Relinquished(..),
-    PublishSurface(..),
-    // reserved: unknown frames from a newer daemon are ignored, not fatal
-}
-enum Topic { Named(String), Completion(CompletionId) } // per-completion-ID subscription
-```
-**Client behaviour.** One correlation-ID map for in-flight `Request`s; one
-subscription table replayed on reconnect; bounded outbound buffer for
-`Publish`; delivery fan-out to per-topic subscriber channels. **Error cases.**
-`WireError::NoLiveEndpoint` (relay target has no live-leased instance),
-`WireError::RelayFailed`, `WireError::UnknownMethod`, `WireError::PayloadDecode`;
-transport drop → reconnect (surfaced as `ConnectionState::Reconnecting`, not per
-call). **Version-sensitivity.** THE version-critical surface (concern 7):
-`protocol_version` is mandatory; frame set is additive-only; **unknown frame
-kinds and unknown fields are ignored, never fatal**, so a service and its local
-daemon can rev independently. Defer the canonical envelope shape to `types` +
-`pubsub-relay`; reconcile the client multiplexing view against them in the pair
-round.
-
-### `surface-schema` (client half)
-
-**Purpose.** Publish this service's boring surface schema (how to render its
-dashboard component + what calls to make against it) to mesh, and keep it fresh
-— mesh serves it to the dashboard (INTENT #46). Client side is a pass-through.
-
-**Sketch.**
-```rust
-struct PublishSurface { schema: SurfaceSchema } // SurfaceSchema lives in `types` (requirements-only there)
-// convenience: schema may be supplied at Register (see service-lookup) and
-// updated live via publish_surface(schema); the client re-publishes on every reconnect.
-```
-**Error cases.** Best-effort — a rejected/failed publish degrades observability
-only, never the service's function; the client retries on reconnect. A
-malformed schema is a compile-time concern (typed in `types`), not a runtime
-error class here. **Version-sensitivity.** Low — the client is a pure carrier of
-whatever `types::surface::SurfaceSchema` is; the schema language is versioned in
-`types`, and the dashboard renders defensively from it. mesh-client adds no
-version surface of its own beyond the enclosing `protocol_version`.

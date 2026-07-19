@@ -185,9 +185,11 @@ model/cache/backend management) and because the wave-2 centralization changes
   - `service-lookup` — gc registers slug `gc` → `{scheme, 127.0.0.1, port
     (8430 preferred, dynamic per INTENT #36), health_path:/health}`, per-node.
   - `restart-protocol` — gc participates in the LOCKED 4-level ladder; reports
-    `Busy` while a sweep/reclaim is mid-flight (interrupting a delete can leave
-    store↔disk inconsistent), `Idle` otherwise; on the L3 save window it
-    finishes the in-flight reclaim and checkpoints the WAL before yielding.
+    `CriticalSection { until }` while a sweep/reclaim is mid-flight
+    (interrupting a delete can leave store↔disk inconsistent; the authored
+    contract's three-state vocabulary — the earlier `Busy` wording lost at
+    reconciliation), `Idle` otherwise; on the L3 save window it finishes the
+    in-flight reclaim and checkpoints the WAL before yielding.
   - `pubsub-protocol` — `GcEvent`s are published as typed events over the
     standard envelope; mesh relays them to the dashboard fan-out.
   - `surface-schema` — gc publishes its boring surface schema (dirs/entries
@@ -235,154 +237,18 @@ structs in `types` (the `GcClient` serializes those). The `GcHandle` refactor,
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-gc owns three contract pairs (`vfs-gc`, `gc-managed-dirs`, `gc-events`). The
-cross-cutting protocols gc merely *participates in* (`service-lookup`,
-`restart-protocol`, `pubsub-protocol`, `surface-schema`) are authored by
-`mesh-client`/`service-registry`/`supervision`/`pubsub-relay`; gc's participation
-is noted above, not re-authored here. All structs live in `substrate-types`
-vocabulary; Rust-flavoured pseudocode. **The command vocabulary below is ONE set
-shared by `gc-managed-dirs` and `vfs-gc`** (differing only by transport/party);
-**the `GcEvent` vocabulary is ONE set shared by `gc-managed-dirs` and
-`gc-events`** — the Harmonizer authors each shape once.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### Shared command vocabulary (the `GcApi` surface)
+- `gc-managed-dirs` — (embedded, `{models,cache,engine}` → gc). → `scaffold/contracts/gc-managed-dirs.md`
+- `vfs-gc` — (remote WS, `vfs` → gc daemon, via local mesh). → `scaffold/contracts/vfs-gc.md`
+- `gc-events` — (mesh ← gc daemon). → `scaffold/contracts/gc-events.md`
 
-**Purpose.** The single set of enforcement commands gc accepts, whether
-in-process (`Embedded`) or over WS (`Remote`). Mirrors the existing `GcService`
-method surface + the wave-2 additions (`set_policy`, `register_and_lock`,
-`reconcile`).
+Also a party to (authored elsewhere / cross-cutting): `pubsub-protocol`, `restart-protocol`, `service-lookup`, `surface-schema` — see `scaffold/contracts/`.
 
-**Sketch.**
-```rust
-// --- policy & config (all persisted write-through to `.gc/*.toml`) ---
-struct DirPolicy { max_size_bytes: u64, default_ttl_secs: u64,
-                   eviction: EvictionPolicy /* Lru|Fifo|LruUpdated|LruAccessed */,
-                   unit: UnitMode /* Self|Children */, recursive: bool,
-                   on_full: OnFullAction /* Evict|Migrate(stub) */ }
-struct ItemConfig { ttl_secs: Option<u64>, recovery_hint: Option<String> }
+Component-side note: the shared `GcApi` command vocabulary is authored in
+`scaffold/contracts/gc-managed-dirs.md` (referenced by `gc-events`), not here.
 
-// --- commands (request half) ---
-enum GcCommand {
-    RegisterDir      { path: PathStr, policy: Option<DirPolicy> }, // None = load/keep .gc/config.toml
-    SetPolicy        { path: PathStr, policy: DirPolicy },         // NEW: write-through .gc/config.toml + store
-    DeregisterDir    { path: PathStr },
-    RegisterEntry    { path: PathStr, kind: EntryKind, recovery_hint: Option<String> }, // daemon computes size
-    RegisterAndLock  { path: PathStr, kind: EntryKind, ttl_secs: u64, recovery_hint: Option<String> }, // NEW: atomic
-    Touch            { path: PathStr },
-    Lock             { path: PathStr, ttl_secs: u64 },
-    Unlock           { path: PathStr },
-    MakeRoom         { dir: PathStr, bytes_needed: u64 },
-    MovePath         { from: PathStr, to: PathStr },   // renames data + .gc + store rows
-    Evict            { path: PathStr },
-    Sweep,                                              // manual sweep trigger
-    Reconcile        { dir: PathStr },                  // NEW: rebuild entry rows from disk after store loss
-}
-enum GcQuery { GetEntry{path:PathStr}, ListEntries{dir:Option<PathStr>}, ListDirs, DirUsedBytes{dir:PathStr} }
-
-struct MakeRoomResult { bytes_freed: u64 }
-struct SweepResult { expired_evicted: u64, budget_evicted: u64, bytes_freed: u64, errors: Vec<String> }
-```
-**Error cases (shared taxonomy — the transport maps these to WS `WireError` or
-HTTP status; existing daemon mapping preserved).**
-- `DirNotRegistered` (→ 404) — command names a dir gc doesn't manage.
-- `EntryNotFound` (→ 404).
-- `DiskBudgetExceeded` (→ 409) — `make_room` exhausted all *unlocked* candidates
-  before freeing enough; **the catchable error a caller must handle** (VFS must
-  choose to overflow to `aws`/another node, or surface pressure).
-- `EntryLocked` (→ 409) — `evict` on a currently-locked entry.
-- `NonUtf8Path`, `PathHasNoParent` (→ 422) — malformed registration.
-- `ReclaimFailed{path,err}` — surfaced per-entry in `SweepResult.errors`; a
-  sweep never aborts on one failure.
-**Version-sensitivity.** `GcCommand`/`GcQuery`/`DirPolicy` are **additive-only**;
-a newer VFS may send an `EvictionPolicy` variant (`LruUpdated`/`LruAccessed` are
-the VFS-requested additions to today's `Lru`/`Fifo`) or an `on_full` an older
-daemon doesn't know — unknown enum variants must be **rejected explicitly with
-`UnsupportedPolicy`, never silently coerced** (a policy misunderstanding could
-delete data). Envelope carries `protocol_version` (rides `pubsub-protocol`).
-
-### `gc-managed-dirs` (embedded, `{models,cache,engine}` → gc)
-
-**Purpose.** In-process disk-budget enforcement for inference's local model
-weights, llama backends, and KV/prefix cache. Expressed via `GcHandle` so the
-same call sites work `Embedded` (standalone) or `Remote` (under mesh).
-
-**Sketch.**
-```rust
-trait GcApi {  // implemented by both GcHandle::Embedded and GcHandle::Remote
-    async fn register_dir(&self, path:&Path, policy:Option<DirPolicy>) -> Result<()>;
-    async fn register_entry(&self, path:&Path, kind:EntryKind, hint:Option<String>) -> Result<()>;
-    async fn register_and_lock(&self, path:&Path, kind:EntryKind, ttl:u64, hint:Option<String>) -> Result<()>;
-    async fn touch(&self, path:&str) -> Result<()>;
-    async fn lock(&self, path:&str, ttl_secs:u64) -> Result<()>;
-    async fn make_room(&self, dir:&str, bytes_needed:u64) -> Result<u64>;
-    // ... unlock / move_path / evict / query / list_* mirror GcCommand/GcQuery
-}
-```
-**Error cases.** The shared taxonomy above; the canonical caller flow
-(`lib/models`) is `make_room` → write → `register_and_lock` (preferred) — a
-caller that forgets the trailing lock leaves the narrow register→sweep race
-(concern 6). **Version-sensitivity.** In `Embedded` mode: none (compiled in). In
-`Remote` mode: inherits the shared command version rules.
-
-### `vfs-gc` (remote WS, `vfs` → gc daemon, via local mesh)
-
-**Purpose.** VFS drives per-node storage enforcement over WS: the SAME
-`GcCommand`/`GcQuery` vocabulary, plus the **policy-management path** that is
-VFS's headline use (`SetPolicy` — VFS owns the per-directory eviction/size
-policy; gc persists it write-through to `.gc/config.toml`). VFS is always a
-`GcHandle::Remote` client (it runs only under mesh).
-
-**Sketch.**
-```rust
-// request frame (rides pubsub-protocol's generic Request to Address::OnNode(gc, self))
-struct GcRequest  { corr_id: CorrId, op: GcCommandOrQuery }
-struct GcResponse { corr_id: CorrId, result: Result<GcReply, WireError> }
-enum   GcReply    { Ok, MakeRoom(MakeRoomResult), Sweep(SweepResult),
-                    Entry(Option<EntryRow>), Entries(Vec<EntryRow>), Dirs(Vec<DirRow>), UsedBytes(u64) }
-```
-**Error cases.** Shared taxonomy; plus transport-layer `LocalDaemonUnreachable`
-(gc daemon down / restarting — VFS must degrade, not block: enforcement pauses,
-placement proceeds and re-drives on reconnect) and `NoLiveEndpoint` (no gc
-registered on this node — a misconfigured node; VFS surfaces it, does not
-silently skip enforcement). **Version-sensitivity.** The most version-exposed gc
-surface — VFS and gc rev independently under rolling updates (INTENT #66).
-`DiskBudgetExceeded` and `UnsupportedPolicy` are the two errors VFS *must*
-handle; policy enums are additive-only and unknown variants are rejected, never
-coerced.
-
-### `gc-events` (mesh ← gc daemon)
-
-**Purpose.** The per-node observability surface mesh's dashboard-serving plane
-aggregates: the `GcEvent` typed stream + a REST/WS read surface. Read-only;
-mutation is `vfs-gc`.
-
-**Sketch.**
-```rust
-enum EvictionReason { TtlExpired, BudgetPressure, Forced }
-enum GcEvent {  // published over pubsub-protocol; ONE definition, also used by gc-managed-dirs
-    DirRegistered   { root: String, max_size_bytes: u64, default_ttl_secs: u64 },
-    PolicyUpdated   { root: String, policy: DirPolicy },        // NEW: emitted on SetPolicy
-    EntryRegistered { path: String, kind: String, size_bytes: u64, recovery_hint: Option<String> },
-    EntryTouched    { path: String, touch_count: u64 },
-    EntryLocked     { path: String, lock_expires_at: i64 },
-    EntryUnlocked   { path: String },
-    EntryEvicting   { path: String, reason: EvictionReason },
-    EntryEvicted    { path: String, bytes_freed: u64, recovery_hint: Option<String> },
-    EntryEvictionFailed { path: String, error: String },
-    BudgetExceeded  { dir: String, current_bytes: u64, max_bytes: u64 },
-    MakeRoomCompleted { dir: String, bytes_freed: u64 },
-    SweepCompleted  { expired_evicted: u64, budget_evicted: u64, bytes_freed: u64 },
-    PathMoved       { from: String, to: String },
-}
-// read surface: GcQuery (GetEntry/ListEntries/ListDirs/DirUsedBytes) + GET /events (WS stream) + /health
-```
-**Error cases.** Read-only; a lagged WS subscriber drops events (bounded
-broadcast, existing behaviour) — the dashboard reconciles from a fresh
-`ListDirs`/`ListEntries` snapshot on reconnect (never assumes a continuous
-stream). **Version-sensitivity.** `GcEvent` is **additive-only** and the
-dashboard renders defensively from the surface schema — a new variant
-(`PolicyUpdated` is the wave-2 addition) is ignored by an older dashboard, never
-fatal. This is exactly why `gc-events` and `gc-managed-dirs` point at one shared
-`GcEvent` in `types`.

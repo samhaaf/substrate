@@ -205,7 +205,7 @@ paranoid:
    under 10^5 keys) a full map exchange is a few hundred KB — boring on
    purpose, no Merkle trees.
 
-Wire messages are the `kv-replication` contract (Proposed contracts below).
+Wire messages are the `kv-replication` contract (scaffold/contracts/kv-replication.md).
 
 ### 6. Partition behavior + merge semantics — the explicit contract
 
@@ -428,8 +428,7 @@ omitting it and watching three siblings hand-roll racier versions.
   registration+relay only (per mesh-core.md's explicit flag). Proposed below.
 - every service ↔ mesh via **`pubsub-protocol`** — the `mesh.kv.*`
   observability mirror rides it unchanged (topic-prefix claim only; no new
-  wire shape) *(scaffold/contracts/pubsub-protocol.md — MISSING, owned by
-  pubsub-relay)*.
+  wire shape) *(authored: scaffold/contracts/pubsub-protocol.md)*.
 - `service-registry`, `locks`, `queues`, `supervision`, `cron` — **internal
   lib seams, not contract edges**: they consume `KvHandle` (concern 11).
   Their external contracts (`service-lookup`, `locks-api`, `queues-api`,
@@ -482,118 +481,20 @@ lease interplay is where the risk is.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-wave2-plan assigns replicated-kv one identified pair (the
-`registry-replication` → `kv-replication` generalization, §5.5); mesh-core.md
-additionally delegates the `aws-mesh` replication-leg framing here. Proposals
-only; the per-pair round reconciles. The sibling seam (`KvHandle`) is a
-compiled-in lib boundary and deliberately NOT proposed as a contract.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `kv-replication` (GENERALIZES `registry-replication` — mesh daemon ↔ mesh daemon peers)
+- `kv-replication` — (mesh daemon ↔ mesh daemon, every peer pair; authored
+  from this file, authoritative) — the ONE replication protocol for all kernel
+  keyspaces: eager push + cursor delta + full-digest safety net, riding
+  mesh-core `PeerTransport` frames. **Supersedes `registry-replication`**,
+  which is now a tombstone pointing at it (`service-registry` participates
+  only as a keyspace tenant). → `scaffold/contracts/kv-replication.md`
+- `aws-mesh` — replicated-kv's half (the replication plane's S3 leg). → `scaffold/contracts/aws-mesh.md`
+- `pubsub-protocol` — topic-prefix claim only (no new wire shape). → `scaffold/contracts/pubsub-protocol.md`
 
-**Purpose.** The one replication protocol for ALL kernel state: eager-push
-of fresh writes, cursor-based delta sync on reconnect/interval, and the
-full-digest safety net (concern 5). Rides `PeerTransport` frames
-(`kind = "kv"`) inside the daemon↔daemon `:3649` link — an internal facet of
-the mesh↔mesh peer protocol, versioned with it. Parties: every mesh daemon,
-pairwise. `registry-replication`'s stub is subsumed: registry entries are
-rows in the `registry/` keyspace with no protocol of their own.
+Also a party to (authored elsewhere / cross-cutting): `restart-protocol` — see `scaffold/contracts/`.
 
-**Message/struct sketch** (Rust-flavored; structs land in `types::kv`):
-
-```rust
-// fast path — new local writes, fanned to connected peers
-struct KvPush     { kv_proto: u16, entries: Vec<Entry>, ack_requested: bool } // ack_requested for Durability::AllReachable
-struct KvPushAck  { applied: Vec<Key>, sender_seq_seen: u64 }
-
-// cursor delta — reconnect + periodic
-struct KvDeltaReq  { since_seq: u64 }              // "everything you applied after your seq S"
-struct KvDeltaPage { from_seq: u64, to_seq: u64, entries: Vec<Entry>, done: bool }
-
-// digest safety net
-struct KvDigestReq  {}
-struct KvDigest     { keyspaces: Vec<(String, u64 /*count*/, u64 /*xor-version-hash*/)> }
-struct KvKeymapReq  { keyspace: String }
-struct KvKeymap     { keyspace: String, keys: Vec<(String /*path*/, Version)> }
-struct KvFetch      { keys: Vec<Key> }             // request the losing entries
-// fresh join
-struct KvSnapshotReq {}                             // full-state pull (paged via KvDeltaPage from seq 0)
-```
-
-**Error cases.** `CursorUnknown { fallback: FullSync }` (peer lost/reset its
-seq bookkeeping — e.g. after its own fresh join — respond by digest+keymap,
-never by guessing); `KeyspaceUnknown` (older peer without a newer keyspace —
-tolerated, entries for unknown keyspaces are applied anyway since values are
-opaque and keyspace config is local; flagged in the example world);
-`PageTooLarge` (bounded frames; sender must re-page); `PersistentDigestMismatch`
-(same keyspace mismatches after a full keymap reconcile twice running →
-corruption alarm published as `mesh.kv.integrity_alarm`, never silently
-retried forever). Transport-level failures are mesh-core's
-(`PeerUnreachable`) — this contract assumes an established link.
-
-**Version-sensitivity.** `kv_proto: u16` rides the first frame of every
-exchange; incompatible majors → the pair falls back to digest-only sync at
-the older side's proto (additive fields on `Entry` are `#[serde(default)]`,
-values are opaque bytes end-to-end — the payload-agnostic decoupling means
-consumer schema churn NEVER touches this protocol; only changes to
-`Entry`/`Version`/cursor semantics bump `kv_proto`). The `Version` total
-order is **frozen forever** — reordering it is a data-corrupting change, the
-one thing this contract may never do; the guarantees table (concern 6) is
-part of the contract text, not commentary. Coupled to `restart-protocol`:
-a `kv_proto` major bump is a Compatibility-priority fleet restart.
-
-### `aws-mesh` — replicated-kv's half (the replication plane's S3 leg)
-
-**Purpose.** Cloud durability + disaster recovery for kernel state: mesh
-periodically exports encrypted snapshots of selected keyspaces to S3 through
-the `aws` crate's adapter surface, and a brand-new mesh (zero reachable
-peers, empty local store) may bootstrap-import one. S3 is a **passive,
-push-only peer**: it is never consulted during normal sync, never a
-tiebreak, never required (no fault line on the cloud — INTENT #34 spirit).
-mesh-core contributes registration+relay; this is the payload/policy half it
-delegated here.
-
-**Message/struct sketch** (over `mesh-transport` to the `aws` service):
-
-```rust
-// mesh -> aws (cron-scheduled inside mesh, default daily + on-demand CLI)
-struct KvSnapshotExport { snapshot_id: Uuid, taken_at_ms: i64, node: NodeId,
-                          keyspaces: Vec<String>, kv_proto: u16,
-                          storage_class: S3Class,          // Standard | Glacier-tier
-                          ciphertext: Bytes }              // client-side encrypted BEFORE aws sees it
-struct KvSnapshotReceipt { snapshot_id: Uuid, s3_key: String }
-// mesh -> aws (bootstrap / operator-driven restore only)
-struct KvSnapshotList   {}  -> Vec<KvSnapshotMeta>
-struct KvSnapshotFetch  { s3_key: String } -> ciphertext
-```
-
-**Error cases.** `AwsUnreachable`/`ExportFailed { snapshot_id }` — logged +
-`mesh.kv.export_failed` event, retried next schedule, never blocks anything;
-`DecryptFailed`/`ProtoTooNew { kv_proto }` on import — a restore refuses
-rather than half-applies. A restore into a NON-empty store is refused
-(`StoreNotEmpty`) — restores are for genesis/disaster, not merging.
-
-**Version-sensitivity + the flagged circularity.** Snapshot payloads embed
-`kv_proto` and are self-describing; an old snapshot restores through the
-same merge path as any sync (versions are absolute, so a stale snapshot
-merges harmlessly under newer live data). **UNRESOLVED, surfaced as
-friction:** client-side encryption keys are supposed to live in `secrets`
-(INTENT #48/#98 pattern) — but `secrets` rides mesh replication, so the key
-needed to restore a dead mesh cannot live inside the thing being restored.
-The genesis key must live outside the system (OS keychain / operator-held
-file); whether that is acceptable, and whether the export key is *mirrored*
-into `secrets` for runtime rotation, is batch-3's (`secrets`+`aws`) to
-settle with the operator. Design-light on the aws side by intent — the aws
-crate's batch-3 pass owns the S3 mechanics.
-
-### `pubsub-protocol` — topic-prefix claim only (no new wire shape)
-
-replicated-kv claims the `mesh.kv.*` topic subtree for its observability
-mirror (concern 8): `mesh.kv.<keyspace>.<path-dots>` carrying `WatchEvent`
-payloads (values redacted per keyspace `mirror_values`), plus the singleton
-event topics `mesh.kv.fresh_join`, `mesh.kv.integrity_alarm`,
-`mesh.kv.export_failed`. Lossy by pubsub contract; anyone needing reliable
-change observation is a Ring-3 lib using the in-process watch. For the
-harmonizer: these are payload examples on pubsub-relay's envelope, not a new
-protocol.

@@ -280,15 +280,15 @@ seams per `mesh-core.md`, **not** contract edges (INTENT #45).
 - **any service ↔ mesh.queues** via `queues-api` — publish typed events, register/
   update/deregister declarative triggers, and the handler-delivery (ack/nack) side.
   Cross-cutting, surface-schema-style (one shared document, every service a party).
-  *(scaffold/contracts/queues-api.md — MISSING, to be created; proposed below)*
+  *(authored: scaffold/contracts/queues-api.md)*
 - **mesh.queues(DLQ) / execution-engine → ccd** via `ccd-escalation` — the shared
   dead-letter + loop-depth investigation surface (one union shape).
-  *(scaffold/contracts/ccd-escalation.md — MISSING; queues proposes the DLQ half below)*
+  *(authored: scaffold/contracts/ccd-escalation.md)*
 - **mesh.queues(triggers) → rollup** via `rollup-mesh` — a trigger's
   `AssemblyTemplate` resolves declarative `Rollup(RollupRef)` references at assembly
   time; queues calls rollup over mesh. queues is the *consumer*; `rollup` (batch 4)
   authors `rollup-mesh` (+ its own registration). Consumer-side note below.
-  *(scaffold/contracts/rollup-mesh.md — MISSING, owned by rollup)*
+  *(authored: scaffold/contracts/rollup-mesh.md)*
 - **`types`** — library dependency, NOT a contract edge: `Event`, `EventType`,
   `Provenance` (existing) + the new `types::trigger` module (`Trigger`, `FilterExpr`,
   `AssemblyTemplate`, `SemaphoreChoice`, `HandlerRef`, …) whose shape this design
@@ -324,7 +324,7 @@ partition-merge CAP-honesty path, the per-trigger semaphore/idempotency/redrive
 choices, DLQ-is-just-a-queue with ccd escalation as a declarative DLQ trigger, and
 the pub/sub tee are all decided and specified. The three proposed contract *wire
 shapes* (`queues-api`, `ccd-escalation` DLQ half, `rollup-mesh` consumer view) are
-**approach-sketched** — fields proposed below, reconciled in the per-pair round
+**approach-sketched** — fields authored, reconciled in the per-pair round
 with `locks` (error type), `rollup` (assembly-resolve API), `execution-engine`
 (shared trigger model), and `ccd` (escalation receiver). Two genuine forks are left
 for the operator, not silently chosen (queue-ownership model; FIFO) — see Friction.
@@ -355,163 +355,41 @@ seams).
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only; the per-pair round reconciles both sides. wave2-plan assigns
-queues the `queues-api` pair (mine), a party to the shared `ccd-escalation` pair
-(I propose the DLQ half), and the consumer side of `rollup-mesh` (rollup authors
-it). All structs are expressed in `types` vocabulary; I do NOT edit
-`scaffold/contracts/*`.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including Reconciliation notes). Detailed proposals formerly here
+are superseded by them.
 
-### `queues-api` (any service ↔ mesh.queues) — NEW, proposed, mine
+- `queues-api` (any service via `mesh-client` ↔ mesh.queues; cross-cutting, one
+  shared document; queues owns) — queue management, `SendEvent`, declarative
+  trigger register/update/deregister, and the push-dispatch delivery + ack/nack
+  side; durable/at-least-once, the guaranteed counterpart to
+  `pubsub-protocol`'s lossy contract. → `scaffold/contracts/queues-api.md`
+  - Contract resolution: the flagged trigger-struct home question closed
+    concordant — home = `types::trigger`, shape authored by queues (shared
+    unchanged with execution-engine).
+  - Still open in the contract, operator call: the queue-ownership fork
+    (replicated-everywhere + event-ID semaphore, which the schema assumes, vs
+    single-owner-node with failover).
+- `ccd-escalation` (producers mesh.queues + execution-engine → consumer ccd;
+  one union `EscalationRequest` shape) — queues authors the `DeadLetter` arm,
+  fired by an ordinary DLQ trigger. → `scaffold/contracts/ccd-escalation.md`
+  - Contract resolution: execution-engine's enriched `LoopDepthExceeded` arm
+    won over the thin placeholder once sketched here (kept only as the
+    back-compat deserialize floor); `EscalationAck::Investigating` carries
+    ccd's `ThreadId`, not a bare `String`.
+- `rollup-mesh` (rollup ↔ mesh; queues is the chief resolve-surface caller;
+  rollup authors) — a trigger `AssemblyTemplate`'s `Rollup(RollupRef)` nodes
+  resolve at assembly time via rollup's resolve surface; `llm_safe`
+  degradation passes through, and a degraded/failed resolve is
+  `AssemblyFailed`, never a leak. → `scaffold/contracts/rollup-mesh.md`
+  - Contract resolution: the operation is canonically **`ResolveRefs`**
+    (rollup's name; queues' `ResolveReferences` recorded as the alias) —
+    queues' fill imports `ResolveRefs`.
 
-**Purpose.** The one WS protocol a service speaks to its LOCAL mesh daemon on
-`:3649` to (1) manage queues, (2) publish typed events, (3) register/update/
-deregister declarative triggers, and (4) receive handler deliveries and ack/nack
-them. Cross-cutting, surface-schema-style: one shared document, every service a
-party. Durable/at-least-once by contract (the guaranteed counterpart to
-`pubsub-protocol`'s lossy contract).
-
-**Struct sketch** (Rust-flavored; trigger types land in `types::trigger`, event
-types already in `types::event`):
-
-```rust
-// --- queue management ---
-struct QueueConfig {
-    visibility_timeout: Duration,      // default per-delivery in-flight window
-    max_receive_count: u32,            // redrive threshold
-    dlq: Option<QueueName>,            // "a DLQ is just a queue"
-    retention: Duration,              // message TTL before tombstone-GC
-    tee_topic: Option<Topic>,         // opt-in pubsub observability tee (concern 9)
-}
-enum QueuesClientMsg {
-    EnsureQueue { name: QueueName, config: QueueConfig },      // idempotent
-    DeleteQueue { name: QueueName },
-    SendEvent  { queue: QueueName, event: Event },            // returns event_id; idempotent on event_id
-    RegisterTrigger   { trigger: Trigger },                    // static-validated on receipt
-    UpdateTrigger     { trigger: Trigger },                    // LWW by trigger.version
-    DeregisterTrigger { trigger_id: TriggerId },
-    // handler-delivery side (SQS-style ack, push-dispatch is primary; pull affordance kept for SQS parity)
-    AckDelivery  { delivery_id: DeliveryId },                  // success -> delete
-    NackDelivery { delivery_id: DeliveryId, retry_after: Option<Duration> }, // failure -> return/redrive
-    ExtendVisibility { delivery_id: DeliveryId, by: Duration },
-    ReceiveDeliveries { queue: QueueName, max: u32, wait: Option<Duration> }, // pull affordance
-}
-// mesh.queues -> service
-enum QueuesServerMsg {
-    EventAccepted { event_id: Uuid },
-    TriggerRegistered { trigger_id: TriggerId },
-    // push-dispatch: the mesh delivers an assembled payload to a handler service
-    Deliver {
-        delivery_id: DeliveryId,
-        trigger_id: TriggerId,
-        event_id: Uuid,
-        correlation_id: Option<Uuid>,   // from Provenance — for handler-side dedup
-        payload: serde_json::Value,     // trigger-ASSEMBLED, not the raw event
-        visibility_deadline: DateTime<Utc>,
-    },
-    DeliveryOutcome { delivery_id: DeliveryId, outcome: DeliveryOutcome },
-    Error { code: QueuesError, detail: String },
-}
-enum DeliveryOutcome { Acked, DeadLettered { dlq: QueueName }, PartitionConflict /*INTENT #84*/ }
-```
-
-**Error cases (`QueuesError`).**
-- `QueueNotFound` / `QueueAlreadyExists` (strict create; `EnsureQueue` is idempotent).
-- `TriggerNotFound`.
-- `InvalidFilterExpr` / `InvalidAssemblyTemplate` — static validation at
-  registration (possible *because* triggers are declarative data, INTENT #103).
-- `InvalidEventType` — not a `domain.noun.verb` identifier.
-- `AssemblyFailed` — a `Rollup(RollupRef)` reference or `SubjectPath` failed to
-  resolve during assembly → the delivery fails (returns/redrives), never panics.
-- `SemaphoreUnavailable` — transient failure acquiring the event-ID semaphore
-  (retry); distinct from `PartitionMerge` (below).
-- `PartitionMerge` — bubbles `locks`' `LockError::PartitionMergeThresholdExceeded`
-  (INTENT #84) as a first-class, catchable outcome, surfaced as
-  `DeliveryOutcome::PartitionConflict`, never silently swallowed.
-- `MessageNotInFlight` — ack/extend for an expired-or-reassigned delivery (its
-  visibility timeout lapsed and another node took it): the ack is rejected and the
-  handler's write may have doubled — **this is exactly why idempotency is
-  required** (concern 5), not an error queues can prevent.
-- Non-errors by design: `SendEvent` to a queue with no matching triggers succeeds
-  (retained until retention TTL, then GC'd); re-sending the same `event_id` is
-  idempotent.
-
-**Version-sensitivity.** HIGH — events and trigger definitions cross nodes and
-**persist** in `replicated-kv` across mixed-version fleets. `EventType` is an open
-identifier, NEVER a closed enum (a new event type flows through an older daemon
-untouched, mirroring `pubsub-relay`'s payload-opaque property). `FilterExpr` /
-`TemplateNode` / `CmpOp` / `HandlerRef` are wire- and store-crossing enums →
-additive-only, every new field `#[serde(default)]`, every enum reserves
-`#[serde(other)]` (an older daemon must tolerate a newer trigger's unknown
-filter/assembly node — it should *fail that trigger's registration/dispatch
-loudly and locally*, never crash the queue or drop the whole trigger set). The
-SQS-lifecycle fields (`visibility_timeout`, `max_receive_count`) are a stable
-subset for the someday-`SqsBackend`. `Trigger.version` is LWW `(wall_clock,
-node_id)` — concurrent edits converge like registry entries (INTENT #32).
-
-### `ccd-escalation` (mesh.queues(DLQ) / execution-engine → ccd) — proposed, DLQ half
-
-**Purpose.** The single investigation surface for the two escalation conditions
-that INTENT #70/#89 treat as one pattern: a queues **dead-letter exhaustion** and
-an execution-engine **loop-depth-exceeded**. One union shape so ccd (batch 6)
-grows one receiver. On the queues side it is fired by an ordinary DLQ trigger
-(`HandlerRef::Service { slug: "ccd" }`) — the guardrail is declarative data.
-
-**Struct sketch:**
-
-```rust
-struct EscalationRequest {
-    escalation_id: Uuid,
-    kind: EscalationKind,
-    correlation_id: Option<Uuid>,      // Provenance root — the causal chain to investigate
-    provenance: Provenance,
-    context: serde_json::Value,        // failure_history / chain snapshot for the agent
-}
-enum EscalationKind {
-    // queues authors this arm:
-    DeadLetter { queue: QueueName, dlq: QueueName, trigger_id: TriggerId,
-                 event_id: Uuid, receive_count: u32, last_error: String },
-    // execution-engine authors this arm (batch 4) — named here so the union is one shape:
-    LoopDepthExceeded { engine: Slug, depth: u32, threshold: u32 },
-}
-enum EscalationAck { Investigating { thread: String }, Declined { reason: String } }
-```
-
-**Error cases.** `CcdUnreachable` (ccd not registered/offline → the escalation
-itself dead-letters onto the DLQ's own retention, alarmed, never lost silently).
-Delivery reuses `queues-api`'s at-least-once + idempotency contract — an escalation
-may arrive twice; `escalation_id` dedups.
-
-**Version-sensitivity.** MEDIUM. `EscalationKind` is a wire-crossing enum with two
-independently-owned arms (queues + execution-engine) → additive-only, `#[serde(other)]`
-reserved so ccd tolerates a future third escalation kind. `context` is an open
-`Value` so richer investigation payloads don't break ccd's deserialize. Ownership
-flag for the per-pair round: **queues authors the `DeadLetter` arm, execution-engine
-the `LoopDepthExceeded` arm, ccd owns the receiver + `EscalationAck`.**
-
-### `rollup-mesh` (mesh.queues(triggers) → rollup) — consumer-side note; rollup authors
-
-**Purpose (queues' half only).** A trigger's `AssemblyTemplate` may contain
-`Rollup(RollupRef)` nodes; at assembly time queues calls `rollup` over mesh to
-resolve them into the handler payload — a declarative reference, never code (INTENT
-#101/#94). queues is the *consumer*; `rollup` (batch 4) authors the contract shape
-and its own registration.
-
-**What queues needs from `rollup-mesh` (proposed to the rollup designer):** a
-`ResolveReferences { refs: Vec<RollupRef>, scope: AssemblyScope } -> Vec<Resolved>`
-call, where `RollupRef` carries rollup's LOCKED insert type (`Raw` inlines content,
-`Reference` returns a handle/pointer — INTENT #94). `AssemblyScope` carries the
-subject document so rollup slots can bind event/payload variables at reference time
-(INTENT #79 slots). **Constraint queues asserts on this edge:** an assembly feeding
-an LLM-bound handler inherits rollup's `llm_safe` degradation — a `secrets` raw
-reference must NOT resolve into LLM-bound assembled content (INTENT #94); queues
-passes `llm_safe` through from the trigger's handler classification and treats a
-degraded/failed resolve as `AssemblyFailed` (delivery failure), never a leak.
-
-**Version-sensitivity.** MEDIUM — `RollupRef` / insert-type enums are additive with
-`#[serde(other)]`; the raw-vs-reference distinction is LOCKED (INTENT #94) and stable.
-Full shape deferred to rollup's batch-4 authoring pass; this is the consumer flag.
+Also a party to the cross-cutting `pubsub-protocol` (the opt-in `queue.*`
+observability tee) — see `scaffold/contracts/pubsub-protocol.md`.
 
 ## Non-obvious tests (conformance + correctness)
 

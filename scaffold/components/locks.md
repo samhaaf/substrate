@@ -318,8 +318,7 @@ after a GC TTL; sweep discipline mirrors service-registry's tombstone rules.
   coordination — reaches locks over the wire via its host app's mesh-client,
   since shared libs are not contract parties), `vdb` (promotion locks, INTENT
   #86), `vfs`/`gc` (lock-with-expiry on managed entries — candidate
-  convergence, flagged). *(scaffold/contracts/locks-api.md — MISSING, proposed
-  below; NOT created by this pass.)*
+  convergence, flagged). *(authored: scaffold/contracts/locks-api.md)*
 - **`replicated-kv`** — **internal-lib seam, not a contract edge** (compiled-in
   sibling, INTENT #29 exception). locks consumes `KvHandle` (get / put /
   subscribe) **plus one seam it REQUIRES beyond mesh-core's sketch:**
@@ -344,7 +343,7 @@ after a GC TTL; sweep discipline mirrors service-registry's tombstone rules.
   `error/locks.rs` (types.md already reserves it, INTENT #84); the
   `HoldToken`/`PartitionMerge` structs land in a `types` locks domain module
   (they appear in ≥2 crates' public signatures — passes the inclusion test).
-  Full shape proposed below for the harmonizer.
+  Full shape authored in scaffold/contracts/locks-api.md.
 - **`supervision` / mesh-core ProcessControl** — none. Lock-holder death is
   handled by lease expiry alone; locks does not watch processes. (Deliberate:
   keeps the failure model uniform with remote holders, which supervision can
@@ -389,135 +388,16 @@ surfaces the error) are the single highest-value fill artifact.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-wave2-plan §3b assigns `locks` exactly one contract pair: **`locks-api`** —
-"any service ↔ mesh.locks — acquire/release/renew distributed semaphores + the
-partition-merge error type." Modeled surface-schema-style: ONE shared stub,
-every service a party. Proposal only; the per-pair round reconciles it (with
-`types` for the struct home, with `queues` for the event-ID slug convention,
-with `replicated-kv` for the flush seam it presupposes).
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### Contract: `locks-api`
+- `locks-api` (any service ↔ mesh.locks) — acquire/release/renew distributed semaphores + the catchable partition-merge error. → `scaffold/contracts/locks-api.md`
 
-**Purpose.** The one wire surface for distributed semaphores: a service asks its
-LOCAL mesh daemon (`:3649`, mesh-transport `Request`/`Response` envelopes, kind
-strings `locks.acquire` / `locks.release` / `locks.renew` / `locks.query`) to
-acquire leased permits; the daemon routes to the instance owner, runs the
-reachable-ack protocol, and returns a `HoldToken` — or a member of the typed
-`LockError` taxonomy, of which `PartitionMergeExceeded` is the operator-required
-first-class catchable variant. Notifications ride `pubsub-protocol` on the
-`locks.*` prefix.
+Also a party to (authored elsewhere / cross-cutting): `pubsub-protocol` — see `scaffold/contracts/`.
 
-**Message/struct sketch** (lands in `types` — locks domain module +
-`error/locks.rs`; wire form JSON tagged enums per the pubsub convention):
+Component-side note: the `replicated-kv::put_flush` seam (NOT a contract —
+in-process, same daemon) is recorded in `scaffold/contracts/locks-api.md`.
 
-```rust
-// ---- requests (service -> local daemon) ----
-struct AcquireReq {
-    slug: SemSlug,                     // dot-segmented, validated like TopicPath
-    permits: u32,                      // default 1
-    threshold: u32,                    // default 1 (mutex); declared by acquirers,
-                                       // first-mint fixes it per instance
-    wait: WaitMode,                    // NoWait | Block { timeout: Duration }
-    lease: Duration,                   // clamped to [min, max]
-    strictness: Strictness,            // Reachable (default) | WholeFleet
-    class: SemClass,                   // Durable (default) | Ephemeral
-    holder: String,                    // service slug (daemon-verified vs registration,
-                                       // same anti-spoof rule as pubsub provenance)
-}
-struct ReleaseReq { token: HoldToken }
-struct RenewReq   { token: HoldToken, extend: Duration }
-struct QueryReq   { slug: SemSlug }
-
-// ---- responses ----
-struct HoldToken {                     // opaque to bearers; introspectable honesty receipt
-    slug: SemSlug, instance: InstanceId, hold_id: HoldId,
-    fence: u64,                        // per-instance monotonic fencing token
-    lease_expires_at: DateTime<Utc>,
-    acked_nodes: Vec<NodeId>,          // who knew at confirmation (guarantee scope)
-    minted_fresh: bool,                // true => this acquire created the instance
-}
-struct RenewAck   { lease_expires_at: DateTime<Utc> }
-struct SemStatus  {                    // Query response; also the surface-schema feed
-    slug: SemSlug, threshold: u32,
-    instances: Vec<InstanceSummary>,   // >1 only mid-merge
-    holds: Vec<HoldSummary>, waiters_local: u32,
-    conflict: Option<PartitionMerge>,
-}
-
-// ---- THE error taxonomy (types::error::locks::LockError) ----
-enum LockError {
-    Contended        { slug: SemSlug, holders: Vec<HoldSummary> }, // NoWait, full
-    AcquireTimeout   { slug: SemSlug, waited: Duration },          // Block deadline
-    LeaseExpired     { hold_id: HoldId },                          // late holder's signal
-    UnknownHold      { hold_id: HoldId },   // stale token from a dead/retired instance
-    InvalidRequest   { detail: String },    // bad slug/permits>threshold/lease bounds
-    FleetNotFullyReachable { missing: Vec<NodeId> },               // WholeFleet only
-    PartitionMergeExceeded(PartitionMerge),                        // REQUIRED (INTENT #84)
-    // wire-crossing enum: reserves #[serde(other)] Unknown per types guardrail 4
-}
-struct PartitionMerge {                 // matchable, self-describing conflict evidence
-    slug: SemSlug, threshold: u32,      // governing (minimum-declared) threshold
-    thresholds_seen: Vec<u32>,          // >1 distinct => twins disagreed
-    total_confirmed: u32,               // > threshold, by definition of this error
-    instances: Vec<InstanceSummary>,    // each twin: instance, owner_node, holds, created_at
-    detected_at: DateTime<Utc>,
-    your_hold: Option<HoldId>,          // set when delivered to a current holder (via Renew)
-}
-```
-
-**Pub/sub notification topics** (payloads are the structs above, on the standard
-`Envelope`): `locks.merge.<slug>` (`PartitionMerge`), `locks.consolidated.<slug>`
-(benign merge), `locks.expired.<slug>` (`HoldSummary`). Per-entity subscription
-= exact-match on the leaf, per pubsub-relay concern 3.
-
-**Error-case semantics worth pinning:**
-- `Contended` and `AcquireTimeout` are *normal outcomes*, not faults.
-- `PartitionMergeExceeded` is returned by **`Acquire` and `Renew`** while a
-  slug is in conflict; `Release` ALWAYS succeeds during conflict (releasing is
-  the resolution path and must never be blocked).
-- `LeaseExpired` on `Release` is informational-idempotent: the hold is already
-  gone; the caller's cleanup proceeds.
-- Daemon-unreachable / relay failures are `mesh-transport`'s errors
-  (`PeerUnreachable`), not `LockError` — transport and lock semantics stay
-  layered.
-
-**Version-sensitivity.**
-- `HoldToken` and `PartitionMerge` **cross the wire and outlive processes** —
-  additive-only evolution, every new field `#[serde(default)]`, no
-  `deny_unknown_fields` (types guardrail 4). `LockError` reserves a catch-all
-  arm so an older consumer degrades to "some lock error" rather than a
-  deserialize failure — but `PartitionMergeExceeded`'s *presence and shape* is
-  the one variant applications match on, so it is **frozen at harmonization**:
-  renaming/renarrowing it is a breaking change requiring an operator round.
-- KV *records* (`InstanceRecord`/`HoldRecord`) cross nodes via replication on
-  possibly-mixed versions — same additive discipline; the reconciler must
-  tolerate records with unknown extra fields (mixed-version fleet, INTENT #66).
-- The `strictness`/`class` enums may gain variants (additive, `#[serde(other)]`
-  → treated as `Reachable`/`Durable` conservatively by old nodes — conservative
-  defaults chosen so an unknown stricter mode never silently weakens).
-
-**Example (drawn from the shared example world — the walk-along Pi, INTENT #84
-color).** Laptop (`node: laptop`) and Pi (`node: pi-01`) partition. Both sides'
-VDB acquire `vdb.promote.customers-db` (threshold 1): laptop confirms against
-instance `a3f2…` (acked: `[laptop]`, `minted_fresh: false`); the Pi cannot reach
-`a3f2…`'s owner, mints twin `9c81…` (acked: `[pi-01]`, `minted_fresh: true`).
-The Pi rejoins; KV resyncs bidirectionally; every daemon's reconciler counts 2
-confirmed holds > threshold 1 → `locks/conflict/vdb.promote.customers-db` is
-flushed. Both holders' next `Renew` returns
-`Err(PartitionMergeExceeded { total_confirmed: 2, threshold: 1, instances:
-[a3f2…@laptop, 9c81…@pi-01], your_hold: Some(...) })`; both also see
-`locks.merge.vdb.promote.customers-db` on pub/sub. VDB's per-application
-handling (its contract's concern) releases the Pi-side hold and re-verifies its
-copy step; the conflict clears on release; the reconciler consolidates `9c81…`
-→ `Retired { into: a3f2… }`.
-
-### Seam note (NOT a contract): `replicated-kv::put_flush`
-
-Recorded here so the per-pair round doesn't lose it: `locks-api`'s guarantee is
-implementable ONLY on an eager propagate-and-ack write
-(`put_flush -> FlushReceipt`) from `replicated-kv`, over mesh-core's
-`PeerTransport`. This is an internal-lib seam (no contract file), but it is the
-single hardest cross-module dependency in batch 2 — reconcile mid-batch per the
-wave2-plan ⇄ marking.

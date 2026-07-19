@@ -262,7 +262,8 @@ children is exactly the open internal-layering question in the Charter.)
 ### 2. completion-router — RESHAPE, already fully designed
 
 The transparent completion data plane. **Design is implementation-ready** and
-frozen in `reports/mesh-design-synthesis.md` (three-stage propose/critique/
+frozen in the `mesh-design-synthesis.md` report (harness workspace
+`substrate-v2/reports/` — NOT in this repo; three-stage propose/critique/
 synthesize): `NodeRegistry` (discovery-refresh + state/inventory poll loops),
 `ModelAffinityBalancer` (prefer resident tier, least-loaded tie-break; spill and
 Tier-3 deferred with reasons), a `forward()` whose contract **must change** to
@@ -668,9 +669,10 @@ note; contract `aws-mesh`).
 
 ## Assigned design-depth
 
-**Design Mesh** for the discovery/routing half — run
-`reports/mesh-design-synthesis.md` (three-stage propose → critique → synthesize
-over the real V1 code) — **plus a single strong-model (Opus) Component-Designer
+**Design Mesh** for the discovery/routing half — already run; its output is
+the `mesh-design-synthesis.md` report (harness workspace
+`substrate-v2/reports/` — NOT in this repo; three-stage propose → critique →
+synthesize over the real V1 code) — **plus a single strong-model (Opus) Component-Designer
 pass** for the expanded registry + topology + tailscale-query-crate + CLI scope,
 grounded by reading the live `lib/mesh/{lib,config,discovery,router,balancer}.rs`
 and the `bin/db` CLI as the noun-verb template.

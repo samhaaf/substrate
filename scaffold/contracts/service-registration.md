@@ -1,10 +1,28 @@
 # Contract: service-registration
 
 ## Parties
-ccd  <->  mesh.service-registry (via service-lookup)
+`ccd` `<->` `mesh.service-registry` — a named INSTANCE of `service-lookup`.
+
+*(Upgraded at wave-2 harmonization from the rounds-era "Schema deferred"
+stub. Deliberately thin: this pair defines NO wire of its own — the schema,
+lease/heartbeat/tombstone lifecycle, addressing classes, and error cases are
+all `scaffold/contracts/service-lookup.md`. This file exists because the
+wave-1 inventory called CCD out as a first-class registry participant, and it
+records CCD's particulars only.)*
 
 ## What the edge carries
-CCD registers its own `slug -> host:port` and resolves other services by slug.
-Instance of `service-lookup` for the CCD party; called out separately because CCD
-is a first-class registry participant (both registrant and resolver). Schema
-deferred.
+- CCD registers the `ccd` slug: `addressing: Singleton`, its real loopback
+  `Endpoint` (+ `health_path`), `meta.requires` naming its dependencies
+  (rollup, db; inference optional) — supervision derives boot order from
+  this record like any other.
+- CCD resolves its dependencies by slug (`resolve("rollup")`, `resolve("db")`,
+  `resolve(AnyNode{inference})` for metering reads) — never a static URL.
+- Registration/renewal ride `mesh-client` exactly as every service's do.
+
+## Reconciliation notes
+- No party proposed CCD-specific wire beyond `service-lookup`'s; the contract
+  round left this file untouched (flagged at harmonization as a coverage
+  gap, resolved as this pointer contract).
+- Candidate for the operator: fold this file into `service-lookup.md`'s party
+  list entirely and tombstone the name — kept for now because the wave-1
+  inventory names it.

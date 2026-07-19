@@ -173,7 +173,7 @@ mesh relay (`forward()`); the content plane is the same shape for blobs.
   desired set — this is exactly replicated-kv's tombstone/fresh-join concern 7
   operating on vfs's keyspace, inherited, not re-solved here.)
 
-This plane is a NEW contract, `vfs-content` (Proposed contracts) — the one edge
+This plane is a NEW contract, `vfs-content` (scaffold/contracts/vfs-content.md) — the one edge
 the inventory did not name, surfaced explicitly.
 
 ### 4. Placement + per-file replication factor — desired vs actual, drive-aware
@@ -275,7 +275,7 @@ because it matches the operator's stated mental model.)*
 A node advertises its **storage topology** (its drives) so vfs can place replicas
 on specific drives and treat one node as a warm/cold tier. This is the
 `DriveInfo`/`NodeStorageTopology` type that types.md (its concern node.rs)
-deferred to *this* design — proposed now (Proposed contracts, for the per-pair
+deferred to *this* design — proposed now (recorded in the authored contracts, per-pair
 round):
 
 ```rust
@@ -446,10 +446,10 @@ via `mesh-client`):
   node/drive **storage-topology** publication (`NodeStorageTopology`/`DriveInfo`)
   + perf reporting; the S3-overflow leg does NOT ride this edge (it rides
   `aws-vfs`). *(scaffold/contracts/vfs-mesh.md)*
-- **vfs peer ↔ vfs peer** via **`vfs-content`** — **NEW (proposed below):** the
+- **vfs peer ↔ vfs peer** via **`vfs-content`** — **NEW (authored — see Contracts section):** the
   reliable chunked content-transfer plane (concern 3), relayed by mesh
   (`Node{N}` pinned), pull-driven. The edge the inventory did not name; the
-  biggest new surface. *(scaffold/contracts/vfs-content.md — MISSING)*
+  biggest new surface. *(authored: scaffold/contracts/vfs-content.md)*
 - **aws** via `aws-vfs` — S3 overflow cold tier: ciphertext chunks to/from S3
   cold-storage classes through aws (concern 8). *(scaffold/contracts/aws-vfs.md)*
 - **secrets** via **`vfs-secrets`** — **NEW (flagged MISSING):** the client-side
@@ -552,191 +552,18 @@ and gc are filled (it rides all four) and **alongside** aws's batch-3 S3 surface
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only; the per-pair round reconciles both sides. Structs land in
-`substrate-types` where they cross the wire (guardrail-4 discipline: additive,
-`#[serde(default)]`, `#[serde(other)]` on enums, explicit `v`). I do NOT edit
-`scaffold/contracts/*`. VFS is the party (or the storage-side party) to the
-edges below; the `vfs-content` and `vfs-secrets` pairs are **new** (not in the
-wave-2 inventory) and surfaced explicitly.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `vfs-content` (NEW — proposed; vfs peer ↔ vfs peer, relayed by mesh) — the content-transfer plane
+- `vfs-content` (vfs peer ↔ vfs peer, relayed by mesh) — the bulk content-transfer plane (added by the contract round). → `scaffold/contracts/vfs-content.md`
+- `vfs-mesh` — (vfs ↔ mesh) — registration + storage topology + perf. → `scaffold/contracts/vfs-mesh.md`
+- `vfs-gc` — (vfs ↔ gc) — per-device enforcement (gc.md is the counterpart). → `scaffold/contracts/vfs-gc.md`
+- `aws-vfs` — (aws ↔ vfs) — S3 overflow cold tier (aws.md is the counterpart). → `scaffold/contracts/aws-vfs.md`
 
-**Purpose.** Move blob bytes between nodes reliably: chunked, integrity-checked,
-resumable, pull-driven (concern 3). Rides mesh-transport `Request`/`Response`
-with a streamed body, addressed `Node{N}` (pinned — the requester already knows
-the holder from fully-replicated metadata). NOT pub/sub (lossy), NOT a KV value
-(bulk binary). Parties: every pair of vfs legs, via their local daemons.
+Also a party to (authored elsewhere / cross-cutting): `aws-mesh`, `gc-events`, `kg-vfs`, `projects-vfs`, `repo-vfs`, `rollup-vfs`, `service-lookup`, `surface-schema`, `vdb-vfs` — see `scaffold/contracts/`.
 
-**Message/struct sketch** (`types::vfs` / streamed over mesh-transport):
+Component-side notes retained by title (full text in git history, pre-harmonization): `vfs-secrets` — client-side content-encryption key; Storage-side sketches for consumer-owned edges (vfs is the target).
 
-```rust
-struct ContentPull { content_hash: Hash, chunks: Option<ChunkRange> } // None = whole blob; resume via range
-struct ChunkRange  { from_index: u32, to_index: u32 }
-struct ChunkFrame  { content_hash: Hash, index: u32, hash: Hash, bytes: Bytes } // streamed; hash verified on receipt
-struct PullDone    { content_hash: Hash, total_chunks: u32 }
-// read on behalf of a caller (may cache local — concern 7)
-struct Read  { path: String, cache_local: bool }
-struct Write { path: String, class: FileClass, replication: Option<u8>, provenance: Option<Provenance> }
-enum   FileClass { Immutable, NodeAnchored }
-```
-
-**Error cases.** `BlobNotHeld { content_hash }` (asked a node that isn't a holder
-— requester re-reads placement and retries another `actual` holder);
-`ChunkHashMismatch { index }` (integrity fail → re-request that chunk, never
-accept); `TransferAborted { at_index }` (link dropped → resume from `at_index`);
-`OutOfCapacity { node }` (target can't hold the pull — placement re-picks a
-target); `NotFound { path }`; `AnchorLocked { path }` (NodeAnchored write without
-the `vfs.anchor.<path>` lock). Transport/relay failures are mesh-transport's
-(`PeerUnreachable`), not vfs's — layered.
-
-**Version-sensitivity.** MEDIUM. The chunk framing + `Hash` algorithm
-(SHA-256) is **frozen** — a content hash is an absolute name, so changing the
-algorithm is a data-renaming change the contract may never do (like
-replicated-kv's frozen `Version` order). `ContentPull`/`Read`/`Write` grow
-additively (`serde(default)`); `FileClass` reserves `#[serde(other)]`. A
-`v: u16` proto rides the first frame; a bulk-transfer proto major bump is a
-Compatibility-priority restart. Because chunks are content-addressed and
-verified end-to-end, a mixed-version fleet transfers blobs safely — bytes are
-opaque, only the small framing header is version-coupled.
-
-### `vfs-mesh` (vfs ↔ mesh) — registration + storage topology + perf
-
-**Purpose.** vfs registers with the service-registry (NodeScoped) and publishes
-its **node/drive storage topology** + perf so placement (any node) and the
-dashboard can read it. The S3-overflow leg is NOT here (see `aws-vfs`).
-
-**Structs (proposed to `types::node` per types.md's plan).** `DriveInfo`,
-`StorageTier`, `DriveMedia`, `DriveId`, `NodeStorageTopology` (concern 6);
-`NodeCapabilities` gains `#[serde(default)] pub storage: Option<NodeStorageTopology>`.
-Registration is an ordinary `service-lookup` `Registration { slug: "vfs",
-addressing: NodeScoped, meta.requires: [gc, aws?, secrets?] }`; topology + perf
-publish via `surface-schema` + `vfs.*` pub/sub. No new wire beyond
-`service-lookup` + the topology types + the surface schema.
-
-**Error cases.** Registry errors are `service-lookup`'s
-(`MeshError::…`/`RegistryError`); a node advertising a drive that's gone at
-placement time surfaces `vfs.drive.full`/`OutOfCapacity` on the content plane,
-not here.
-
-**Version-sensitivity.** MEDIUM — `NodeStorageTopology`/`DriveInfo` cross nodes
-(anti-entropied with node capabilities); additive, `serde(default)`,
-`#[serde(other)]` on `StorageTier`/`DriveMedia`. A newer node advertising a new
-tier an older peer doesn't know degrades to `Warm` conservatively.
-
-### `vfs-gc` (vfs ↔ gc) — per-device enforcement (gc.md is the counterpart)
-
-**Purpose.** vfs drives the node-local gc for vfs-managed directories over gc's
-WS/REST surface (concern 5, the recommendation): register/update managed dirs,
-write `.gc` configs (budget + eviction strategy translated from `DirPolicy`),
-`lock(ttl)` fresh durable replicas, and supply the **safe-to-evict** answer that
-enforces the never-below-factor invariant (concern 4). gc runs the sweep and
-emits `gc-events`; vfs consumes them to keep `BlobPlacement.actual` truthful when
-gc evicts.
-
-**Message/struct sketch** (over gc's existing `:8430` surface, extended):
-
-```rust
-// vfs -> gc
-struct RegisterManagedDir { path: String, budget_bytes: u64, strategy: GcStrategy } // strategy <- DirPolicy.eviction
-enum   GcStrategy { Fifo, LruAccessed, LruUpdated }
-struct SetEvictable { entry: String, kind: ReplicaKind, protected: bool } // Durable-at-factor => protected=true
-struct MakeRoom { path: String, need_bytes: u64 }        // pre-write headroom (gc.md concern 2)
-// gc -> vfs  (rides gc-events / GcEvent)
-enum   GcEvent { Evicted { entry: String }, Swept { path: String, freed: u64 }, /* … existing … */ }
-```
-
-**Error cases.** `BudgetUnsatisfiable` (make_room can't free enough → vfs
-escalates to S3 overflow or another node, concern 8); `WouldViolateFactor`
-(vfs's own guard — it refuses to mark a last-durable replica evictable);
-`DirNotManaged`. gc's own errors (its route table) pass through.
-
-**Version-sensitivity.** LOW — a node-local edge (vfs and gc on the same box, no
-cross-node skew). Additive fields; `GcStrategy`/`ReplicaKind` reserve
-`#[serde(other)]`. The `GcEvent` shape is shared with `gc-events` (gc.md concern
-4 — one `GcEvent` in `types`, not authored twice).
-
-### `aws-vfs` (aws ↔ vfs) — S3 overflow cold tier (aws.md is the counterpart)
-
-**Purpose.** vfs overflows/rehydrates durable blobs to/from S3 cold-storage
-classes through aws, **client-side encrypted** (concern 8). vfs decides
-what/when; aws does the S3 mechanics. S3 is a passive cold tier
-(`BlobPlacement.s3`), never a tiebreak.
-
-**Message/struct sketch** (vfs → aws over mesh-transport):
-
-```rust
-struct S3PutBlob   { content_hash: Hash, storage_class: S3Class, ciphertext_chunks: Stream<ChunkFrame> }
-enum   S3Class     { StandardIa, GlacierInstant, GlacierFlexible } // cold classes
-struct S3PutReceipt{ content_hash: Hash, s3ref: S3Ref }
-struct S3GetBlob   { s3ref: S3Ref }  -> Stream<ChunkFrame>          // rehydrate (ciphertext)
-struct S3Ref       { bucket: String, key: String, storage_class: S3Class }
-```
-
-**Error cases.** `AwsUnreachable`/`OverflowFailed { content_hash }` — logged +
-`vfs.blob.overflow_failed`, retried next reconcile, **never blocks** (the blob
-keeps its mesh replicas until overflow succeeds); `RehydratePending` (Glacier
-async restore — vfs polls); `S3ObjectMissing` (a cold blob aws lost — surfaces as
-under-replication if no mesh copy remains). Ciphertext is opaque to aws;
-decryption failures are vfs's, post-fetch.
-
-**Version-sensitivity.** LOW-MEDIUM — the ciphertext chunk stream is opaque and
-content-addressed (frozen `Hash`); `S3Class`/`S3Ref` grow additively. The key
-that decrypts a fetched blob is resolved from `secrets` (`vfs-secrets`), not
-embedded in `S3Ref` — so key rotation never breaks stored ciphertext addressing.
-
-### `vfs-secrets` (NEW — flagged MISSING; vfs ↔ secrets) — client-side content-encryption key
-
-**Purpose.** vfs resolves the content-encryption key (for S3 overflow, concern 8)
-from `secrets` before encrypting chunks client-side. Newly surfaced — the wave-2
-inventory routed "keys held by secrets" without naming this pair; client-side
-encryption can only mean vfs holds the key at encrypt time. `llm_safe` does not
-apply (vfs is not an LLM; plaintext key access is legitimate).
-
-**Struct sketch (proposal, reconciled with `secrets`' batch-3 pass).** An
-ordinary `secrets` fetch by ID for a raw key: `GetSecret { id:
-"vfs.content-key" } -> SecretBytes` (use-with-seeing, since vfs must actually
-encrypt). Flag for secrets' pass: this is a raw (not llm_safe) consumer, one of
-the few legitimate ones.
-
-**Error cases.** `SecretNotFound` (no content key provisioned → vfs refuses to
-overflow rather than store plaintext — a hard, correct refusal, mirroring
-replicated-kv's `aws-mesh` genesis-key stance); `SecretsUnavailable` (boot race →
-overflow deferred). **Version-sensitivity:** LOW; flagged as the one place the
-S3-overflow encryption story is `approach-sketched` pending secrets' co-design
-(the same genesis-key-outside-the-system tension replicated-kv flagged for
-`aws-mesh`).
-
-### Storage-side sketches for consumer-owned edges (vfs is the target)
-
-These edges are authored by their consumers (kg/projects/vdb/repo/rollup); I
-propose the **VFS surface** they call, so the per-pair round has a concrete
-storage side.
-
-- **`kg-vfs`** (kg → vfs): existence validation. `Exists { path } -> ExistsReply
-  { present: bool, content_hash: Option<Hash>, size: Option<u64> }`. Cheap, local
-  (fully-replicated metadata) — kg validates a node→file pointer without moving
-  bytes. Errors: none beyond a clean `present: false`.
-
-- **`projects-vfs`** (projects → vfs): the graph layer over the flat store
-  (INTENT #47). projects reads/writes ordinary vfs files (`Read`/`Write` from
-  `vfs-content`) and reads placement/policy for its topological UI; no new wire —
-  projects is a plain vfs client.
-
-- **`vdb-vfs`** (vdb → vfs; rename of `stack-vfs` — flagged): SQLite files are
-  `NodeAnchored` mutable files (concern 2). `OpenAnchored { path } ->
-  LocalPath { os_path, anchor_lock: HoldToken }` (vfs hands VDB a real OS path +
-  the `vfs.anchor.<path>` lock); `Snapshot { path } -> content_hash` (VDB at a
-  transaction-consistent checkpoint triggers snapshot-replication). VDB's
-  checkpoint semantics reconcile in batch 4; vfs owns the anchor + snapshot
-  surface. Errors: `AnchorLocked`, `NotAnchoredHere` (the anchor lives on another
-  node — VDB must run where its DB is anchored, or promote it).
-
-- **`repo-vfs`** (repo → vfs): worktrees are `NodeAnchored` mutable trees; git
-  objects are `Immutable` blobs. Same `OpenAnchored`/`Snapshot` surface as
-  vdb-vfs plus ordinary `Read`/`Write`; repo owns branch/worktree semantics, vfs
-  owns the mutable-file host. Reconciled batch 6.
-
-- **`rollup-vfs`** (rollup → vfs): fragment/plugin storage — ordinary immutable
-  vfs files. Plain client; no new wire. Confirmed in rollup's batch-4 pass.

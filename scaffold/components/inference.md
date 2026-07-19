@@ -161,11 +161,21 @@ ladder rung *does* in terms of the real subsystems. The vocabulary is
 `types::restart::Interruptibility` (`Idle` / `Interruptible` /
 `CriticalSection{until}`); inference maps it as a pure function of live state:
 
+> **Superseded one row at harmonization (scheduler.md concern 3 wins):** a
+> running **benchmark priority-0 sweep reports `Idle`, NOT `CriticalSection`**.
+> Treating benchmark as critical would let the lowest-value, fully-preemptible,
+> re-runnable work block a routine `WaitForIdle` update during the exact idle
+> window an update wants. An interrupted sweep loses only its in-flight samples
+> (cheap, re-planned next idle window); nothing is corrupted. Inference
+> explicitly delegated the transition function to `scheduler`; the table below
+> is updated to the scheduler's version. Pending operator confirmation
+> (friction report).
+
 | Reported state | When | Why |
 |---|---|---|
-| **`Idle`** | `scheduler.running_count() == 0` AND no benchmark sweep in flight AND no model swap / KV-save in flight | Nothing to lose; free to restart at any level. |
-| **`Interruptible`** | ordinary completions in flight (no benchmark, no swap) | Restartable **at a cost**: in-flight `Running` completions are requeued on the new process (existing `recover_running()` flips `Running`→`Pending`), and any streaming client is cut (completion-router's no-mid-stream-failover, concern 6). Safe to interrupt for a real reason, not for free. |
-| **`CriticalSection{until}`** | a **benchmark priority-0 sweep** is running (INTENT #12 exclusivity — interrupting corrupts the kernel sample), OR a **model swap** or **KV-cache save/restore** is mid-flight (interrupting leaves engine↔store↔disk inconsistent) | Must NOT be interrupted for non-critical updates. `until` = best-effort ETA (the sweep's/ swap's estimated completion). |
+| **`Idle`** | `scheduler.running_count() == 0` AND no model swap / KV-save in flight (a priority-0 benchmark sweep MAY be running — it does not raise interruptibility) | Nothing to lose worth protecting; free to restart at any level. A sweep interrupted by a restart is simply re-planned. |
+| **`Interruptible`** | ordinary (priority ≥ 1) completions in flight (no swap) | Restartable **at a cost**: in-flight `Running` completions are requeued on the new process (existing `recover_running()` flips `Running`→`Pending`), and any streaming client is cut (completion-router's no-mid-stream-failover, concern 6). Safe to interrupt for a real reason, not for free. |
+| **`CriticalSection{until}`** | a **model swap** or **KV-cache save/restore** is mid-flight (interrupting leaves engine↔store↔disk inconsistent) | Must NOT be interrupted for non-critical updates. `until` = best-effort ETA (the swap's/save's estimated completion). Only genuine engine-internal atomic operations qualify. |
 
 The ladder, in inference's concrete terms:
 
@@ -340,7 +350,7 @@ boot/registration path; the router rides mesh-core's node-to-node data plane):
 - **inference → db** via `db-inference-init` — **PARENT-owned**: fresh-node
   control-plane `ops` bootstrap as a `bin/db` CLI subprocess (boot-safe, no mesh,
   distinct from store's `substrate.db`; concern 5). (see
-  scaffold/contracts/db-inference-init.md — content proposed below)
+  authored: scaffold/contracts/db-inference-init.md)
 - **inference (each daemon) ↔ mesh.service-registry** via `service-lookup` —
   **PARENT-owned participation**: registers the per-node `inference` NodeScoped
   instance via `mesh-client` (concern 2). Client half is `mesh-client`; I propose
@@ -422,116 +432,15 @@ route-split are near-transcription. Sequence **after** `mesh-client`,
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only; the per-pair round reconciles both sides. I do NOT edit
-`scaffold/contracts/*`. The external `/v1` edges (`v1-completion-api`,
-`node-state-poll`, `inference-events`, `llm-calls`) are **owned by the `api`
-child** and its counterparties (a separately-designed module in this batch) — I
-reference them above and do not re-author them here. The **parent-owned** pairs
-are `db-inference-init` and the inference side of `service-lookup`; the
-cross-cutting `restart-protocol` gets a **participation note** (inference's
-concrete interruptibility mapping), not a re-authored wire. Shared vocabulary
-lives in `types` (`types::registry`, `types::restart`, `types::provenance`,
-`DbError` in `types::error::db`).
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `db-inference-init` (inference → db) — fresh-node control-plane bootstrap (EXISTS; content proposed)
+- `db-inference-init` (inference → db) — fresh-node control-plane bootstrap with graceful standalone degradation. → `scaffold/contracts/db-inference-init.md`
+- `service-lookup` (inference → mesh.service-registry) — per-node `NodeScoped` registration under the `inference` slug (the adopted concern-5 resolution). → `scaffold/contracts/service-lookup.md`
+- `restart-protocol` (mesh ↔ inference) — participation: the concern-4 interruptibility mapping AS SUPERSEDED at harmonization (benchmark sweeps report `Idle`, not `CriticalSection` — scheduler.md concern 3; only model swap / KV save-restore are critical). → `scaffold/contracts/restart-protocol.md`
 
-- **Purpose.** When an `inference` node stands up on a **fresh mesh node**, it
-  initializes its **control-plane `ops` database** through `db` — the sqlite
-  driver, ledger-only baseline (`OPS_BASELINE_SQLITE`) + `migration::apply`.
-  **Distinct** from `store`'s self-migrating inference system-of-record
-  (`substrate.db`, store.md); this edge is the control-plane bootstrap, not a
-  store rewrite (concern 5, resolving the wave-1 tension).
-- **Access shape — the boot-safe correction.** A **`bin/db` CLI subprocess**
-  (`db --env <node> migrate up`), **not** a linked-lib call (INTENT #29,
-  superseding the wave-1 stub's "library dependency" framing) and **not**
-  necessarily a daemon WS call: on a cold node mesh may not yet relay and the db
-  daemon may not be up, so the subprocess (needing no mesh) is the reliable
-  bootstrap. Once warm, later control-plane access can move to `db serve` over WS.
-- **Message/struct sketch** (the subprocess CLI is authoritative; structured
-  output via `--format json`):
-  ```rust
-  // inference invokes, at Step 0 (pre-store, boot-safe):
-  //   db --env <node_id> migrate up --format json   ->  MigrateReport
-  struct MigrateReport { applied: Vec<String>, already_current: bool, ledger_head: String }
-  ```
-- **Error cases.** `DbError::MigrationFailed { id, detail }` on a failed first-boot
-  apply → inference **degrades to standalone** (store's `substrate.db` alone,
-  concern 5). Missing `db` binary → warn + continue standalone. A second
-  invocation on an already-migrated node is an **idempotent no-op** (ledger dedups)
-  — the conformance requirement.
-- **Version-sensitivity.** LOW — exercises the narrowest, most stable slice of
-  `db` (sqlite baseline + `migration::apply`); the CLI contract is stable.
+Also a party to (authored elsewhere / cross-cutting): `inference-events`, `llm-calls`, `node-state-poll`, `v1-completion-api` — see `scaffold/contracts/`.
 
-### `service-lookup` (inference → mesh.service-registry) — the per-node registration (inference side)
-
-- **Purpose.** Inference self-registers its per-node instance so the fleet is
-  resolvable and completion-router can source membership+endpoints (concern 2).
-  Client half is `mesh-client` (I consume its `Register`/`Renew`/`Deregister`
-  frames); this proposal pins the **inference-specific Registration payload** and
-  the FleetAlias-as-policy alignment.
-- **Message/struct sketch** (`types::registry`; consumes mesh-client's
-  `service-lookup` client half):
-  ```rust
-  // inference -> local daemon, at Step 11 (mesh-gated):
-  Register {
-      slug: "inference",
-      node: <node_id>,
-      endpoint: Endpoint { scheme: Http, host: "127.0.0.1", port: <bound_port>, health_path: Some("/health") },
-      addressing: AddressingClass::NodeScoped,   // one live instance per node
-      ttl_secs: <lease_ttl>,
-      meta: ServiceMeta {
-          service_version: <inference build semver>,
-          requires: vec![ /* db pairwise req, if the node bootstraps control-plane */ ],
-      },
-  }
-  // resolve policy inference RELIES ON (owned by mesh-core, not written by inference):
-  //   AnyNode{inference}     -> local :3649 (FleetAlias policy) -> completion-router
-  //   resolve_all("inference") -> the per-node NodeScoped instances (router membership)
-  //   Node{N, inference}     -> node N's real loopback endpoint (pinned forward + benchmark, INTENT #15)
-  ```
-- **Error cases.** `RegistryError::FleetSlugNotRegisterable` — the **friction I
-  push back on** (concern 2): service-registry.md concern 5 must relax this for
-  NodeScoped per-node `inference` instances while still reserving the `FleetAlias`
-  record for mesh-core. `LocalDaemonUnreachable` → inference runs **standalone**
-  (Step 11 skipped). `LeaseExpired` → `mesh-client` re-registers on reconnect
-  (automatic). A crash leaves no tombstone → lease-expiry self-heals; a restart
-  re-registers under a fresh `generation` (supervision/zombie-killing reads it).
-- **Version-sensitivity.** HIGH — `ServiceRecord`/`Endpoint`/`ServiceMeta`
-  anti-entropy to peers on possibly-different versions; additive-only,
-  `#[serde(default)]`, `#[serde(other)]`-tolerant enums, explicit `v` (types
-  guardrail 4) so a mixed-version fleet keeps a coherent directory during a rolling
-  update (INTENT #66).
-
-### `restart-protocol` (mesh ↔ inference) — participation note (interruptibility mapping)
-
-- **Purpose.** Not a re-authored wire (supervision owns the daemon side,
-  `mesh-client` the client callback, `types::restart` the structs). This note pins
-  **inference's concrete participation** so the harmonizer can reconcile it against
-  supervision's `restart-protocol` proposal.
-- **Interruptibility feed inference emits** (`types::restart::Interruptibility`,
-  continuous on change, over `mesh-client`):
-  ```rust
-  // pure function of live subsystem state (concern 4):
-  //   Idle                       when running_count == 0 && !benchmarking && !swapping
-  //   Interruptible              when completions in flight (no benchmark, no swap)
-  //   CriticalSection { until }  when a priority-0 benchmark sweep OR a model swap
-  //                              OR a KV-cache save/restore is in flight
-  ```
-- **`on_restart(level)` behavior inference supplies** (the `RestartParticipant`
-  callback): **L1** none (Idle feed is the signal); **L2** `pause_execution()` +
-  drain `running_count`→0 + stop the benchmark at its next test boundary → send
-  `Relinquished`; **L3** KV-cache checkpoint under the ~10s `save_deadline` +
-  rely on durable store + leave `Running` completions for the next process's
-  `recover_running()` → send `Saved` (or yield on deadline); **L4** none (killed;
-  `recover_running()` requeues on boot).
-- **Error cases / non-errors.** Missing an L3 deadline is the protocol working
-  (supervision escalates to L4), not an inference error. A `Busy`
-  (`CriticalSection`) reply is honored below `SaveWindow` and ignored at
-  `SaveWindow`/`Kill` (supervision.md). Streaming clients cut at L3/L4 get a clean
-  terminal error (no cross-node failover — completion-router concern 6).
-- **Version-sensitivity.** The 4-level ladder is LOCKED; an unknown level (from a
-  newer daemon) MUST default to the most conservative interpretation
-  (save-and-yield, i.e. treat as `SaveWindow`) — never ignore a restart signal
-  (mesh-client concern 7). `RestartReason` grows additively behind `#[serde(other)]`.

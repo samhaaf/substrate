@@ -104,7 +104,7 @@ pub struct Endpoint {                 // refines "slug -> host:port": a browsabl
 pub enum AddressingClass {
     Singleton,   // exactly one live instance mesh-wide (db, ccd, kg, projects, org, secrets)
     NodeScoped,  // one live instance per node (gc :8430, per-node vfs leg, inference api)
-    FleetAlias,  // the synthetic front-door alias (inference -> local mesh :3649) — concern 5
+    FleetAlias,  // resolve-time POLICY on the inference slug (-> local mesh :3649) — NOT a stored record; concern 5 as relaxed
 }
 ```
 
@@ -188,29 +188,35 @@ shouldn't or expire a peer's lease early. Operator-blessed naive for v1 (INTENT
 #32 — "pretty much everything's going to be driven from my laptop"); surfaced as
 a friction point, not silently accepted.
 
-### 5. Two discovery mechanisms coexisting — fleet alias vs. singleton (INTENT #57)
+### 5. One directory, FleetAlias as resolve-time policy — RELAXED at the contract round (INTENT #57)
 
-This is the non-obvious call the wave-1 design flagged, now pinned. **Two
-mechanisms run side by side and consumers never see the split** — they always
-just `resolve(slug)`:
+> **Superseded prose note (harmonization).** As originally written, this concern
+> kept the inference *fleet* OUT of the registry (only a synthetic stored
+> `FleetAlias` record; `FleetSlugNotRegisterable` for any fleet member). The
+> contract round resolved the three-file dispute AGAINST that stance —
+> `completion-router.md` concern 8 and `inference.md` concern 2 independently
+> proposed the same replacement, and the registry adopts. Authoritative
+> resolution: `scaffold/contracts/service-lookup.md` §Reconciliation notes.
 
-1. **Slug registry (this module).** Singletons and node-scoped services
-   *self-register* their own `(slug, node) -> endpoint` records via
-   `service-lookup`. Included here is the **`inference` front-door alias**: at
-   boot (mesh-core boot step 8), each mesh daemon registers `inference` as a
-   `FleetAlias` record pointing at its *own* `:3649`. `resolve("inference")` on
-   any node therefore returns the local mesh front door — never "one of N boxes."
-2. **Tag-based fleet discovery (NOT here — `completion-router`'s `NodeRegistry`).**
-   The actual inference nodes are discovered by Tailscale tag and health-polled by
-   the router, entirely inside `completion-router`. The registry holds *only* the
-   alias; the fleet's membership/health lives in the router's separate table.
+The adopted shape:
 
-So a `resolve("inference")` hits the alias → local `:3649` → the local router
-load-balances the tag-discovered fleet internally. A `resolve("db")` hits a
-singleton record → the one owner. Same API, two mechanisms, invisible seam
-(mesh.md; INTENT #59). The registry must **refuse per-node slug registration of a
-`FleetAlias` slug** by anything but mesh-core itself (a fleet member trying to
-register `inference` directly is a category error → `FleetSlugNotRegisterable`).
+1. **Each inference daemon self-registers a per-node instance** under slug
+   `inference`, keyed `(inference, node)`, `addressing: NodeScoped`, with its
+   real loopback `Endpoint` — the keyspace `registry/instance/inference/<node>`
+   as already defined. `resolve_all("inference")` IS the router's fleet
+   membership + endpoints; no router-side `tailscale status` scan survives.
+2. **`FleetAlias` is a resolve-time policy on the `inference` slug, not a
+   stored record.** `resolve(AnyNode{inference})` → the **local** mesh front
+   door (`:3649`) → the local completion-router load-balances;
+   `resolve(Node{N, inference})` → node N's real endpoint (pinned forward +
+   benchmark pinning, INTENT #15/#59). Same API, invisible seam (mesh.md).
+3. `FleetSlugNotRegisterable` is **narrowed**: it no longer blocks per-node
+   `inference` instances; it fires only if a caller tries to write a *stored*
+   `FleetAlias` record.
+
+`completion-router`'s `NodeRegistry` remains a distinct table — but it is now
+fed from `resolve_all("inference")` + `network-topology`, holding routing
+*health/load/inventory* state, not membership.
 
 ### 6. Version + dependency metadata — the read surface supervision consumes (INTENT #45/#66)
 
@@ -292,13 +298,13 @@ Contract edges (cross-process WS/wire, rides mesh-core's `mesh-transport` frame 
   (scaffold/contracts/service-lookup.md)
 - **ccd ↔ service-registry** via `service-registration` — CCD as a first-class
   registrant+resolver; an *instance* of `service-lookup`, called out because CCD
-  is both. No distinct schema (see Proposed contracts).
+  is both. No distinct schema (an instance of `service-lookup`).
   (scaffold/contracts/service-registration.md)
-- **registry peers ↔ peers** via `registry-replication` — anti-entropy of the
-  `registry/instance/*` keyspace. **Wave-2 recommendation: collapse into
-  `kv-replication`** now that `replicated-kv` is extracted (the generalization the
-  wave2-plan flagged §5.5). The registry contributes the keyspace + value schema;
-  the replication *wire* is `replicated-kv`'s. (scaffold/contracts/registry-replication.md)
+- **mesh daemon ↔ mesh daemon** via `kv-replication` — the collapse HAPPENED at
+  the contract round (the generalization wave2-plan flagged §5.5): the registry
+  contributes only the `registry/` keyspace + value schema; the replication
+  wire is `replicated-kv`'s one protocol. `registry-replication` is a
+  superseded tombstone. (scaffold/contracts/kv-replication.md)
 - ~~gateway via `mesh-registry-read`~~ — TOMBSTONE (gateway merged into mesh
   2026-07-18; the fleet read is mesh-internal now). No action; noted for lineage.
   (scaffold/contracts/mesh-registry-read.md)
@@ -309,15 +315,17 @@ Internal-lib seams (compiled-in, NOT contract edges — INTENT #29/#45):
   `subscribe`-to-keyspace) — the substrate the whole module rides. *Co-batch
   dependency: `replicated-kv` (Fable) is designed in parallel; this design
   consumes the `KvHandle` shape mesh-core froze and flags the tombstone/`delete`
-  and keyspace-subscribe requirements for that designer — see Proposed contracts.*
+  and keyspace-subscribe requirements for that designer (recorded in the authored contracts).*
 - **provides UP** `trait Resolver` (mesh-core's Dispatcher + CLI ride it) and
   `trait Registrar` (register/renew/deregister/flip); plus the `ZombieSuspected`
   channel `supervision` drains and the `resolve_all`/`list` read surface
   `dashboard-serving` (surface-schema discovery) and `supervision`
   (version/boot-order) consume.
 - **sibling, must-not-conflate:** `completion-router`'s `NodeRegistry` (fleet
-  routing health) and `network-topology` (peer on/off feed) are *distinct tables*;
-  the registry only holds the `inference` `FleetAlias` (concern 5).
+  routing health/load/inventory) and `network-topology` (peer on/off feed) are
+  *distinct tables*; the registry holds the per-node `NodeScoped` `inference`
+  instances (fleet membership = `resolve_all("inference")`), while `FleetAlias`
+  is resolve-time policy only (concern 5 as relaxed).
 
 ## Nesting
 
@@ -363,135 +371,25 @@ from this file.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only; the per-pair round reconciles both sides. The structs live in
-`types::registry` (they cross the wire between nodes, so they follow `types`'
-guardrail-4 wire-crossing discipline). I do NOT edit `scaffold/contracts/*`.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `service-lookup` (any device/service ↔ mesh.service-registry) — the wiring seam
+- `service-lookup` — (any device/service ↔ mesh.service-registry) — the wiring seam: instance-keyed registration + slug resolution. → `scaffold/contracts/service-lookup.md`
+  - Contract resolution (concern-5 dispute, RESOLVED against this file's
+    original stance): each inference daemon self-registers a per-node
+    `NodeScoped` instance under slug `inference` (keyed `(inference, node)`),
+    and **`FleetAlias` is a resolve-time policy on the `inference` slug, not a
+    stored synthetic record** — `resolve(AnyNode{inference})` → local
+    completion-router, `resolve_all("inference")` → the per-node instances
+    (the router's fleet membership), `resolve(Node{N,inference})` → node N's
+    real endpoint. `FleetSlugNotRegisterable` is narrowed to guard only a
+    caller writing a *stored* FleetAlias record. The body of this file was
+    updated to the winning shape at harmonization.
+- `service-registration` — (ccd ↔ mesh.service-registry) — an instance of `service-lookup`. → `scaffold/contracts/service-registration.md`
+- `kv-replication` (mesh daemon ↔ mesh daemon) — the registry is a keyspace TENANT of the one replication protocol; `registry-replication` is a superseded tombstone. → `scaffold/contracts/kv-replication.md`
 
-**Purpose.** The one protocol every service speaks to its LOCAL mesh daemon to
-register itself and resolve dependencies by slug, over `:3649` (rides mesh-core's
-`mesh-transport` envelope; client half is `mesh-client`). Designed cheap and
-broadly queryable (org resolves the whole map; dashboard-serving discovers every
-service).
+Also a party to (cross-cutting): `restart-protocol` (registry flip in port-handoff), `surface-schema` — see `scaffold/contracts/`.
 
-**Message/struct sketch** (Rust-flavored; `types::registry`):
-
-```rust
-// client -> registry
-pub enum RegistryRequest {
-    Register   { reg: Registration },                 // fresh registration; ++generation
-    Renew      { slug: Slug, node: NodeId },           // heartbeat; extends lease.expires_at
-    Deregister { slug: Slug, node: NodeId, reason: DeregisterReason }, // -> kv tombstone
-    FlipEndpoint { slug: Slug, node: NodeId, new: Endpoint }, // port-handoff (supervision-driven)
-    Resolve     { addr: Address },                     // single, addressing-class aware
-    ResolveAll  { slug: Slug },                        // all live instances of a slug
-    List        {},                                    // the whole live directory
-}
-pub struct Registration {
-    pub slug: Slug, pub node: NodeId, pub endpoint: Endpoint,
-    pub addressing: AddressingClass, pub ttl_secs: u32, pub meta: ServiceMeta,
-}
-pub enum Address { AnyNode { slug: Slug }, Node { node: NodeId, slug: Slug }, Local { slug: Slug } }
-
-// registry -> client
-pub enum RegistryResponse {
-    Registered  { lease: Lease },
-    Renewed     { lease: Lease },
-    Deregistered,
-    Flipped     { superseded: Endpoint },              // the old endpoint to bring down
-    Resolved    { record: ServiceRecord },
-    ResolvedAll { records: Vec<ServiceRecord> },
-    Listing     { records: Vec<ServiceRecord> },
-    Error       { code: RegistryError, detail: String },
-}
-```
-
-**Error cases** (`RegistryError`, surfaced as `SubstrateError::Mesh(MeshError::…)`
-per `types` error taxonomy):
-- `NoSuchSlug` — no record for the slug at all.
-- `NoLiveInstance` — records exist but all are lease-expired or tombstoned
-  (distinct from `NoSuchSlug` so callers can retry vs. give up).
-- `FleetSlugNotRegisterable` — a fleet member tried to self-register a
-  `FleetAlias` slug (`inference`); only mesh-core registers the alias (concern 5).
-- `NotOwner` — `renew`/`deregister`/`flip` for a `(slug, node)` this node doesn't
-  own (a service can only renew its own instance).
-- `InvalidEndpoint` — unparseable scheme/host/port.
-- `KvUnavailable` — the `replicated-kv` substrate is not ready (boot race);
-  catchable, callers back off.
-- Non-errors by design: registering a slug already owned by *another* node is
-  allowed and converges by LWW (not a conflict); resolving a slug whose owner is a
-  remote node succeeds (returns the endpoint) — reachability is mesh-core's relay
-  concern, not resolve's.
-
-**Version-sensitivity.** HIGH — `ServiceRecord`/`ServiceMeta`/`Endpoint` cross
-nodes on possibly-different `types` versions (they anti-entropy). Additive-only
-fields, all new fields `#[serde(default)]`; `AddressingClass`/`Scheme`/
-`DeregisterReason` reserve `#[serde(other)]` catch-alls so a newer node's variant
-never hard-fails an older peer's deserialize (guardrail 4). `ServiceRecord.v`
-anchors the schema version. This is what lets a mixed-version fleet (INTENT #66)
-keep a coherent directory during a rolling update.
-
-### `service-registration` (ccd ↔ mesh.service-registry) — an instance of `service-lookup`
-
-**Purpose.** CCD is a first-class registry participant — both registrant (it
-registers the `ccd` singleton slug) and resolver (it resolves `inference`, `db`,
-`rollup`, etc.). Called out separately per the inventory, but it carries **no
-distinct schema**: it is `service-lookup` applied to the CCD party.
-
-**Struct sketch.** None new. CCD's `Registration` is `{ slug: "ccd",
-addressing: Singleton, meta.requires: [rollup, db, inference?] }`; its resolves
-are ordinary `Resolve`/`ResolveAll`. Recommendation for the per-pair round:
-**fold `service-registration` into `service-lookup`'s example world** (CCD as one
-of the parties) rather than authoring a parallel wire — the two are the same
-contract, and the surface-schema-style "one document, many parties" shape
-(wave2-plan §5.4) applies. Flagged, not unilaterally collapsed.
-
-**Error cases / version-sensitivity.** Identical to `service-lookup`.
-
-### `registry-replication` (registry peers ↔ peers) — RE-GROUND: collapse into `kv-replication`
-
-**Purpose.** Propagate the `registry/instance/*` keyspace between per-device
-registry instances (slug→endpoint entries, LWW conflict resolution, tombstones,
-offline reconnect sync). Wave-1 authored this as the registry's own anti-entropy;
-**wave-2 re-grounds it: the anti-entropy engine is now `replicated-kv`, so this
-edge should collapse into `kv-replication`** (the exact generalization the
-wave2-plan flagged, §5.5). The registry contributes only the **keyspace name and
-value schema**; the replication *wire* (full-state periodic merge, LWW register
-envelope, tombstone GC horizon, bidirectional reconnect sync) is
-`replicated-kv`'s to author.
-
-**What the registry contributes to the shared example world:**
-
-```
-keyspace:  registry/instance/<slug>/<node_id>
-value:     ServiceRecord (above), wrapped by replicated-kv's LWW register:
-           LwwRegister<ServiceRecord> { value, clock: (wall_clock_ns, node_id) }
-tombstone: kv.delete(key) -> LWW tombstone with replicated-kv's GC-after horizon
-```
-
-**Requirements I flag for the co-batch `replicated-kv` designer** (consumed via
-mesh-core's `KvHandle` seam):
-- **Tombstones with a GC horizon** — needed so a reconnecting partition's stale
-  `Live` record cannot resurrect a deregistered slug (concern 4). This is a
-  general KV need (locks + queues want it too), which is *why* it belongs in
-  `replicated-kv`, not here.
-- **Keyspace-prefix `subscribe`** — the registry watches `registry/instance/*`
-  for endpoint/generation changes to emit `ZombieSuspected` (concern 7). Needs
-  change-notification carrying old→new value, not just "something changed."
-- **Per-node LWW clock stamping on `put`** — so a heartbeat re-put wins over the
-  prior record without the registry doing clock math.
-
-**Error cases.** Replication faults (peer unreachable, partial merge) are
-`replicated-kv`'s (`MeshError::{ReplicationLagging, PeerUnreachable}`); the
-registry surfaces none of its own on this edge — it is a pure tenant.
-
-**Version-sensitivity.** HIGH and shared with `service-lookup`: the same
-`ServiceRecord` crosses the same version boundary, so the wire-crossing discipline
-(additive, `#[serde(default)]`, `#[serde(other)]`, `v`) is the single source of
-truth for both edges. **Batch-2 call to make explicit:** if `registry-replication`
-collapses into `kv-replication`, mark `scaffold/contracts/registry-replication.md`
-a pointer-to-`kv-replication` (like the `mesh-registry-read` tombstone) rather
-than a parallel wire — recommended, deferred to the per-pair round.

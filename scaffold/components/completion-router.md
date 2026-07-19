@@ -85,7 +85,7 @@ replicated state — the router never touches `KvHandle` itself.)
 service-registry.md as-written does NOT provide** (its concern 5 keeps the fleet
 *out* of the registry and in a router-owned tag scan, storing only the `inference`
 `FleetAlias`). This is a **deviation flagged as a friction point** with a concrete
-reconciliation proposed below (concern 8) and in Proposed contracts.
+reconciliation resolved (concern 8) and recorded in the authored contracts.
 
 ### 2. Node selection — the wave-1 balancer, re-affirmed, fed from the refit table
 
@@ -347,8 +347,9 @@ forward under these unchanged.
 ## Assigned design-depth
 
 **Opus** single Component-Designer pass (this file), grounded in the frozen wave-1
-completion-router design (`reports/mesh-design-synthesis.md` per wave2-plan; not
-present on the V1 branch, so re-grounded against the live
+completion-router design (the `mesh-design-synthesis.md` report — lives in the
+harness workspace `substrate-v2/reports/`, NOT in this repo, so re-grounded
+against the live
 `lib/mesh/src/{router,balancer,discovery,proxy}.rs` + mesh.md concern 2 which
 carries the synthesis summary), the batch-1/2 designs (mesh-core Ring 4 seams,
 service-registry FleetAlias/instance model, network-topology feed, pubsub-relay
@@ -370,128 +371,16 @@ mesh-core's Ring-0 data-channel are filled — it rides all four.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only; the per-pair round reconciles both sides. wave2-plan §3a assigns
-completion-router three edges (`v1-completion-api`, `node-state-poll`,
-`tailscale-status`); I re-shape that set per the refit (add `inference-events` as a
-consumed edge, recommend dropping `tailscale-status`). I do NOT edit
-`scaffold/contracts/*` — these live here only. Structs reference `types::{node,
-pubsub, event}` (the batch-1 vocabulary).
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `v1-completion-api` (client / mesh.completion-router ↔ inference.api) — transparent forward
+- `v1-completion-api` — (client / mesh.completion-router ↔ inference.api) — transparent forward. → `scaffold/contracts/v1-completion-api.md`
+- `node-state-poll` — (mesh.completion-router → inference.api) — reconcile/bootstrap poll. → `scaffold/contracts/node-state-poll.md`
+- `inference-events` — (mesh.completion-router ← inference.api) — NEW consumed edge (live-primary feed). → `scaffold/contracts/inference-events.md`
+- `tailscale-status` — completion-router DROPPED as a party at the contract round (network-topology is the sole consumer; fleet membership = `resolve_all("inference")`). → `scaffold/contracts/tailscale-status.md`
 
-**Purpose.** The `/v1/` REST+WS completion surface (submit/status/cancel/priority/
-result/stream + collections/models/estimate), forwarded byte-transparently so a
-caller cannot tell node-direct from mesh-routed. The router is the **forwarding**
-party; inference/api is the **terminus** (it owns the surface's schema). The router
-transforms **nothing** in the body — it selects a node (or honors a pin), copies
-status+headers+body, and relays the WS stream.
+Also a party to (authored elsewhere / cross-cutting): `pubsub-protocol` — see `scaffold/contracts/`.
 
-**Message/struct sketch** (the router's forward-plane shape; the `/v1` payloads
-themselves are inference/api's schema and stay opaque to the router):
-
-```rust
-// what the router carries per forwarded request (replaces Result<Vec<u8>>)
-struct ForwardRequest  { addr: Address, method: Method, path: String,
-                         headers: Headers, body: BodyStream }   // ?node= already stripped
-struct ForwardResponse { status: u16, headers: Headers, body: BodyStream } // streaming, byte-transparent
-enum   Address         { AnyNode{ slug: Slug }, Node{ node: NodeId, slug: Slug } } // mesh-core's vocab
-// WS relay path is separate: a transparent upgrade + bidirectional frame relay
-// for /v1/completions/:id/stream, keyed by completion_id -> owning node.
-```
-
-**Error cases.**
-- `NoCandidates` (fleet empty / all nodes unreachable) → `503`.
-- `ModelUnavailable` (no node has/loads the model, spill deferred) → surfaced as the
-  node's own `409`/`404` passed through, or `503` if selection itself fails.
-- `NodeUnreachablePreForward` → **one** bounded re-selection (spill, concern 6), then
-  `502`/`503` if still failing.
-- `NodeFailedMidStream` → **terminal**: aborted body / WS close+error (concern 6); NO
-  failover; emit a `completion` failure event.
-- `NoSuchNode` / `NodeUnreachable` on a **pin** → clean error, never rehomed
-  (concerns 4–5).
-
-**Version-sensitivity.** **LOW by construction** — the router is byte-transparent, so
-inference's `/v1` surface can evolve (new fields, new routes) without touching the
-router: it forwards paths/bodies it doesn't parse. The router's own coupling is only
-to (a) the *streaming* shape (status/headers/chunked body — stable) and (b) the
-`completion_id` path convention for the stream relay + index. The one thing the
-router must NOT do is parse or rewrite the `/v1` body (doing so would re-introduce a
-version coupling) — stated as a conformance requirement.
-
-### `node-state-poll` (mesh.completion-router → inference.api) — reconcile/bootstrap poll
-
-**Purpose.** The **reconcile/bootstrap** health+inventory read that corrects drift in
-the `NodeRegistry` projection (demoted from wave-1's live-primary role; live load now
-rides `inference-events`, concern 3). Strictly off the request path. `GET
-/v1/system/state` (running/pending counts, memory pressure, resident model) +
-`GET /v1/models` (per-node downloaded/resident inventory).
-
-**Message/struct sketch** (uses the shared `types::node` vocabulary — OQ-3 resolved
-in types.md; resident set read from live state, not static capabilities):
-
-```rust
-// GET /v1/system/state  ->
-struct SystemStatePoll { node: NodeId, running: u32, pending: u32,
-                         memory_pressure: f32, resident_model: Option<ModelId>,
-                         // effective_max_concurrent: Option<u32>  // Tier-3/spill input, still deferred
-                       }
-// GET /v1/models  ->
-struct ModelInventory  { node: NodeId, downloaded: Vec<ModelId>, resident: Option<ModelId> }
-```
-
-**Error cases.** `NodeUnreachable` / poll timeout → mark the node's projection
-`stale`; after **N consecutive misses** (default 3) *and* no events, **evict** from
-the candidate set (never a phantom least-loaded target, concern 3). A single miss is
-tolerated (the event feed likely still fresh). `NodeUnreachable` is catchable, never
-panics.
-
-**Version-sensitivity.** MEDIUM — `SystemStatePoll`/`ModelInventory` derive from
-`types::node::{NodeInfo, NodeCapabilities}` + `SystemState`; all fields
-`#[serde(default)]` (additive), `ModelId`/enums reserve `#[serde(other)]`
-(guardrail 4) so a newer node's richer state never breaks an older router's
-deserialize during a mixed-version rollout (INTENT #66).
-
-### `inference-events` (mesh.completion-router ← inference.api) — NEW consumed edge (live-primary feed)
-
-**Purpose.** The **live-primary** load/inventory feed (concern 3): per-node
-`inference.*` pub/sub deltas the router folds into the `NodeRegistry` projection for
-fresh least-loaded/affinity decisions. The contract is **owned by inference/api**
-(it publishes; api.md's `inference-events`); the router is a **consumer** — I flag
-here only the load-carrying event kinds the router *depends on*, for the api/harmonizer
-to guarantee are emitted.
-
-**Load-carrying event kinds the router needs** (as `types::event::Event` payloads on
-`Envelope`, riding `pubsub-protocol`, topic `inference.<node>.*`):
-
-```rust
-// event_type (open namespaced ids, types.md convention):
-//   inference.completion.started   -> running += 1
-//   inference.completion.finished  -> running -= 1  (success OR failure)
-//   inference.model.loaded         -> resident = model_id ; downloaded ∪= {model_id}
-//   inference.model.evicted        -> resident/downloaded update
-//   inference.execution.paused/resumed -> node admits/holds (selection weight)
-```
-
-**Error cases.** Lossy by pub/sub contract (`Lagged` notice, dropped deltas) — the
-router **never trusts the event stream as sole truth**; drift is corrected by
-`node-state-poll` (concern 3). A `seq` gap (pubsub provenance) or a `Lagged` notice
-triggers an immediate reconcile poll of that node rather than a guess.
-
-**Version-sensitivity.** LOW — the router matches on the open `event_type` string and
-ignores kinds it doesn't consume (payload-opaque relay, pubsub-relay concern 2); new
-inference event kinds never break the router. The router depends only on the five
-load-affecting kinds above being emitted; api owns their payload schemas.
-
-### `tailscale-status` — RECOMMEND DROPPING completion-router as a party
-
-**Purpose (historical).** Wave-1 had the router consume parsed self+peer status to
-tag-scan the fleet. **Wave-2 removes this dependency** (concern 1): membership comes
-from service-registry (+ network-topology), so the router no longer shells or reads
-`tailscale status`. Recommendation for the per-pair round: **strike completion-router
-as a co-consumer on `tailscale-status`**, leaving `network-topology` the sole
-consumer (tailscale-query.md and network-topology.md both currently name
-completion-router as a party — those references should be updated). No new schema
-from this module; this is a subtraction. Flagged as a deviation from wave2-plan §3a
-(which lists `tailscale-status → {network-topology, completion-router}`).

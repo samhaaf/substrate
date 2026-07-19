@@ -250,8 +250,8 @@ bearing answer is the kernel query. Flagged (controversial) for the per-pair rou
 - **telemetry → {scheduler, api}** via `system-state` *(EXISTS — content proposed
   below; telemetry is the producer/owner)* — `SystemState` snapshots + the
   convenience `effective_max_concurrent` scalar (concern 6).
-- **telemetry (kernel) ↔ {benchmark, scheduler}** via `kernel-confidence` *(EXISTS
-  — content proposed below; telemetry owns the kernel)* — the lowest-confidence-
+- **telemetry (kernel) ↔ {benchmark, scheduler}** via `kernel-confidence` *(authored:
+  scaffold/contracts/kernel-confidence.md; telemetry owns the kernel)* — the lowest-confidence-
   region query (benchmark) and the effective-concurrency query (scheduler)
   (concern 6).
 - **telemetry ↔ store** via `store-access` *(store owns it — store.md authored;
@@ -321,158 +321,16 @@ confidence notions.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only; the per-pair round reconciles both sides. I do NOT edit
-`scaffold/contracts/*`. wave2-plan §3a assigns telemetry two owned pairs —
-**`system-state`** (telemetry → {scheduler, api}) and **`kernel-confidence`**
-(telemetry ↔ {benchmark, scheduler}). `store-access` (store-owned) and
-`api-dispatch` (api-owned) get **participation notes** only. All shared vocabulary
-lives in `types` (`SystemState` in `types::system`; `Honesty` in `types::surface`;
-`Provenance` in `types::provenance`). These are **in-process Rust API surfaces**
-(telemetry is compiled into `inference`), not serialized wire contracts — the
-"schema" is the trait/method surface the Skeleton Builder freezes; there is no
-cross-node deserialization and thus no wire-version skew (the whole `inference`
-crate revs as one binary — INTENT #45).
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `system-state` (telemetry → {scheduler, api}) — EXISTS; content proposed
+- `system-state` (telemetry → {scheduler, api}) — SystemState incl. the wave-2 `effective_max_concurrent` scalar (acknowledged in types.md). → `scaffold/contracts/system-state.md`
+- `kernel-confidence` (telemetry [kernel] ↔ {benchmark, scheduler}) — kernel predictions + confidence + next-test selection reads. → `scaffold/contracts/kernel-confidence.md`
+- `store-access` — (telemetry ↔ store) — participation note (telemetry is a CONSUMER; store owns the contract). → `scaffold/contracts/store-access.md`
+- `api-dispatch` — (api → telemetry) — participation note (telemetry is a TARGET; api owns the contract). → `scaffold/contracts/api-dispatch.md`
 
-- **Purpose.** telemetry produces the node's point-in-time
-  `types::system::SystemState` (resource pressures + scheduling counts + resident
-  model), read by `scheduler` each admission tick and by `api` for
-  `GET /v1/system/state` (`node-state-poll`) and the surface `system` section.
+Also a party to (authored elsewhere / cross-cutting): `node-state-poll` — see `scaffold/contracts/`.
 
-- **Surface (in-process; the sampler + the async accessor):**
-  ```rust
-  // lib/telemetry/src/lib.rs — unchanged accessor
-  fn current_state(&self) -> SystemState;                 // cheap RwLock clone
-  // WAVE-2 additions to types::system::SystemState (all #[serde(default)], additive):
-  //   gpu_memory_used_bytes:  Option<u64>   // was u64=0; None = not measured (concern 4)
-  //   gpu_memory_total_bytes: Option<u64>   // was u64=0; None on unified memory
-  //   effective_max_concurrent: Option<u32> // convenience scalar, kernel-computed
-  //                                          // at the current operating point (concern 6)
-  // is_gpu_estimate: bool  (already present) — true = GPU covariates are estimated
-  ```
-
-- **Field discipline (concern 4).** The GPU-memory fields become `Option<u64>` so
-  an unknown VRAM is `None`, **never a fabricated `0`** (INTENT #9). On Apple
-  Silicon (unified memory) they stay `None` and the GPU-memory-pressure story
-  folds onto `memory_pressure` with `is_gpu_estimate = true`. `scheduler`/`api`
-  treat `None` as "no independent VRAM signal," not as zero pressure.
-
-- **`effective_max_concurrent` (concern 6).** Stamped each tick from the kernel at
-  the current operating point (current pressure + pending output-mix). `None` when
-  the kernel's confidence there is below floor → the scheduler uses its scalar
-  memory-pressure heuristic (graceful degradation). The authoritative, confidence-
-  bearing, what-if form is `kernel-confidence` (below); this scalar is the
-  zero-call common-case read. **Reconciliation flagged** with scheduler.md/system-
-  state.md (which imply it as a plain field): telemetry offers both, and pins the
-  scalar as best-effort/optional.
-
-- **Error cases.** None — `current_state()` always returns the last good snapshot;
-  a poisoned sampler mutex degrades to a zeroed snapshot (real code
-  `sampler.rs:210`), never panics. A snapshot taken mid-swap is internally
-  consistent (single RwLock).
-
-- **Version-sensitivity.** In-process, single-build → no wire skew. The
-  `SystemState` field additions are additive (`#[serde(default)]`) and matter only
-  when the struct crosses the mesh via `api`'s `node-state-poll`/surface (api owns
-  that serialization; the honesty flag rides along).
-
-### `kernel-confidence` (telemetry [kernel] ↔ {benchmark, scheduler}) — EXISTS; content proposed
-
-- **Purpose.** The query surface over the one multidimensional throughput kernel
-  (concern 6): `benchmark` asks for the lowest-confidence region to test next;
-  `scheduler` asks for the effective max concurrency at the current operating
-  point. Distinct from `system-state` (raw snapshots, not the fitted surface).
-
-- **Vocabulary (kernel operating point + outputs):**
-  ```rust
-  // an operating point in the kernel's axis space
-  struct OperatingPoint {
-      output_tokens: u32,
-      parallelism:   u32,
-      input_tokens:  u32,
-      mem_pressure:  f32,           // observed covariate (0..1)
-      cpu_utilization: f32,
-      gpu_utilization: Option<f32>, // None where GPU is unmeasured (concern 4)
-  }
-  // a point prediction with honest confidence (supersedes estimator::EstimatedDuration)
-  struct KernelEstimate {
-      duration_ms:       u64,       // canonical target (per-completion latency)
-      tokens_per_second: f64,       // derived view (output_tokens / duration_s)
-      confidence:        f32,       // c(q) in [0,1] (concern 2) — replaces the binary flag
-      is_estimate:       bool,      // honesty taint: support leans on estimated covariates
-  }
-  ```
-
-- **Surface (on the kernel, per `(node, model)`):**
-  ```rust
-  // point query — serves /v1/estimate (via api-dispatch) and the mean surface
-  fn estimate(&self, model: &ModelId, q: OperatingPoint) -> KernelEstimate;
-
-  // BENCHMARK consumer: "where is confidence lowest?" — argmin c(q) over the
-  // CONTROLLABLE grid, plus the under-explored pressure regime tag (concern 6)
-  fn lowest_confidence_region(&self, model: &ModelId) -> Option<KernelRegion>;
-  struct KernelRegion {
-      output_tokens: u32, parallelism: u32, input_tokens: u32,   // the cell to test
-      confidence: f32,                                           // current c there
-      underexplored_pressure: Option<PressureRegime>,           // e.g. High — benchmark can't set it
-      expected_information_gain: f32,                            // (1 - confidence)-weighted proxy
-  }
-  // stop condition: None when confidence >= threshold everywhere (replaces the fixed grid)
-
-  // SCHEDULER consumer: "effective max concurrency here?" (concern 6)
-  fn effective_concurrency(&self, model: &ModelId, at: OperatingPoint) -> ConcurrencyAdvice;
-  enum ConcurrencyAdvice {
-      Confident { max_concurrent: u32, confidence: f32 }, // largest p with ΔT>=ε and c>=floor
-      Unconfident,                                        // below floor -> scheduler falls back
-  }
-
-  // DASHBOARD view (via api kernel_surface()): the multidim surface + a 1-D slice
-  fn kernel_surface(&self, model: &ModelId) -> KernelSurface; // curves + confidence + honesty markers
-  ```
-
-- **Training-data source (concern 3/5).** The kernel is fit from
-  `store.benchmark_runs` (active `'benchmark'` ∪ passive `'observed'`) read via
-  `store-access`; the fitted surface is an in-memory cache rebuilt on boot and
-  refreshed on new rows. `lowest_confidence_region` returns controllable cells;
-  the pressure regime is *reported*, not commanded (benchmark cannot set it).
-
-- **Error cases / non-errors.** A never-benchmarked model → `estimate` returns a
-  conservative cold-start `KernelEstimate { confidence: 0, is_estimate: true }`
-  (superseding `cold_start_estimate`, `estimator.rs:203`), `lowest_confidence_
-  region` returns the whole space as the first cell, `effective_concurrency`
-  returns `Unconfident` (scheduler falls back). `is_estimate = true` on any
-  prediction whose support is estimate-dominated (concern 4) is **not** an error —
-  it is the honesty signal (INTENT #9) the dashboard renders as a tilde.
-
-- **Version-sensitivity.** In-process, single-build → none. The three consumers
-  (`benchmark`, `scheduler`, `api`) recompile with telemetry as one `inference`
-  binary; the confidence field's exact math (concern 2) can change without a
-  contract break since only the query shape above is frozen.
-
-### `store-access` (telemetry ↔ store) — participation note (telemetry is a CONSUMER; store owns the contract)
-
-- telemetry **reads** `store.benchmark_runs` (`benchmark_runs_for_model`) for the
-  active ∪ passive training set, relying on store.md's wave-2 pressure-covariate
-  columns (`mem_pressure`, `cpu_utilization`, `gpu_utilization`,
-  `gpu_mem_used_bytes`, `is_gpu_estimate`) and `sample_source` (concern 3/5).
-- telemetry **writes** confidence-gated passive `'observed'` rows via
-  `insert_benchmark_run` (concern 3) — a `BenchmarkRun` with `sample_source =
-  'observed'` and the pressure covariates sampled from `SystemState` at completion
-  time. **Friction flagged to store/gc:** `'observed'` rows need a retention cap /
-  gc-managed TTL so `benchmark_runs` does not grow unbounded (the confidence gate
-  bounds the rate; retention bounds the total).
-- telemetry does **not** implement `StoreObserver` for the kernel path (it pulls on
-  fit/refresh, does not fire in the writer mutex) — it must obey store.md concern
-  2's reentrancy rules only if it ever registers an observer; it does not this wave.
-
-### `api-dispatch` (api → telemetry) — participation note (telemetry is a TARGET; api owns the contract)
-
-- telemetry exposes `current_state() -> SystemState`, `estimate(model, q) ->
-  KernelEstimate` (serves `POST /v1/estimate` from the **warm** kernel, fixing the
-  cold-start bug `rest.rs:451`, concern 5), and `kernel_surface(model) ->
-  KernelSurface` (serves `GET /v1/benchmark/kernel`, **replacing** api's deleted
-  `fit_quadratic_tps`, api.md concern 7). The route shapes stay; only the source
-  moves into telemetry. api adds no math (its charter).

@@ -271,10 +271,10 @@ mesh-core's *contract* edges (cross-process WS/wire) are the daemon-shell seam;
 its *internal-lib* relationships are compiled-in seams (§ Internal layering), not
 contract edges. Contract edges, grouped:
 
-- **every service ↔ mesh-core** via `mesh-transport` *(proposed below)* — the
+- **every service ↔ mesh-core** via `mesh-transport` *(authored — see Contracts section)* — the
   connect handshake + `Address` envelope + single-port-locality relay frame that
   `pubsub-protocol` and all higher protocols ride. Client half is `mesh-client`.
-- **mesh-core ↔ every service** via `restart-protocol` *(proposed below)* — the
+- **mesh-core ↔ every service** via `restart-protocol` *(authored — see Contracts section)* — the
   two-way 4-level graceful-restart / supervision choreography (interruptibility
   state, port-handoff). `supervision` (batch 2) reconciles the daemon side; the
   service side is `mesh-client`.
@@ -308,7 +308,7 @@ DOWN-seam traits, the `Address` model + dispatcher, port acquisition/squatter-ki
 zombie-kill + child re-adoption, stickiness, the boot sequence, the local-SQLite
 decision, and the CLI tree are all decided and specified. **approach-sketched** for
 the two proposed contract *wire shapes* (`mesh-transport`, `restart-protocol`) —
-their fields are proposed below but the byte-level framing and the per-lib
+their fields are recorded in the Contracts section's notes but the byte-level framing and the per-lib
 message-kind registry are deliberately left to the per-pair contract round + the
 sibling libs (`pubsub-relay` owns the inner frame; `supervision` owns the restart
 policy). `aws-mesh` is **requirements-only** on mesh-core's side (consumer).
@@ -330,103 +330,41 @@ compile against its seams. The **seam traits** themselves are a near-spec →
 transcription-grade. Do not send the addressing/dispatcher core to a cheap model:
 the `AnyNode`-singleton-remote relay path is the one subtle correctness spot.
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Per the wave-2 process, proposals only — a later per-pair round reconciles both
-sides. mesh-core is the daemon-shell party to three edges.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including Reconciliation notes). Detailed proposals formerly here
+are superseded by them.
 
-### `mesh-transport` (NEW — proposed; every service ↔ mesh-core)
-
-**Purpose.** The outer transport frame under single-port locality (INTENT #58/#59):
-how a local service connects to `:3649`, identifies itself, and addresses an
-envelope to *any-node / specific-node / local*. This is the lower half of what the
-inventory calls `pubsub-protocol`; **mesh-core owns the connect handshake + `Address`
-+ relay frame, `pubsub-relay` owns the pub/sub payload that rides inside it.** The
-per-pair round should decide whether these are one stub (`pubsub-protocol` with a
-mesh-core-authored transport layer) or two — flagged.
-
-**Message/struct sketch** (Rust-flavored; all types land in `types::pubsub`):
-
-```rust
-// Connect handshake (first frame on a new :3649 connection)
-struct Hello { peer: PeerKind, slug: Option<Slug>, endpoint: Option<Endpoint>,
-               node_id: NodeId, proto: SemVer }
-enum PeerKind { LocalService, PeerDaemon, Cli }
-struct Welcome { node_id: NodeId, proto: SemVer, accepted: bool, reason: Option<String> }
-
-// The addressed envelope every higher protocol wraps
-struct Envelope { id: MsgId, corr: Option<MsgId>, to: Address, from: Origin,
-                  kind: MsgKind, body: Bytes }
-enum Address { AnyNode { slug: Slug }, Node { node: NodeId, slug: Slug }, Local { slug: Slug } }
-enum MsgKind { Request, Response, Publish, Subscribe, Control }  // pubsub-relay extends the inner semantics
-```
-
-**Error cases.** `NoSuchSlug` (unresolvable Address); `NoLocalInstance` (Local
-class, service not present here); `PeerUnreachable { node }` (specific-node relay to
-an offline peer — ties to network-topology's `self_offline`); `ProtoMismatch`
-(handshake `proto` incompatible); `Backpressure` (relay queue full). All are
-catchable, none panic — CAP honesty (INTENT #84) applies to the `PeerUnreachable`
-path.
-
-**Version-sensitivity.** The `Hello`/`Welcome` `proto: SemVer` is the ONE
-negotiated version at the transport floor; every service's `mesh-client` speaks it.
-Additive `MsgKind`/`Address` variants are backward-compatible (unknown kinds →
-`Control`-level nack, not a disconnect); removing/renarrowing a variant is breaking
-and gated on a `proto` major bump. This is deliberately the most conservative
-contract in the system because *everything* rides it.
-
-### `restart-protocol` (NEW — proposed; mesh-core ↔ every service)
-
-**Purpose.** The two-way graceful-restart / supervision choreography (INTENT
-#76/#77, ladder LOCKED at 4 levels round-9). mesh-core signals a restart need with a
-level and executes the port-handoff + kill; the service reports interruptibility and
-decides when it yields (for levels 1–2). `supervision` (batch 2) owns the *policy*
-(which level, boot-order, version requirements); mesh-core owns the *execution* and
-proposes the wire here so batch 2 reconciles against a concrete shape.
-
-**Message/struct sketch:**
-
-```rust
-// mesh -> service
-struct RestartRequest { level: RestartLevel, reason: RestartReason, deadline: Option<Duration> }
-enum RestartLevel {                    // the LOCKED 4-level ladder
-    WaitForIdle,                       // 1: mesh waits until the service reports idle
-    FinishAndRelinquish,               // 2: service finishes current work, then yields
-    SaveWindow,                        // 3: ~10s to persist, then mesh proceeds
-    Kill,                              // 4: killed outright, no warning
-}
-enum RestartReason { Compatibility, Update, OperatorRequest, Health }  // Compatibility => HIGH priority
-
-// service -> mesh (interruptibility state, published continuously)
-struct Interruptibility { state: BusyState, safe_to_restart: bool, in_flight: u32 }
-enum BusyState { Idle, Working, Critical }
-// service -> mesh (acks / yields)
-enum RestartReply { Yielding, WillYieldAt(Instant), NeedMoreTime(Duration), Acked }
-
-// port-handoff choreography (mesh-driven)
-struct PortHandoff { slug: Slug, old: Endpoint, new: Endpoint }  // start-new -> flip-registry -> down-old
-```
-
-**Error cases.** `DeadlineExceeded` (service didn't yield in time → escalate one
-level); `ServiceUnreachable` (never acked → straight to `Kill` + zombie-sweep);
-`HandoffStalled` (new endpoint never became healthy → keep old, alarm). A
-level-4 `Kill` cannot fail (backed by `ProcessControl.signal(SIGKILL)`).
-
-**Version-sensitivity.** The ladder is LOCKED at 4 levels — additive `RestartReason`
-variants are safe; adding/removing a level is a breaking change requiring an
-operator round. `Compatibility`-reason restarts are the mechanism by which the
-whole fleet rolls to a new `mesh-transport` `proto` — so this contract and
-`mesh-transport`'s version floor are coupled: a proto bump drives compatibility
-restarts across nodes (the mixed-version update protocol, still OPEN — INTENT #66,
-carried to supervision's batch-2 pass).
-
-### `aws-mesh` (EXISTING stub — mesh-core is the consumer/host side)
-
-**Purpose (mesh-core's half only).** mesh-core registers the `aws` app like any
-service (an instance of `service-lookup`) and relays the replication plane's S3/AWS
-distribution leg to it. The replication *payload/policy* is `replicated-kv`'s
-(batch 2); mesh-core contributes only the registration + relay path. **No new
-schema proposed here** — mesh-core's participation is fully expressed by
-`mesh-transport` (relay) + `service-lookup` (registration). Flag for the per-pair
-round: confirm the S3-leg framing is authored by replicated-kv/aws, not mesh-core.
-requirements-only on mesh-core's side.
+- `restart-protocol` (mesh ↔ every service) — the LOCKED 4-level
+  graceful-restart / interruptibility / port-handoff choreography.
+  → `scaffold/contracts/restart-protocol.md`
+  - Contract resolution supersedes the shape once proposed here: `supervision`'s
+    daemon-side view is authoritative and the vocabulary is `types::restart` —
+    `RestartPriority` (not `RestartLevel`), `save_deadline` as a
+    `RestartRequest` field, three-state `Interruptibility { Idle,
+    Interruptible, CriticalSection { until } }`, and `RestartResponse` replies.
+  - Component-side split retained: `supervision` owns restart *policy*;
+    mesh-core owns *execution* (port-handoff, kill, zombie-sweep, backed by
+    `ProcessControl`).
+- `aws-mesh` (aws ↔ mesh; mesh-core is the host/relay side) — mesh-core
+  registers `aws` like any service and relays the replication plane's S3/AWS
+  leg to it; the replication payload/policy is `replicated-kv`'s/`aws`'s,
+  mesh-core contributes only registration + relay.
+  → `scaffold/contracts/aws-mesh.md`
+- `mesh-transport` (every service ↔ mesh-core; mesh-core-owned layer) — the
+  connect handshake + `Address` envelope + single-port-locality relay frame all
+  higher protocols ride. Not broken out as a standalone contract file at the
+  contract round; the authored contracts bind to it by reference
+  (`pubsub-protocol.md` Reconciliation note 6 names mesh-client's multiplexing
+  wrapper the mesh-transport `Frame`; `service-lookup`, `vfs-content`,
+  `kg-mesh`, `aws-vfs`, `locks-api` and others ride its
+  `Envelope`/`Request`/`Response` and surface its `PeerUnreachable`). The
+  byte-level wire shape remains mesh-core's to carry into fill.
+- Hosted-not-authored edges (mesh-core is the process host; sibling libs
+  author): `service-lookup` / `service-registration` (service-registry),
+  `pubsub-protocol` (pubsub-relay), `network-events` (network-topology),
+  `tailscale-status` (tailscale-query), `v1-completion-api` / `node-state-poll`
+  (completion-router), `dashboard-feed` / `surface-schema` / `inference-events`
+  / `gc-events` / `ccd-events` (dashboard-serving), `queues-api` / `locks-api`
+  / `cron-api` (queues/locks/cron). → `scaffold/contracts/`

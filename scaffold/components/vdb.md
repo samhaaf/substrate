@@ -634,18 +634,18 @@ Contract edges (cross-process, via the local `:3649` daemon):
 - **db** via `vdb-db` — the execution arm: the `db serve` session protocol
   (Driver-trait-shaped verbs) + the promotion copy/verify verbs + changelog
   codegen. NEW pair (wave2-plan §3b). Co-designed with db this batch.
-  *(scaffold/contracts/vdb-db.md — MISSING, proposed below)*
+  *(authored: scaffold/contracts/vdb-db.md)*
 - **secrets** via `vdb-secrets` — (a) the local-mesh-database push adapter
   (secrets → a stack database's encrypted secret facility — the v1-BUILD
   adapter); (b) cloud-target credentials, use-without-seeing. secrets.md
   proposed its half; accepted with one refinement (below).
-  *(scaffold/contracts/vdb-secrets.md — MISSING, proposed below)*
+  *(authored: scaffold/contracts/vdb-secrets.md)*
 - **aws** via `aws-vdb` — the RDS+Lambda cloud target (design-only v1;
   `AwsDisabled` until Live). aws.md proposed its half; accepted (below).
-  *(scaffold/contracts/aws-vdb.md — MISSING)*
+  *(authored: scaffold/contracts/aws-vdb.md)*
 - **kg** via `kg-vdb` — KG's graph storage/routing through vdb (concern 11).
-  NEW pair; vdb-side surface proposed below, reconciled with KG mid-batch.
-  *(scaffold/contracts/kg-vdb.md — MISSING)*
+  Reconciled with KG mid-batch.
+  *(authored: scaffold/contracts/kg-vdb.md)*
 - **ccd** via `ccd-escalation` — consumed, not authored: the
   execution-engine's `LoopDepthExceeded` arm fires from inside vdb's engine
   adapter (queues/ccd own the shape; execution-engine authors that arm).
@@ -660,7 +660,7 @@ per-database entities).
 
 Internal-lib seams (compiled in, NOT contract edges — INTENT #29/#45):
 `mesh-client`, `substrate-types` (`trigger`, `event`, `provenance`, `error`
-vocabulary + the `types::vdb` structs proposed below), **`execution-engine`**
+vocabulary + the `types::vdb` structs recorded in the authored contracts), **`execution-engine`**
 (the stack-tables adapter runs in-process; shares `types::trigger` with
 queues by construction), and the Deno embedding (`deno_core`/subprocess pool —
 a third-party dependency decision left to fill, either satisfies the sandbox
@@ -730,284 +730,21 @@ fixtures.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only — the per-pair round reconciles both sides; I do NOT edit
-`scaffold/contracts/*`. Structs land in `types::vdb` (wire-crossing guardrail-4
-discipline throughout: additive-only, `#[serde(default)]`, `#[serde(other)]`
-reserved on enums, explicit `v` where a stream begins). `VdbError` lands in
-`types::error::vdb`. wave2-plan assigns vdb: `stack-vfs`→`vdb-vfs`,
-`stack-mesh`→`vdb-mesh`, `vdb-db`, `vdb-secrets`, `aws-vdb` (aws authored its
-half), `kg-vdb`, plus the stub-track `projects-vdb`/`environments-vdb` names.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-Shared vocabulary:
+- `vdb-mesh` (vdb ↔ mesh) — registration (per-database supervised entities) + catalog keyspace + locks; RENAMED from `stack-mesh` at harmonization. → `scaffold/contracts/vdb-mesh.md`
+- `vdb-vfs` (vdb ↔ vfs) — the SQLite-file-in-VFS anchor/snapshot surface (vfs.md's surface accepted); RENAMED from `stack-vfs` at harmonization. → `scaffold/contracts/vdb-vfs.md`
+- `vdb-db` (vdb → db) — the execution arm: the `db serve` session protocol. → `scaffold/contracts/vdb-db.md`
+- `vdb-secrets` (vdb ↔ secrets) — push adapter + cloud credentials (secrets.md's half accepted, one refinement). → `scaffold/contracts/vdb-secrets.md`
+- `aws-vdb` (vdb → aws) — the RDS+Lambda cloud target; aws.md's half accepted (design-only v1). → `scaffold/contracts/aws-vdb.md`
+- `kg-vdb` (kg ↔ vdb) — KG's storage/routing through vdb (the locked-layering edge). → `scaffold/contracts/kg-vdb.md`
+- `projects-vdb` / `environments-vdb` — stub-track (anticipated, content deferred). → `scaffold/contracts/projects-vdb.md`, `scaffold/contracts/environments-vdb.md`
 
-```rust
-// types::vdb
-pub struct DbId(pub String);              // "<project>/<name>"
-pub struct StackDefRef { pub manifest_hash: Hash, pub ledger_head: String }
-pub enum   StackTargetKind { LocalSqlite{node:NodeId, vfs_path:String},
-                             Supabase{project_ref:String},
-                             AwsRdsLambda{target_id:String},
-                             #[serde(other)] Unknown }
-pub struct DatabaseRecord { /* concern 1 */ }
-pub struct ProvenanceConfig { pub level: ProvLevel, pub retention: Duration, pub row_images: bool }
-pub enum   ProvLevel { Full, Touch, Off, #[serde(other)] Unknown }
-
-// types::error::vdb — matchable, never a panic
-pub enum VdbError {
-    DbNotFound { db_id: DbId },
-    NotHomeHere { db_id: DbId, home: StackTargetKind },  // relayed to the wrong node; resolve again
-    DefinitionInvalid { detail: String },                // static validation at apply (triggers/schema)
-    TargetIncapable { needs: String },                   // capability gate (e.g. vector on local)
-    HandlerFailed { invocation_id: Uuid, detail: String },
-    HandlerTimeout { invocation_id: Uuid },
-    LoopStopped { correlation_id: Uuid, depth: u32 },    // engine guardrail outcome, surfaced
-    PromotionConflict { db_id: DbId, phase: String },    // verify mismatch / partition-merge on the mutex
-    Busy { db_id: DbId, state: Interruptibility },       // barrier/CriticalSection push-back
-    ExecutionArm(String),                                // db-side error, stringified at the boundary
-}
-```
-
-### `vdb-mesh` (vdb ↔ mesh) — rename of `stack-mesh` (flagged)
-
-**Purpose.** Three facets over the local daemon: (a) **registration** — the
-daemon registers `vdb` (NodeScoped) and one entity per hosted database
-(`vdb/<project>/<name>` → daemon endpoint + db route), ordinary
-`service-lookup` instances; entity registrations carry a `ServiceManifest`
-whose `version` is the stack-definition version (supervision inherits
-databases with zero new protocol — concern 2); (b) **catalog tenancy** — the
-`vdb/` replicated-kv keyspace (concern 10), reached through the same
-mesh-brokered keyspace surface `secrets-mesh` established (vdb is an L4 app;
-it cannot link `KvHandle` — the brokered pattern generalizes exactly as
-secrets' design predicted); (c) **locks usage** — the promotion mutex and
-event-ID semaphores via `locks-api` (consumed, not re-authored; the
-distributed-handler-coordination framing of the old stub is REDUCED per
-concern 6 — flagged for the harmonizer as an intentional scope correction).
-
-**Message/struct sketch.** No new wire beyond composition: `Registration`
-(service-lookup) with `meta.requires: ["db"]` and per-entity
-`meta: { db_id, target, definition }`; `VdbKvPut/Get/Scan/Watch` mirroring
-`secrets-mesh`'s brokered-keyspace verbs over keyspace `vdb/` (values =
-`DatabaseRecord`/def-ref rows, NOT opaque — `mirror_values: true` is fine,
-nothing sensitive); restart-protocol frames per entity (types::restart,
-unchanged — the entity slug rides the frame's addressing).
-
-**Error cases.** Registry/lease errors are `service-lookup`'s; keyspace
-errors wrap `KvError` (incl. `PartialReplication` surfaced on catalog
-writes); `KeyspaceAccessDenied` (only the registered `vdb` slug touches
-`vdb/`); locks errors are `locks-api`'s (`Contended`, `LeaseExpired`,
-`PartitionMergeThresholdExceeded` — promotion aborts on the latter).
-
-**Version-sensitivity.** HIGH — `DatabaseRecord` persists in replicated-kv
-across mixed-version fleets: full guardrail-4 discipline;
-`StackTargetKind`/`DbStatus`/`ProvLevel` reserve `#[serde(other)]`; a daemon
-seeing an Unknown target kind treats the database as *present but not
-hostable here* (never fires, never deletes — the cron `Unknown`-schedule
-fail-safe rule, reused). The per-entity registration shape is an *additive
-facet* of `service-lookup`'s payload — flagged to service-registry's
-harmonizer, same route supervision's manifest facet took.
-
-### `vdb-vfs` (vdb ↔ vfs) — rename of `stack-vfs` (flagged); accepts vfs.md's proposed surface
-
-**Purpose.** The layering edge (VFS < VDB): each local database's SQLite file
-is a NodeAnchored vfs file; vfs is the file host + snapshot-replicator, vdb
-is the exclusive owner-writer.
-
-**Message/struct sketch (vfs.md's proposal, accepted + refined):**
-
-```rust
-// vdb -> vfs (local leg)
-struct OpenAnchored { path: String }                    // -> LocalPath { os_path, anchor_lock: HoldToken }
-struct Snapshot     { path: String, consistent: bool }  // -> { content_hash: Hash }
-    // REFINEMENT (vdb->vfs): `consistent: true` asserts the caller holds a
-    // quiesced WAL checkpoint; vfs records snapshot_of + provenance-lite.
-struct Retire       { path: String, final_snapshot: bool } // release anchor; file to normal lifecycle
-```
-
-vdb calls `Snapshot` only inside a `wal_checkpoint(TRUNCATE)` window (concern
-4), so every replicated snapshot is transaction-consistent — the refinement
-makes that assertion explicit on the wire instead of implicit in discipline.
-Anchor relocation (moving a database's home node) composes existing verbs:
-quiesce → `Snapshot` → release anchor → `OpenAnchored` on the new node from
-the snapshot → catalog + registry update — no new wire (see Open questions
-for whether v1 ships it).
-
-**Error cases.** vfs.md's: `AnchorLocked` (another holder — a second vdb leg
-must NOT host this db; this error is the split-brain guard),
-`NotAnchoredHere` (the anchor lives elsewhere — resolve the entity and relay,
-or relocate), plus `SnapshotFailed`. Partition twins on the anchor lock
-surface locks' merge error — vdb's per-application handling: the LWW-newest
-anchor holder wins, the loser demotes to read-only and alarms (data written
-during the split on the losing side is surfaced for operator reconciliation,
-never silently merged — the honest personal-mesh answer, flagged).
-
-**Version-sensitivity.** LOW-MEDIUM — node-local calls (vdb and its vfs leg
-co-reside); the snapshot `content_hash` rides vfs' frozen SHA-256 addressing.
-Additive fields only.
-
-### `vdb-db` (vdb → db) — NEW; the execution arm (preferred shape, co-designed with db this batch)
-
-**Purpose.** The daemon-mode session protocol by which vdb runs every
-engine-level action: migrations, queries, exec, edge deploys, outbox drains,
-promotion copy/verify. Cross-app over the local mesh (INTENT #29), co-located
-per node (concern 7).
-
-**Message/struct sketch** (maps ~1:1 onto `lib/db`'s real `Driver` trait —
-listed against the existing functions so db's designer sees the delta):
-
-```rust
-// session
-struct OpenSession { target: DbDriverTarget }           // -> { session_id }; DbDriverTarget: Sqlite{os_path} | SupabaseCloud{project_ref} | ...
-struct CloseSession { session_id: Uuid }
-// existing Driver surface, exposed (no new behavior)
-struct ApplySql    { session_id: Uuid, env: String, sql: String }
-struct ApplyParams { session_id: Uuid, env: String, sql: String, params: Vec<SqlParam> }
-struct Query       { session_id: Uuid, env: String, sql: String, params: Vec<SqlParam> } // -> Rows
-struct Introspect  { session_id: Uuid, env: String, q: IntrospectQuery }                 // -> Introspection
-struct ApplyAtomic { session_id: Uuid, env: String, lock_key: String,
-                     statements: Vec<String>, ledger: AppliedMigration }
-struct EdgeDeploy  { session_id: Uuid, env: String, bundle: BundleRef }                  // Supabase target
-struct OutboxDrain { session_id: Uuid, env: String } -> DrainReport
-// EXTENSIONS db needs (the operator-authorized "extend as necessary" list)
-struct InstallChangelog { session_id: Uuid, tables: Vec<String> }   // (re)generate _vdb_changelog triggers
-struct DumpTo      { session_id: Uuid, format: DumpFormat } -> Stream<Bytes>   // promotion bulk copy
-struct RestoreFrom { session_id: Uuid, format: DumpFormat, body: Stream<Bytes> }
-struct ContentHash { session_id: Uuid, table: String } -> Hash                 // promotion verify
-```
-
-**Error cases.** db's typed `NotImplemented`-on-incapable-driver passes
-through (vdb's capability gates should prevent reaching it — hitting it is a
-vdb bug, logged loudly); `SessionNotFound`/`SessionBusy`;
-`LedgerConflict` (apply_atomic lost its lock/ledger race); db-internal errors
-stringified at the boundary into `VdbError::ExecutionArm` (types.md
-guardrail: one crate's error enum never becomes another's).
-
-**Version-sensitivity.** MEDIUM — a node-local edge (no cross-node skew), but
-the session protocol becomes db's second public surface, so: verbs
-additive-only; `DbDriverTarget`/`DumpFormat` reserve `#[serde(other)]`; the
-ledger/`AppliedMigration` shape is db's existing on-disk truth and therefore
-effectively frozen. **FLAG (mid-batch, to db's designer):** (1) `db serve`
-itself — daemon mode + mesh registration is the one genuinely new posture for
-db; (2) `InstallChangelog`/`DumpTo`/`RestoreFrom`/`ContentHash` are the new
-verbs; (3) db.md's earlier "org/inference consume `lib/db` as a Cargo
-dependency" note contradicts INTENT #29 (which post-dates it) — this contract
-assumes wire-only consumption fleet-wide.
-
-### `vdb-secrets` (vdb ↔ secrets) — accepts secrets.md's half, one refinement
-
-**Purpose.** (a) secrets' **local-mesh-database push adapter** (the v1-BUILD
-one): push a secret into a stack database's encrypted secret facility — vdb
-provisions the facility (an ops-schema `_vdb_secrets` table: encrypted
-column + a decrypt-at-read mechanism whose keys stay rooted in secrets;
-the SQLite equivalent of Supabase Vault, per secrets.md concern 5) and
-receives pushes; (b) **cloud-target credentials** for promotion/serving,
-use-without-seeing.
-
-**Refinement to secrets.md's sketch (flagged for the per-pair round).**
-secrets proposed `VdbCredentialUse { ref, target } -> ConnectionHandle`
-("secrets connects; vdb never sees raw"). A live DB connection cannot
-practically be brokered across two processes — and vdb is a trusted,
-non-LLM service performing the privileged action itself, which is exactly
-secrets' own resolve-into-sink category. Proposed reconciliation, preserving
-the invariant that matters (no secret in any LLM context — handlers get only
-`SecretRef` + the `use` verb):
-
-```rust
-// vdb -> secrets: resolve a cloud credential into vdb's own connect path (non-llm_safe caller)
-struct VdbCredentialResolve { r#ref: SecretRef, target: CloudTarget } -> SecureValue  // conn string/password
-enum   CloudTarget { Supabase { project_ref: String }, AwsRds { target_id: String },
-                     #[serde(other)] Unknown }
-// secrets -> vdb: the push-adapter leg (unchanged from secrets.md)
-struct VdbSecretPush { project: String, db: String, name: String, value: SecureValue }
-struct VdbSecretPushReceipt { name: String, outcome: Created | Updated }
-```
-
-vdb holds the resolved value in memory only, never persists it, never places
-it in a handler payload or context (handlers see `SecretRef` + `use` only) —
-the same posture aws.md's CredentialProvider takes. If the operator prefers
-the stricter proxied-connect, it is a secrets-side feature vdb can adopt
-later without contract breakage (additive verb).
-
-**Error cases.** `NotFound`, `NotDecryptable` (unenrolled node — a database
-hosted on a ciphertext-only replica node cannot serve cloud-credentialed
-work; surfaced, not worked around), `AdapterFailed{LocalMeshDb,…}`,
-`RawRefusedLlmSafe` (would fire only if a vdb caller were mis-flagged
-llm_safe — vdb the service is not; handlers' rollup-assembled payloads
-inherit queues' llm_safe pass-through instead).
-
-**Version-sensitivity.** MEDIUM — `CloudTarget` grows with the adapter
-matrix (additive, `#[serde(other)]`). The `_vdb_secrets` facility schema is
-part of the stack ops schema and versions with the definition ledger.
-
-### `aws-vdb` (vdb ↔ aws) — aws.md's half ACCEPTED (design-only v1)
-
-aws.md proposed the full surface (`ProvisionTarget`/`DescribeTarget`/
-`DeployFunction`/`InvokeFunction`/`Migrate`/`Teardown`, `RdsEngine::Postgres`
-only, `LambdaRuntime::{Deno, Sql}`, connection secrets via `vdb-secrets` not
-via aws — the endpoint/credential split). **Accepted as proposed**, with two
-vdb-side notes for the per-pair round: (1) vdb's promotion state machine
-(concern 9) drives `Migrate` as steps 2–4 only — the **barrier, delta, and
-registry flip (steps 5–7) remain vdb's**, executed through db sessions
-against the RDS endpoint; `MigrationPlan.verify` maps onto
-`verify_against`'s report so "MigrationConflict → abort, local untouched" is
-one shared semantics; (2) `DeployFunction.code_ref: ObjKey` — vdb supplies
-the VFS content hash re-materialized into the aws ObjKey namespace (handler
-sources are already content-addressed; the mapping is mechanical).
-Version-sensitivity per aws.md: proposed-not-frozen until built; every call
-answers `AwsDisabled` in v1 and vdb treats that as promotion-unavailable.
-
-### `kg-vdb` (kg ↔ vdb) — NEW; vdb-side surface (KG designs concurrently — reconcile mid-batch)
-
-**Purpose.** KG's storage/routing through vdb (locked layering VDB < KG). A
-graph's backing store is an ordinary vdb database from a KG-authored stack
-definition; KG gets the standard surface plus the changelog subject stream
-its kg-nodes execution-engine adapter consumes.
-
-**Message/struct sketch (vdb's offered surface — deliberately generic):**
-
-```rust
-// kg -> vdb
-struct EnsureDatabase { db_id: DbId, definition: StackDefRef,
-                        target_hint: Option<StackTargetKind> }   // idempotent; environment routing later
-struct Query  { db_id: DbId, sql: String, params: Vec<SqlParam> } // -> Rows
-struct Exec   { db_id: DbId, sql: String, params: Vec<SqlParam>, prov: Provenance } // provenance REQUIRED
-struct Invoke { db_id: DbId, handler: String, payload: Value, prov: Provenance }
-struct SubscribeChanges { db_id: DbId, tables: Option<Vec<String>>, from_seq: Option<u64> }
-    // -> stream of row-change subject documents (the execution-engine binding,
-    //    seq-ordered, resumable by cursor) — KG's adapter feed; durable, not the lossy tee
-struct SnapshotDb { db_id: DbId } -> { content_hash: Hash }
-struct PromoteDb  { db_id: DbId, to: StackTargetKind } // KG's environment routing invokes vdb promotion
-```
-
-**Boundary notes for KG's designer:** schema-locking = migrations (a failed
-schema validation is `DefinitionInvalid`, pushed back to the caller — KG's
-push-back-to-caller requirement lands on db's ledger discipline for free);
-per-graph template versions = stack-definition versions; the global graph
-registry is KG's own (likely itself a vdb database) — vdb's catalog knows
-databases, not graphs. The graph-merge model is ABOVE this seam.
-
-**Error cases.** `DbNotFound`, `NotHomeHere` (KG resolves the entity and
-relays — same as any consumer), `DefinitionInvalid`, `Busy` (barrier),
-`TargetIncapable`.
-
-**Version-sensitivity.** MEDIUM-HIGH — the `SubscribeChanges` subject
-document is the shared execution-engine binding (queues.md concern 2): its
-shape is co-owned with queues/execution-engine and must evolve additively in
-ONE place (`types::trigger`'s subject conventions), never forked per
-consumer. Flagged as the batch's single most shared shape.
-
-### `projects-vdb` / `environments-vdb` — stub-track (anticipated, content deferred)
-
-Named per wave2-plan §3c; partners are L6 stubs. **`projects-vdb`:**
-databases attach to projects — the catalog's `project` segment of `DbId` is
-already the join key; projects will read the catalog (via mesh) and surface
-per-project databases in its graph. **`environments-vdb`:** an environment
-routes a database's target (local→SQLite, cloud→promote — INTENT #97/#98);
-v1's explicit per-database `target` config is the placeholder; when
-environments lands, `EnsureDatabase.target_hint` is replaced by
-environment-derived routing with the local-purpose-KG-supporting-cloud
-nuance kept open (kg.md). No mechanism beyond existing verbs.
+Also a party to (cross-cutting): `locks-api`, `queues-api`, `cron-api`, `restart-protocol`, `pubsub-protocol`, `surface-schema`, `service-lookup` — see `scaffold/contracts/`.
 
 ## Non-obvious tests (conformance + correctness)
 

@@ -17,8 +17,10 @@ poll loop, the snapshot-diff state machine, the debounce/cadence policy, the
 self-connectivity detector, and the retained-snapshot-on-connect behavior. It
 does **NOT**: query Tailscale itself (consumes `tailscale-query`, which owns the
 shell-out and parsing); make routing decisions or maintain a load/health table
-(that is `completion-router`'s `NodeRegistry`, a deliberately separate concern
-even though both consume `tailscale-status`); own the transport of the feed
+(that is `completion-router`'s `NodeRegistry`, a deliberately separate concern —
+and since the contract round, network-topology is `tailscale-status`'s SOLE
+consumer; the router's fleet membership comes from `resolve_all("inference")` +
+this module's feed, never its own tailscale scan); own the transport of the feed
 (that is `pubsub-relay`, which relays the envelopes across services and nodes).
 Its output is **a node-local vantage** — "what THIS mesh daemon can currently
 see of the tailnet" — never a claim of global truth; that framing is load-bearing
@@ -131,8 +133,9 @@ the subscribe path — see friction points (this is a concrete ask of
 ## Relationships / edges
 
 - `tailscale-query` via `tailscale-status` — **consumes** parsed self+peer
-  status snapshots (the sole input); shared with `completion-router` as a
-  co-consumer (scaffold/contracts/tailscale-status.md).
+  status snapshots (the sole input); network-topology is the SOLE consumer of
+  this edge since the contract round (completion-router dropped — see
+  scaffold/contracts/tailscale-status.md Reconciliation notes).
 - any subscriber (ccd, org, mesh's in-process observability hub) via
   `network-events` — **produces** the topology + self-connectivity WS feed on
   topic `net.topology` (scaffold/contracts/network-events.md).
@@ -161,7 +164,7 @@ peers-unknown-on-self-offline guarantee, the asymmetric-debounce state machine,
 the recovery-diff (membership-only) rule, the cadence/deadline/debounce
 defaults, and node-local-vantage provenance are all specified. The only deferred
 piece is the exact field-level wire schema, which is the Contract Harmonizer's
-(`network-events` / `tailscale-status`) — proposed below.
+(`network-events` / `tailscale-status`) — authored in scaffold/contracts/.
 
 ## Assigned design-depth
 
@@ -180,165 +183,30 @@ conformance tests.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Two pairs are assigned to this module by wave2-plan §3a: `tailscale-status`
-(consumer side) and `network-events` (producer side). Proposals only — the
-per-pair reconciliation round harmonizes both sides.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including Reconciliation notes). Detailed proposals formerly here
+are superseded by them.
 
-### Contract `tailscale-status` (I am a consumer; co-consumer: completion-router)
-
-**Purpose.** Hand `network-topology` (and `completion-router`) a parsed,
-version-decoupled snapshot of self + peer Tailscale status. Synchronous
-(per `tailscale-query`'s charter); I wrap it in `spawn_blocking` + `timeout`.
-
-**Struct sketch** (Rust-flavored; final home decoupled from tailscale's private
-serde structs per `tailscale-query` concern 3):
-
-```rust
-struct TailscaleStatus {
-    sampled_at:   DateTime<Utc>,     // when tailscale-query captured it
-    backend_state: BackendState,
-    tailnet_name: Option<String>,
-    self_node:    PeerStatus,
-    peers:        Vec<PeerStatus>,
-    health:       Vec<String>,       // tailscaled health warnings, passthrough
-}
-
-struct PeerStatus {
-    stable_id:     String,           // Tailscale StableNodeID — identity key
-    host_name:     String,
-    dns_name:      String,
-    tailscale_ips: Vec<IpAddr>,
-    tags:          Vec<String>,      // ACL tags, e.g. "tag:substrate"
-    os:            Option<String>,
-    online:        bool,
-    is_self:       bool,
-    last_seen:     Option<DateTime<Utc>>,
-    relay:         Option<String>,   // DERP relay region, informational
-}
-
-#[non_exhaustive]
-enum BackendState { NoState, NeedsLogin, Stopped, Starting, Running, Unknown(String) }
-```
-
-**Error cases** (the `Result<TailscaleStatus>` failure taxonomy I must handle
-as self-offline observations, cause-mapped per concern 1):
-
-- `NotInstalled` → cause `TailscaleUnavailable`.
-- `DaemonUnreachable` (socket refused) → `TailscaleUnavailable`.
-- `Timeout` (I impose the deadline) → `PollTimeout`.
-- `ParseError(String)` → treated as a failed poll (offline observation); repeated
-  parse errors likely signal a tailscale-version/JSON drift — surfaced in logs,
-  not a distinct event (kept boring).
-- `CommandFailed { code, stderr }` → offline observation, cause
-  `TailscaleUnavailable`.
-
-**Version-sensitivity.** `BackendState` carries an `Unknown(String)` fallback so
-a new tailscale backend state never breaks parsing. `PeerStatus` field additions
-are non-breaking to me (I read a subset: `stable_id`, `online`, `dns_name`/
-`host_name`, `tags`). I key peer identity on `stable_id` (survives IP churn),
-NOT on `tailscale_ips` or `host_name`. Note a naming edge: `types::NodeId` today
-is the *device name* string used as mesh's routing key, whereas topology identity
-is the *stable node key*; I expose both (`node_id` = name for cross-referencing
-service-registry/completion-router, `stable_id` = identity) — flagged for the
-harmonizer.
-
-### Contract `network-events` (I am the producer; subscribers: ccd, org, mesh hub)
-
-**Purpose.** A live, provenance-tagged WS feed of tailnet transitions and
-self-connectivity for any subscriber, delivered as `pubsub-relay` envelopes on
-topic `net.topology`, with a retained snapshot for snapshot-on-connect.
-
-**Message sketch** (rides `Envelope<NetworkEvent>` from the `pubsub-protocol` /
-`types::pubsub` domain; proposed `types::net` module):
-
-```rust
-// Provenance-first header, present on every event (node-local vantage):
-struct Provenance { observer: NodeId, observed_at: DateTime<Utc>, seq: u64 }
-
-#[non_exhaustive]
-enum NetworkEvent {
-    // RETAINED on the topic — replayed to every new subscriber:
-    Snapshot   { prov: Provenance, topology: TopologySnapshot },
-    // transient deltas:
-    PeerJoined { prov: Provenance, peer: PeerRef },
-    PeerLeft   { prov: Provenance, peer: PeerRef },
-    PeerOnline { prov: Provenance, peer: PeerRef },
-    PeerOffline{ prov: Provenance, peer: PeerRef },
-    SelfOffline{ prov: Provenance, cause: SelfOfflineCause },
-    SelfOnline { prov: Provenance, topology: TopologySnapshot }, // fresh full state
-}
-
-struct TopologySnapshot {
-    self_state: SelfConnectivity,
-    peers:      Vec<PeerRef>,      // empty/Unknown-marked while self offline
-    captured_at: DateTime<Utc>,
-}
-
-struct PeerRef {
-    node_id:   NodeId,            // device name (routing/cross-ref key)
-    stable_id: String,           // Tailscale StableNodeID (identity)
-    host_name: String,
-    tailscale_ips: Vec<IpAddr>,
-    tags:      Vec<String>,
-    state:     PeerState,
-}
-
-#[non_exhaustive]
-enum PeerState { Online, Offline, Unknown }     // Unknown only while self-offline
-
-#[non_exhaustive]
-enum SelfConnectivity { Online, Offline { cause: SelfOfflineCause }, Unknown }
-
-#[non_exhaustive]
-enum SelfOfflineCause {
-    TailnetUnreachable,               // daemon up, no DERP/control
-    BackendNotRunning(BackendState),  // Stopped / NeedsLogin / NoState / Starting
-    TailscaleUnavailable,             // binary/daemon missing
-    PollTimeout,                      // poll exceeded deadline
-}
-```
-
-**Behavioral guarantees the contract must state (not just the shapes):**
-
-1. **Peers-unknown-under-self-offline:** between a `SelfOffline` and the next
-   `SelfOnline`, NO `Peer*` events are emitted, and consumers MUST treat all
-   peer state as `Unknown`. The retained `Snapshot` during this window carries
-   `self_state = Offline{..}` and peers marked `Unknown`.
-2. **Recovery replays as a fresh snapshot + membership-only deltas:**
-   `SelfOnline` carries a full `TopologySnapshot`; any per-peer deltas emitted
-   immediately after are `PeerJoined`/`PeerLeft` only (membership), never
-   online-substate churn accrued during the blackout.
-3. **Asymmetric debounce is observable, not hidden:** down-events are delayed by
-   `down_confirm_polls`; up-events are immediate. (A consumer will never see a
-   sub-`down_confirm` flap.)
-4. **Ordering / gap detection:** `seq` is monotonic per `observer`; a subscriber
-   detecting a `seq` gap should treat its view as stale until the next retained
-   `Snapshot`.
-
-**Error cases.**
-
-- Remote relay unreachable → best-effort, at-most-once for transient deltas;
-  the retained `Snapshot` + `seq`-gap rule is the recovery path (a subscriber
-  that missed deltas resyncs from the next retained snapshot). In-process
-  delivery (mesh's own hub) does not drop.
-- `network-topology` itself cannot fail the edge from the producer side beyond
-  ceasing to publish; a stalled poll loop is surfaced as its own health/surface
-  schema, not as a `NetworkEvent`.
-
-**Version-sensitivity.** `NetworkEvent`, `PeerState`, `SelfConnectivity`,
-`SelfOfflineCause`, `BackendState` are all `#[non_exhaustive]` so new
-variants (e.g. a future `PeerDegraded`, or netcheck-derived latency events once
-`tailscale-query` grows `netcheck()`) are additive; subscribers match with a
-catch-all. The retained-`Snapshot`-per-topic requirement is a capability this
-edge needs from `pubsub-relay` — if the relay cannot retain, `network-topology`
-falls back to answering a `topology.snapshot` request on subscribe (flagged as
-the less-boring alternative).
-
-**Addressing note (INTENT #59, two addressing classes).** Because the feed is a
-node-local vantage, it is addressed like any per-node surface: a subscriber to
-its *local* mesh gets its local node's `net.topology` by default; "topology as
-seen by node N" is reachable via mesh-core's specific-node addressing class.
-The `observer` field lets a fan-in consumer keep multiple nodes' vantages
-distinct.
+- `tailscale-status` (tailscale-query → network-topology; network-topology is
+  the **sole consumer** — completion-router was DROPPED as a party at the
+  contract round) — the compiled-in Rust API surface handing this module
+  parsed self+peer Tailscale status plus the catchable failure taxonomy it
+  maps onto self-offline causes. → `scaffold/contracts/tailscale-status.md`
+  - Contract resolution supersedes the consumer-side sketch once proposed
+    here: the producer's names win — `StatusSnapshot` (not `TailscaleStatus`),
+    `captured_at` (not `sampled_at`), `PeerStatus.id` (not `stable_id`); self
+    is folded into `peers`-shaped `PeerStatus` via `self_node` + `is_self`;
+    `relay: Option<String>` was kept at this module's request.
+  - Participation note: the call is synchronous per tailscale-query's charter;
+    this module wraps it in `spawn_blocking` + its own `timeout`.
+- `network-events` (network-topology → subscribers ccd, org, and mesh's
+  in-process observability hub) — the provenance-tagged `net.topology` feed
+  (retained `Snapshot` + `Peer*`/`SelfOffline`/`SelfOnline` deltas, the
+  peers-unknown-under-self-offline and seq-gap rules).
+  → `scaffold/contracts/network-events.md` (authored verbatim from this
+  module's proposal; gateway dropped as a subscriber at the mesh merge)
+  - Component-side note: the feed is a node-local vantage; "topology as seen
+    by node N" is reachable via mesh-core's specific-node addressing class,
+    and `prov.observer` keeps fan-in vantages distinct.

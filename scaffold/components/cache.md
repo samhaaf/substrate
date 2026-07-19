@@ -154,131 +154,22 @@ three-layer invalidation wiring is the one place to fill carefully — the rest
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Cache is a party to three inference-internal pairs. It **authors `kv-cache`**
-(its headline pair, only a stub today). For `gc-managed-dirs` and `store-access`
-it is a **consumer** of vocabulary authored by `gc.md` and `store.md`
-respectively; below it states its use and proposes the one delta each needs,
-deferring the canonical shape to the owner (divergences → friction). All structs
-live in `substrate-types`; Rust-flavoured pseudocode.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `kv-cache` (engine ↔ cache) — authored here
-
-**Purpose.** The decide-whether-and-where surface between the backend executor
-(`engine`) and the disk cache index (`cache`). `engine` performs the actual
-llama-server `slot_action("save"/"restore", path)` HTTP call; `cache` owns the
-*policy*: what the blob path is, whether a reusable blob exists, and the
-validity token that guards correctness. Split this way because `engine` knows
-what is *resident* (model, build, slot config) and `cache` knows what is *on
-disk* (index, budget, LRU) — neither can be correct alone.
-
-**Sketch.**
-```rust
-// The correctness guard. Derived by engine from the CURRENTLY-RESIDENT backend.
-// Any change to weights/build/config changes this token → incompatible blobs miss.
-struct ValidityToken(String);          // e.g. blake3(model_fingerprint || backend_build_id || context_config)
-
-// engine → cache: "I just prefilled this prefix; where do I save, and should I?"
-struct ReserveSaveRequest {
-    model_id:     ModelId,
-    token:        ValidityToken,
-    prompt_hash:  String,              // sha256 of the tokenized prefix (engine-supplied)
-    est_bytes:    u64,                 // expected slot-state size, for make_room
-}
-enum ReserveSaveReply {
-    Save { path: String },             // cache reserved budget (make_room ok) → engine saves here, then confirms
-    Skip,                              // budget can't fit even after eviction, or policy declines → engine skips
-}
-
-// engine → cache: after a successful slot_action("save", path)
-struct ConfirmSaveRequest { model_id: ModelId, token: ValidityToken,
-                            prompt_hash: String, path: String, bytes: u64 }
-// cache: upsert index row + gc register_and_lock(path, ttl). (This is today's record_entry, + token.)
-
-// engine → cache: "is there a reusable blob for this exact prefix on the resident model?"
-struct LookupRequest  { model_id: ModelId, token: ValidityToken, prompt_hash: String }
-enum  LookupReply {
-    Hit  { path: String },             // restore this; cache touched LRU + hit_count
-    Miss,                              // prefill normally
-}
-// On a token-mismatched row for the same (model_id, prompt_hash), cache deletes it (lazy invalidation) and replies Miss.
-
-// composition-root call (not engine↔engine): fired by the invalidation protocol
-fn purge_model(model_id: ModelId) -> u64;   // delete all blobs+rows for a model_id; returns bytes_freed
-```
-
-**Ordering / conformance.**
-- Save is two-phase (`ReserveSave` → engine saves → `ConfirmSave`) so budget is
-  reserved *before* the blob is written and the index row exists *only* for a
-  file that landed — no half-indexed entries.
-- `ConfirmSave` MUST use gc `register_and_lock` (atomic, gc.md concern 6) so the
-  fresh blob is protected from the immediately-following sweep.
-- `Lookup` returning `Hit` is advisory: if the subsequent restore fails (blob
-  swept mid-flight, format reject), engine MUST fall back to prefill and MAY
-  fire a lazy delete — never surface an error to the completion (concern 4).
-- The token is opaque to cache (it only compares equality); engine defines its
-  composition. If engine cannot compute a token for a backend, it passes a
-  sentinel that never matches (caching disabled for that backend — safe).
-
-**Error cases.** `ReserveSaveReply::Skip` on `DiskBudgetExceeded` (non-fatal,
-engine just skips saving). Store/gc errors during confirm are logged and
-downgraded to Skip (a completion never fails because caching failed).
-
-**Version-sensitivity.** `ValidityToken` is the single most version-exposed
-field: a llama.cpp upgrade *must* change `backend_build_id` inside it or blobs
-from the old build could be restored into the new one. This is an engine
-obligation, called out here because a violation is silent corruption.
-
-### `gc-managed-dirs` (cache → gc) — consumer; vocabulary authored by gc.md
-
-**Cache's use of the shared `GcApi`/`GcCommand` surface (gc.md):**
-- `register_dir(kvcache/, DirPolicy{ eviction: LruAccessed, on_full: Evict, .. })`
-  at startup — cache's dir is LRU-by-access with its own `kv_cache_budget_bytes`,
-  strictly independent of the `models/` budget (concern 3).
-- `make_room(kvcache/, est_bytes)` in the `ReserveSave` phase (existing
-  behaviour, retained).
-- `register_and_lock(path, kind=File, ttl_secs, hint)` at `ConfirmSave` instead
-  of today's bare `register_entry` — closes the register→sweep window (gc.md
-  concern 6). `hint = "kvcache:<model_id>"` so an evicted blob is attributable.
-- `touch(path)` on every `Hit` (keeps LRU fresh — existing).
-- `evict(path)` in `purge_model` (existing), `unlock` where a lock outlives use.
-- **Subscribe to `EntryEvicted`** (via the gc-managed-dirs / gc-events `GcEvent`
-  stream) as the lazy-invalidation backstop: an `EntryEvicted` whose `hint`
-  names a `models/` weight for `model_id` triggers `cache.purge_model(model_id)`.
-  This is cache's read-side of gc's event vocabulary; it authors no new event.
-
-**Proposed delta to gc-managed-dirs:** none to the schema — cache's needs are
-covered by gc.md's existing commands (`register_and_lock`, `EntryEvicted` with
-`recovery_hint`). The only *convention* cache pins is the `hint` format
-`"kvcache:<model_id>"` / `"weights:<model_id>"` so eviction events are
-model-attributable; flagged to gc/models for the pair round (a shared
-`RecoveryHint` typed enum in `types` would be cleaner than a string — friction).
-
-### `store-access` (cache ↔ store) — consumer; schema authored by store.md
-
-**Cache's use of the `Store` surface (store.md):** `upsert_kv_cache_entry`,
-`find_kv_cache_entry`, `kv_cache_for_eviction(Some(model_id))`,
-`delete_kv_cache_entry`, `total_kv_cache_bytes` — all exist today.
-
-**Proposed delta (append-only, owned by store):**
-- Add a `validity_token TEXT NOT NULL DEFAULT ''` column to `kv_cache_entries`
-  (append-only migration, store's `kv_cache` module).
-- `find_kv_cache_entry` gains a `token` argument; its `WHERE` becomes
-  `model_id = ?1 AND validity_token = ?2 AND prompt_hash = ?3`. Rows with a
-  non-matching token are ignored by lookup and are cleaned up lazily/by sweep.
-- `KvCacheEntry.id` is recomputed as a **stable** hash over
-  `(model_id, validity_token, prompt_hash)` (replace `DefaultHasher` — not
-  cross-version-stable for a persisted PK — with sha256/blake3).
-
-This is flagged to `store.md`: its wave-1 file lists the KV-cache metadata under
-`store-access` but does not mention `validity_token`. The column is mechanical
-and append-only; resolve ownership in the store/cache pair round. The
-`StoreObserver` seam is not used by cache (no terminal-transition callbacks on
-KV entries) — noted so the observer-under-mutex constraint (store.md concern 1)
-doesn't apply here.
-
----
+- `kv-cache` — (engine ↔ cache) — KV/prefix slot save/restore: lookup keyed
+  `(model_id, validity_token, prompt_hash)`, two-phase save
+  (`ReserveSave` → engine saves → `ConfirmSave` via gc's atomic
+  `register_and_lock`; `Skip` on `DiskBudgetExceeded`, non-fatal). Upgraded
+  to an authored contract at harmonization from this file's design.
+  → `scaffold/contracts/kv-cache.md`
+- `gc-managed-dirs` — (cache → gc) — consumer; vocabulary authored by gc.md. → `scaffold/contracts/gc-managed-dirs.md`
+- `store-access` — (cache ↔ store) — consumer; schema authored by store.md. → `scaffold/contracts/store-access.md`
+  - Additive ask not yet in the contract file: the `validity_token TEXT` column
+    + composite lookup key on `kv_cache_entries` (flagged to store).
 
 ## Invalidation protocol (explicit — the wave-1 race, resolved)
 

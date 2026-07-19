@@ -329,149 +329,21 @@ handling and cleanup must be exact. Neither needs a Design Mesh.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only; the per-pair round reconciles both sides. Structs live in `types`
-(`surface.rs`, `pubsub.rs`, `event.rs`, `node.rs`) — proposed there by the `types`
-designer; I propose the **serving/aggregation behavior** here. I do NOT edit
-`scaffold/contracts/*`.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `dashboard-feed` (mesh/dashboard-serving → dashboard frontend) — THE batch-6 seam
+- `dashboard-feed` — (mesh/dashboard-serving → dashboard frontend) — THE batch-6 seam. → `scaffold/contracts/dashboard-feed.md`
+- `surface-schema` — (every service → mesh dashboard) — the serving/aggregation half. → `scaffold/contracts/surface-schema.md`
+- `inference-events` — / `gc-events` / `ccd-events` (mesh ← inference/gc/ccd) — RE-GROUND onto pubsub-protocol. → `scaffold/contracts/inference-events.md`
 
-**Purpose.** The complete browser-facing surface the Svelte dashboard builds
-against: static assets, the read-only pub/sub event feed, the schema-driven
-render manifest, presentation rollups, and the same-origin node-scoped proxy —
-all on one browser HTTP origin per node (concern 1). This is the seam contract
-batch 6 develops against before any code exists.
+Also a party to (authored elsewhere / cross-cutting): `ccd-events`, `gc-events`, `kv-replication`, `pubsub-protocol` — see `scaffold/contracts/`.
 
-**HTTP surface (the browser origin, registered as the `dashboard` slug):**
+Component-side notes:
+- `mesh-registry-read` is a tombstone (gateway merged into mesh): the node/fleet
+  read is now mesh-internal, served as mesh endpoints consumed via
+  `dashboard-feed`. `registry-replication` is likewise a tombstone, superseded
+  by `kv-replication`.
 
-```
-GET  /                       -> static ui/dashboard/dist/ (SPA fallback to index.html)
-GET  /health                 -> { status, version, node_id }
-GET  /events                 -> WebSocket: read-only pubsub-relay profile (below)
-GET  /api/surface            -> DashboardManifest              (schema-driven render source)
-GET  /api/nodes              -> Vec<NodeInfo>                  (fleet roster)
-GET  /api/mesh/stats         -> MeshStats                     (fleet aggregate)
-GET  /api/nodes/:id/stats    -> NodeStats                     (per-node disk/gpu/gc)
-ANY  /api/nodes/:id/:slug/*  -> same-origin proxy -> resolve(slug,id) -> mesh relay
-```
-
-**WS frames (`GET /events`) — reused verbatim from `pubsub-relay`, Publish gated:**
-
-```rust
-// browser -> daemon : exactly types::pubsub::PubSubClientMsg, but Publish is rejected
-//   Subscribe   { filters: Vec<TopicFilter> }   // additive; incl. Exact per-completion (INTENT #5)
-//   Unsubscribe { filters: Vec<TopicFilter> }
-//   Publish(..)                                 // -> Error{NotRegistered} (read-only observer)
-// daemon -> browser : exactly types::pubsub::PubSubServerMsg
-//   Event(Envelope)                             // node_id read from provenance.origin_node
-//   SubAck { active: Vec<TopicFilter> }
-//   Lagged { dropped: u64, since_seq: u64 }     // lossy, stays connected
-//   Error  { code: PubSubError, detail: String }
-```
-
-**Manifest + rollup structs I propose (land in `types`, likely `surface.rs`/`node.rs`):**
-
-```rust
-struct DashboardManifest {
-    v: u16,
-    generated_at: DateTime<Utc>,
-    nodes: Vec<NodeInfo>,           // roster (also at /api/nodes)
-    surfaces: Vec<SurfaceSchema>,   // one per live slug (incl. project dashboards)
-    navigation: Vec<NavEntry>,      // browsable tree: core / service / project (concern 6)
-}
-struct NavEntry { id: String, title: String, kind: NavKind, surface_slug: Option<Slug>,
-                  children: Vec<NavEntry> }
-enum   NavKind  { MeshCore, Service, Project }
-struct MeshStats { nodes_total: u32, nodes_up: u32, nodes_down: u32, services_live: u32 }
-struct NodeStats { disk: DiskStats, gpu: GpuStats }        // from replicated NodeInfo.last_state
-struct DiskStats { total_bytes: u64, used_bytes: u64, free_bytes: u64, gc_managed_bytes: u64 }
-struct GpuStats  { utilization_fraction: f32, is_estimate: bool }   // is_estimate -> tilde+tooltip (#9)
-```
-
-**Error cases.**
-- WS: `PubSubError::{NotRegistered (browser Publish), InvalidFilter, InvalidTopicPath}`;
-  `Lagged` is a notice, not an error (lossy contract).
-- `GET /api/nodes/:id/stats` for an unknown/offline node → `404` (node absent from
-  roster) vs. a `pending`/`offline`-flagged entry if known-but-stale (so the
-  frontend distinguishes "never seen" from "fell off the mesh" — `dashboard.md`
-  concern 5).
-- Proxy `/api/nodes/:id/:slug/*`: `404` `NoSuchSlug`/`NoLiveInstance` (registry);
-  `502`/`503` on relay failure or peer-unreachable (surfaces mesh-core's
-  `PeerUnreachable` as a clean HTTP status, never a hang); `504` on relay timeout.
-- Manifest: a service live in the registry but with no published surface yet is
-  simply omitted from `surfaces` (not an error) — it appears once it publishes.
-
-**Version-sensitivity.** MEDIUM. The WS wire is `pubsub-protocol`'s (HIGH there,
-payload-opaque decoupling carries the version safety). `DashboardManifest.v` and
-`SurfaceSchema.v` are additive-only, `#[serde(default)]`; the browser is a
-single-build client of its local mesh origin, so it never straddles two
-`types` versions on the wire *except* through relayed `Envelope`s (governed by
-pubsub-protocol's discipline). REST rollup shapes evolve additively.
-
-### `surface-schema` (every service → mesh dashboard) — the serving/aggregation half
-
-**Purpose.** Every service publishes a boring `SurfaceSchema`; dashboard-serving
-aggregates the fleet's schemas into the render manifest (INTENT #46). The struct
-half is `types::surface` (the `types` designer's proposal — `SurfaceSchema`,
-`SurfaceSection`, `SurfaceField`, `SurfaceAction`, `DataSource`, `Honesty`, …
-with stable agent-drivable ids per INTENT #16); I propose the behavior.
-
-**Publication + aggregation sketch.**
-- **Publish:** a service calls `mesh-client`'s surface-publication method (part of
-  its universal-protocol surface) → the local daemon writes
-  `replicated-kv["surface/<slug>"] = SurfaceSchema` (LWW, slug-keyed, concern 4).
-  Republishing on version change is a plain LWW `put`.
-- **Aggregate:** dashboard-serving joins `service-registry.list()` × `surface/*` ×
-  roster → `DashboardManifest`; emits `dashboard.surface.changed` on the feed when
-  the set changes so the frontend re-fetches `/api/surface`.
-- **`DataSource` resolution:** `Rest { path }` fields resolve against
-  `/api/nodes/:id/:slug/*`; `PubSub { topic }` fields resolve against a `/events`
-  subscription — so the schema is self-describing for the renderer.
-
-**Error cases.** A malformed published schema → dashboard-serving omits it and
-raises `MeshError::MalformedSurfaceSchema { service }` (mesh side; no `types`
-error). A service that never publishes is simply absent from the manifest —
-reconciliation-by-omission, never a hard failure.
-
-**Version-sensitivity.** MEDIUM-HIGH. `SurfaceSchema.v` keys the component-
-versioning story (INTENT #37); slug-keyed LWW means a mixed-version fleet renders
-the convergence-winning `v` (concern 4 open question). The frontend must render
-an older schema and ignore unknown `SectionKind`/`ValueType` variants gracefully
-(`#[serde(other)]`), so a newer service's richer schema never breaks an older
-dashboard build.
-
-### `inference-events` / `gc-events` / `ccd-events` (mesh ← inference/gc/ccd) — RE-GROUND onto pubsub-protocol
-
-**Purpose.** The per-service event streams the dashboard feed carries: inference's
-completion/model/backend/queue/telemetry events (`inference.*`), gc's
-directory/entry/reclaim events (`gc.*`), and ccd's agent-lifecycle/run events
-(`ccd.*`). Wave-1 modeled these as three independent gateway-scraped WS surfaces;
-**wave-2 re-grounds all three as EventType catalogs published on their reserved
-topic prefixes over `pubsub-protocol`** — the same collapse `pubsub-relay` calls
-for ("those contracts become examples of payloads on this envelope, not
-independent wire formats") and that `service-registry` did for
-`registry-replication → kv-replication`.
-
-**Struct sketch.** No new wire. Each carries `types::event::Event<P>` inside a
-`types::pubsub::Envelope`, on topic `-<service>.<domain>.<verb>` (per-completion is
-the leaf `inference.completion.<id>`). The **EventType catalog** (which
-`domain.noun.verb` identifiers exist, and each payload `P`) is the *publisher's*
-to enumerate — inference in batch 5, gc in batch 3, ccd in batch 6 — not
-dashboard-serving's; dashboard-serving is the mesh-side **subscriber** that folds
-them into the browser feed. Recommendation for the per-pair round: mark
-`scaffold/contracts/{inference-events,gc-events,ccd-events}.md` as
-**topic-prefix + EventType-catalog pointers into `pubsub-protocol`** (like the
-`mesh-registry-read` tombstone / `kv-replication` collapse), each owning only its
-catalog table, not a parallel wire.
-
-**Error cases.** None owned by dashboard-serving on these edges — it is a pure
-subscriber; delivery is lossy by pubsub-relay's contract (a `Lagged` notice, never
-a failure). An unknown `EventType` on a subscribed topic is passed through to the
-browser opaque (the relay never parses payloads), never dropped as an error.
-
-**Version-sensitivity.** HIGH but delegated: it is `pubsub-protocol`'s payload-
-opaque decoupling (new event types cross old daemons untouched). `ccd-events`
-additionally still carries the wave2-plan "proposed, pending confirmation" marker
-(flag #6) — confirm-or-strike in ccd's batch-6 pass.

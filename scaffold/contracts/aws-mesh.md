@@ -109,7 +109,12 @@ Domains: `AwsError` (`types::error::aws`, NEW), `MeshError`.
   `aws-vfs`'s Presigned default does not apply here. Very large snapshots MAY opt
   into `TransferPref::Presigned` (shared vocabulary) — a per-request choice, not a
   contract fork.
-- **UNRESOLVED, surfaced (both files flag it): the genesis-key circularity.** The
+- **Genesis-key circularity — RESOLVED at harmonization in `aws-secrets`
+  (facet 4): the snapshot key is `HKDF(MRK, "mesh-kv-snapshot")`, derived
+  locally from the operator-held keychain MRK, no running secrets service
+  needed; the derivation rule is FROZEN. Whether the MRK is ever mirrored
+  into `secrets` for rotation remains the operator's call (friction report).
+  Original framing kept for lineage:** The
   client-side encryption key is meant to live in `secrets` (INTENT #48/#98) — but
   `secrets` **rides mesh replication**, so the key needed to restore a *dead* mesh
   cannot live inside the thing being restored. The genesis key must live **outside

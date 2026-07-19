@@ -277,22 +277,22 @@ mesh lock and flips the mesh registry entry (local→cloud). Local-only promotio
 
 ## Relationships / edges
 
-- **vdb** (consumer) via **`vdb-db`** *(MISSING — proposed below)* — the VDB
+- **vdb** (consumer) via **`vdb-db`** *(authored: scaffold/contracts/vdb-db.md)* — the VDB
   daemon drives `db` to run actions against a specific database: apply SQL/DDL,
   run migrations, deploy/activate handlers, install + drain change-capture,
   structured introspection, provenance write/read, promotion primitives. **Over
   the mesh WS (`db serve`), never linked** (INTENT #29). The hot path; the reason
   for the daemon.
 - **consumers** (operators/CI/`org`) via **`db-control-plane`** *(exists —
-  content proposed below)* — the noun-verb control plane (migrate/edge/query/
+  authored: scaffold/contracts/db-control-plane.md)* — the noun-verb control plane (migrate/edge/query/
   seed/outbox/audit/handler/promote/provenance). **CLI subprocess or daemon WS,
   never linked** (supersedes the prior file's "Cargo dependency edge" framing).
 - **inference** (consumer) via **`db-inference-init`** *(exists — content
-  proposed below)* — fresh-node DB bootstrap (sqlite driver, ledger-only baseline
+  authored: scaffold/contracts/db-inference-init.md)* — fresh-node DB bootstrap (sqlite driver, ledger-only baseline
   `OPS_BASELINE_SQLITE` + `migration::apply`). **`bin/db` CLI subprocess** (the
   boot-safe path, no mesh dependency), superseding the prior "library dependency"
   framing.
-- **secrets** (consumer) via **`db-secrets`** *(MISSING — proposed below)* —
+- **secrets** (consumer) via **`db-secrets`** *(authored: scaffold/contracts/db-secrets.md)* —
   `secrets` drives `db`'s `vault.rs` as its Supabase push adapter, over WS/CLI,
   never linked. `db` also *becomes a consumer of `secrets`* for its own
   credential/keychain resolution (concern 7, direction) — the same edge, both
@@ -350,179 +350,16 @@ silent correctness failure the operator explicitly will not tolerate.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only — the per-pair round reconciles; I do NOT edit
-`scaffold/contracts/*`. Shared vocabulary lands in `types` (`types::db` for the
-DB surface structs; `DbError` in `types::error::db`). The `Driver`/`Capabilities`
-traits are an **internal `lib/db` boundary, NOT a contract**. `db` is reached
-only over CLI/WS (INTENT #29); every edge below is a wire edge.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-Shared vocabulary referenced by the edges (proposed additions to `types::db`):
+- `vdb-db` (vdb → db) — the execution arm: `db serve` daemon sessions (db's second public surface). → `scaffold/contracts/vdb-db.md`
+- `db-control-plane` (db ↔ consumers) — the noun-verb control plane. → `scaffold/contracts/db-control-plane.md`
+- `db-inference-init` (inference → db) — fresh-node bootstrap. → `scaffold/contracts/db-inference-init.md`
+- `db-secrets` (db ↔ secrets) — the Supabase Vault push adapter, reused over the wire. → `scaffold/contracts/db-secrets.md`
 
-```rust
-// types::db
-pub struct DatabaseId { pub project: String, pub db: String }   // VDB-managed database
-// (a plain db.toml env name is the standalone-CLI addressing form; the daemon maps both)
-pub struct Rows { pub columns: Vec<String>, pub rows: Vec<Vec<Option<String>>> } // v1 string cells; typed cells EXT
-pub struct TableSchema {                                         // structured introspection (concern 2)
-    pub table: String,
-    pub columns: Vec<ColumnDef>,       // name, sql_type, nullable, default
-    pub primary_key: Vec<String>,
-    pub foreign_keys: Vec<ForeignKey>,
-    pub unique: Vec<Vec<String>>,
-    pub indexes: Vec<IndexDef>,
-}
-pub struct ChangeRow {                                          // sqlite change-capture (concern 2)
-    pub seq: i64, pub table: String, pub op: ChangeOp,          // Insert|Update|Delete
-    pub pk: serde_json::Value, pub before: Option<serde_json::Value>,
-    pub after: Option<serde_json::Value>, pub at: DateTime<Utc>,
-    pub provenance: Provenance,
-}
-pub struct ProvenanceRow {                                      // the ops.provenance ledger row (concern 3)
-    pub seq: i64, pub table: String, pub op: ChangeOp,
-    pub correlation_id: Option<Uuid>, pub causation_id: Option<Uuid>,
-    pub actor_service: String, pub handler: Option<String>,
-    pub at: DateTime<Utc>, pub summary: String,
-}
-```
+Also a party to (authored elsewhere / cross-cutting): `locks-api`, `pubsub-protocol` — see `scaffold/contracts/`. (`vdb-secrets` is related but is NOT this component's edge — it is secrets' own local-mesh-db adapter, parties `secrets` ↔ `vdb`; db's edge is `db-secrets`.)
 
-```rust
-// types::error::db  (DbError — replaces today's flat SubstrateError::Db(String) leaves)
-pub enum DbError {
-    NotImplemented { command: &'static str, driver: &'static str, reason: &'static str },
-    NoSuchDatabase { id: String },
-    ProtectedRefused { op: String, env: String },          // the prod guard (existing behavior, typed)
-    PromoteGateBlocked { blockers: Vec<String> },
-    MigrationFailed { id: String, detail: String },
-    LintNotClean(Vec<String>),
-    Backend(String),                                       // driver/SQL error, stringified at the boundary
-    Config(String),
-}
-```
-
-### `vdb-db` (vdb → db) — the execution arm (NEW)
-
-- **Purpose.** The VDB daemon drives `db` (over the local mesh, `db serve`) to run
-  actions against a specific `DatabaseId`: apply SQL/DDL + migrations, deploy/
-  activate/rollback handlers per target, install + drain **change-capture**,
-  **structured introspection**, **provenance** write/read, and the promotion
-  primitives (snapshot/apply/verify). Cross-app, **WS over mesh, never linked**
-  (INTENT #29). This is the hot path — the reason `db serve` holds warm driver
-  connections.
-- **Message/struct sketch** (WS request/response over `pubsub-protocol`):
-  ```rust
-  enum VdbDbReq {
-      Apply    { db: DatabaseId, sql: String, params: Vec<SqlParam>, prov: Provenance },
-      ApplyAtomic { db: DatabaseId, statements: Vec<String>, ledger: AppliedMigration, prov: Provenance },
-      Query    { db: DatabaseId, sql: String, params: Vec<SqlParam>, write: bool } , // -> Rows
-      Introspect { db: DatabaseId, q: IntrospectReq },                                // -> TableSchema | Rows
-      InstallChangeCapture { db: DatabaseId, table: String, events: Vec<ChangeOp> },
-      ReadChanges { db: DatabaseId, since_seq: i64, limit: u32 },                     // -> Vec<ChangeRow>
-      AckChanges  { db: DatabaseId, seqs: Vec<i64> },
-      DeployHandler { db: DatabaseId, contract_jsonb: Value, bundle: Option<Bundle> },// per-target
-      ActivateHandler { db: DatabaseId, handler: String, version: String },
-      ReadProvenance { db: DatabaseId, filter: ProvFilter },                          // -> Vec<ProvenanceRow>
-      // promotion primitives:
-      Snapshot { db: DatabaseId, out: String },
-      VerifyParity { src: DatabaseId, dst: DatabaseId },                              // -> ParityReport
-  }
-  ```
-- **Error cases.** `DbError::NoSuchDatabase` (VDB named an unopened DB),
-  `NotImplemented { command, driver }` (e.g. `deploy_edge` on `sqlite` — the TS
-  handler is VDB-hosted Deno, not a DB edge; VDB expects and handles this),
-  `MigrationFailed`, `Backend`. The **partition/single-writer** concern surfaces
-  as a `locks`-domain error when VDB requested distributed coordination — carried
-  by `locks-api`, not re-typed here.
-- **Version-sensitivity.** Medium. `SqlParam`/`Rows`/`AppliedMigration` are
-  stable existing shapes; `VdbDbReq` grows additively (`#[serde(other)]`
-  reserved) as VDB's target matrix widens (RDS/Lambda). Provenance rides
-  `types::Provenance`'s frozen shape. Structured `TableSchema` typed-cells are the
-  EXT growth path — additive.
-
-### `db-control-plane` (db ↔ consumers) — the noun-verb control plane (EXISTS; content proposed)
-
-- **Purpose.** The full operator/CI/`org` control plane: migrate (author/apply/
-  rollback/status/crawl/lint), edge (bundle/deploy/activate/rollback/sync),
-  **query (the standardized virtualization surface, INTENT #60)**, seed/fakedata,
-  outbox (list/retry/drain), audit, handler (new/codegen/activate/rollback),
-  promote, snapshot, provenance read, doctor. **Reached two boring ways — `bin/db`
-  CLI subprocess (standalone, mesh-free) or the `db serve` daemon over WS —
-  NEVER by linking `substrate-db`** (INTENT #29; this supersedes the prior file's
-  "Cargo dependency edge" framing).
-- **Message/struct sketch.** The CLI shape is authoritative (the existing `clap`
-  tree in `bin/db/src/cli.rs`); the WS surface is the same verbs as a
-  request/response envelope. `org`'s self-restructuring KG (INTENT #19) is
-  ordinary migrations + queries against `db`-owned schema over this edge — `db`
-  does not model the graph; `org`/`kg` do.
-  ```rust
-  enum DbCtlReq { Migrate(MigrateReq), Edge(EdgeReq), Query(QueryReq),
-                  Seed(SeedReq), Outbox(OutboxReq), Audit(AuditReq),
-                  Handler(HandlerReq), Promote(PromoteReq), Snapshot(SnapshotReq),
-                  Provenance(ProvReq), Doctor }
-  struct QueryReq { database: String, sql: String, params: Vec<SqlParam>, write: bool } // -> Rows
-  ```
-- **Error cases.** `DbError::ProtectedRefused` (the prod guard — mutating migrate
-  on a protected ref without the exact `--i-understand-prod <ref>`),
-  `PromoteGateBlocked { blockers }`, `LintNotClean`, `NotImplemented`, `Config`.
-  The read/write gate refuses a write `Query` without `write:true`.
-- **Version-sensitivity.** Low-medium. The noun-verb surface is stable and
-  additive; the WS envelope versions via the standard `pubsub` `v` field. The
-  `Rows` string-cell rendering is frozen for v1; typed cells are an additive EXT.
-
-### `db-inference-init` (inference → db) — fresh-node bootstrap (EXISTS; content proposed)
-
-- **Purpose.** When an `inference` node stands up on a **fresh mesh node**, it
-  initializes its local database through `db` rather than hand-rolling bootstrap:
-  the **`sqlite` driver, ledger-only baseline** (`OPS_BASELINE_SQLITE`) +
-  `migration::apply`. Narrow slice — no edge functions, no local stack, no
-  promote (those `Capabilities` are already `false` for sqlite).
-- **Access shape — the boot-safe correction.** This is a **`bin/db` CLI
-  subprocess** call (`db --env <node> migrate up`), **not** a linked-lib call
-  (superseding the existing stub's "library dependency edge" wording — INTENT #29)
-  and **not** necessarily a daemon WS call: on a cold node, mesh may not yet
-  relay, and the db daemon may not yet be up, so the subprocess (which needs no
-  mesh) is the reliable bootstrap path. Once the node is warm, subsequent DB
-  access can move to the daemon. Relationship to `store`'s own self-migrating
-  schema (`store.md`) is flagged for the harmonizer — they are distinct databases
-  (control-plane `ops` vs. the inference system-of-record); this edge is the
-  `ops`/control-plane bootstrap, not `store`'s.
-- **Error cases.** `MigrationFailed { id, detail }` on a failed first-boot apply
-  (inference decides degrade-to-standalone per `inference.md`); a second
-  invocation against an already-migrated node is an **idempotent no-op** (ledger
-  dedups) — the conformance requirement.
-- **Version-sensitivity.** Low. The sqlite baseline + `migration::apply` path is
-  stable; the edge exercises the narrowest, most stable slice of `db`.
-
-### `db-secrets` (db ↔ secrets) — the Supabase Vault push adapter, reused over the wire (NEW)
-
-- **Purpose.** Two flows over one edge. **(a) secrets → db:** `secrets` drives
-  `db`'s existing `vault.rs` as its **Supabase push adapter** (INTENT #105 —
-  reuse, do NOT rebuild), pushing a secret's value into a Supabase project's
-  `vault.secrets` via `db vault set`/`rm`/`exists` and rendering `reference_sql`
-  so handlers reference the secret at runtime without storing plaintext — **over
-  `db-control-plane` WS or the `db vault set` CLI, never by linking
-  `substrate-db`** (INTENT #29). **(b) db → secrets (direction, concern 7):** `db`
-  reconciles its own credential/keychain reads (the `supabase-cloud` PAT, cloud
-  connection strings) to be **`secrets`-mediated**; `db` is a non-LLM caller so
-  raw resolution is permitted, giving one audited source of truth.
-- **Message/struct sketch.**
-  ```rust
-  // (a) secrets -> db  (maps onto db vault set/rm/exists over db-control-plane)
-  struct DbVaultPush   { env: String, name: String, value: SecureValue, description: Option<String> } // -> SetOutcome
-  struct DbVaultRemove { env: String, name: String }
-  struct DbVaultExists { env: String, name: String }  // -> bool
-  // reference_sql is pure codegen: (name) -> String, no wire value
-  // (b) db -> secrets  (concern 7 direction): db resolves a SecretRef into a sink
-  //     — the CallerContext/SecretRef vocabulary is owned by `secrets` (secrets.md concern 4)
-  ```
-  `SecureValue` = the plaintext crossing a non-LLM, in-mesh confidential WS
-  channel (secrets→db-vault); it never transits an LLM path (aligns with
-  `secrets.md` `db-secrets`).
-- **Error cases.** `DbError::NotImplemented { command:"vault set", driver:"sqlite" }`
-  wrapped by secrets as `AdapterFailed{Supabase,…}` (the sqlite driver has no
-  Vault — the SQLite equivalent is secrets' own local-mesh-db adapter, `vdb-secrets`,
-  NOT this edge); SQL/connection errors stringified as `DbError::Backend`.
-- **Version-sensitivity.** Low. `vault.rs`'s surface is stable bound-param SQL; the
-  adapter is a thin WS/CLI shim. The (b) keychain→secrets cutover is an additive
-  `db` change (operator-authorized, INTENT #99), tracked here as direction.

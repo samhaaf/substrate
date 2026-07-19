@@ -313,7 +313,7 @@ hardcoded); prod already uses `window.location.host`, which is correct.
   frontend is the *rendering consumer* of the boring surface schema (INTENT #46):
   it renders any `SurfaceSchema` and degrades gracefully on unknown variants.
   The struct half is `types::surface`; the serving/aggregation half is
-  `dashboard-serving`'s; the frontend-render half is proposed below. (see
+  `dashboard-serving`'s; the frontend-render half is in the authored contract. (see
   `scaffold/contracts/surface-schema.md`)
 
 No direct edges to inference, gc, ccd, network-topology, or any peer node —
@@ -370,118 +370,14 @@ shape diverges from concern 7's sketch. No Design Mesh needed.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only; the per-pair round reconciles both sides against
-`dashboard-serving`'s already-proposed serving half and `types`' struct half. I
-propose the **frontend-consumer behavior** here and do NOT edit
-`scaffold/contracts/*`. Structs live in `types` (`surface.rs`, `pubsub.rs`,
-`node.rs`, `event.rs`, `provenance.rs`).
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `dashboard-feed` (mesh/`dashboard-serving` → dashboard frontend) — the consumer half
+- `dashboard-feed` — (mesh/`dashboard-serving` → dashboard frontend) — the consumer half. → `scaffold/contracts/dashboard-feed.md`
+- `surface-schema` — (every service → dashboard frontend) — the rendering-consumer half. → `scaffold/contracts/surface-schema.md`
 
-**Purpose.** The complete browser-facing surface the Svelte frontend builds
-against. `dashboard-serving.md` proposes the serving half (HTTP surface, WS
-frames, manifest/rollup structs); this half states what the FRONTEND consumes and
-guarantees, so the two sides meet cleanly at the harmonizer.
+Also a party to (authored elsewhere / cross-cutting): `pubsub-protocol` — see `scaffold/contracts/`.
 
-**HTTP surface consumed (all on the one browser origin, the `dashboard` slug):**
-
-```
-GET  /                       -> static SPA (index.html fallback)
-GET  /health                 -> { status, version, node_id }        (shown in header)
-GET  /events                 -> WebSocket: read-only pubsub-relay profile (below)
-GET  /api/surface            -> DashboardManifest   (schema-driven render + nav source)
-GET  /api/nodes              -> Vec<NodeInfo>        (roster; drives per-node grid)
-GET  /api/mesh/stats         -> MeshStats            (fleet header)
-GET  /api/nodes/:id/stats    -> NodeStats            (disk/gpu, is_estimate honesty)
-ANY  /api/nodes/:id/:slug/*  -> same-origin proxy    (all legacy polls + schema Rest sources)
-```
-
-**WS frames consumed (`GET /events`) — `types::pubsub`, read-only profile:**
-
-```
-// browser -> daemon
-PubSubClientMsg::Subscribe   { filters: [Prefix("inference"|"gc"|"ccd"|"network"|"dashboard"),
-                                          Completion(id) for per-completion view] }
-PubSubClientMsg::Unsubscribe { .. }
-// (never Publish — read-only observer; daemon would answer Error{NotRegistered})
-// daemon -> browser
-PubSubServerMsg::Delivery(Envelope)   // node_id := Envelope.provenance.origin_node
-                                      //   kind   := Envelope.payload.event_type
-PubSubServerMsg::Ack { .. }
-PubSubServerMsg::Error { code, detail } // code=NotRegistered on any accidental Publish
-// Lagged surfaces via the lossy contract; rendered as a "N dropped" ticker, NOT a reconnect
-```
-
-**Frontend consumption guarantees (the consumer-side conformance):**
-- Reads per-node identity ONLY from `Envelope.provenance.origin_node`; never
-  invents or re-stamps a `node_id`.
-- Distinguishes `pending` / `live` / `offline` / `unknown(self_offline peer)` per
-  node from the roster + `network.*` stream; never renders "no data yet" and
-  "fell off the mesh" identically.
-- On `Lagged`, stays connected and keeps rendering; never clears state or forces
-  a reconnect.
-- Renders `NodeStats.gpu.is_estimate == true` as **tilde + hover tooltip**
-  (INTENT #9); never presents an estimate as exact.
-- Discovers the dashboard origin via mesh; hardcodes no port (dev proxy targets
-  the discovered origin, default `:3648`).
-
-**Error/edge behavior consumed:** `GET /api/nodes/:id/stats` → `404` for an
-unknown node vs. a `pending`/`offline`-flagged entry for known-but-stale (the
-frontend renders these differently). Proxy `/api/nodes/:id/:slug/*` → `404`
-(`NoSuchSlug`/`NoLiveInstance`), `502`/`503`/`504` (peer unreachable / relay
-fail / timeout) surfaced as an inline panel error, never a hang. A live slug with
-no published surface is simply omitted from `surfaces` (renders via legacy panel
-if one exists, else nothing) — never an error.
-
-**Version-sensitivity.** MEDIUM. The WS wire is `pubsub-protocol`'s (HIGH there;
-payload-opaque decoupling carries it). `DashboardManifest.v`/`SurfaceSchema.v`
-are additive-only; the frontend is a single-build client of its local origin, so
-it straddles two `types` versions only through relayed `Envelope`s (governed by
-`pubsub-protocol`). REST rollup shapes evolve additively; the frontend ignores
-unknown JSON fields.
-
-### `surface-schema` (every service → dashboard frontend) — the rendering-consumer half
-
-**Purpose.** The frontend renders every service's component from its published
-`SurfaceSchema` (INTENT #46) — visual coherence by construction. The struct half
-is `types::surface`; the serving/aggregation half is `dashboard-serving`'s; this
-proposes the **render contract** the frontend upholds.
-
-**What the renderer guarantees (the consumer conformance):**
-- **Total over the schema:** renders any well-formed `SurfaceSchema` with zero
-  service-specific code — `sections[]` by `SectionKind`, `fields[]` by
-  `ValueType`/`Unit`, `actions[]` by `ActionCall`, data via `DataSource`.
-- **Graceful degradation on unknown variants (the version-tolerance rule):** an
-  unknown `SectionKind` renders as a labeled raw key/value fallback (never a
-  crash or a blank); an unknown `ValueType` renders as text; an unknown
-  `DataSource`/`ActionCall` method disables that element with a note. So a newer
-  service's richer schema NEVER breaks an older dashboard build (`#[serde(other)]`
-  on the wire; a fallback renderer in the UI).
-- **`Honesty::Estimate { note }` → tilde + tooltip** (INTENT #9), uniformly.
-- **Stable agent-drivable ids generated from the schema** (INTENT #16):
-  `${service}-${section.id}[-${field.id}|-${action.id}]-${node_id}`. Schema
-  authors own the semantic id; the frontend guarantees uniqueness across nodes by
-  the `-${node_id}` suffix (concern 5).
-- **`Custom { renderer }` resolves against the static custom-renderer registry**
-  (`kernel-curve`, `mesh-topology`, …); an unknown custom renderer degrades to
-  the raw key/value fallback rather than failing.
-- **Project dashboards render through the identical path:** a `NavKind::Project`
-  surface is rendered by the same `SchemaRenderer`, no projects-specific code
-  (the hook, concern 8).
-
-**Error cases (frontend side).** A malformed schema `dashboard-serving` already
-omits (raising `MeshError::MalformedSurfaceSchema` on the mesh side); if a
-malformed schema nonetheless reaches the frontend, it renders the raw-fallback
-section and logs, never crashing the panel or the app. No `types` error is owned
-by the frontend on this edge.
-
-**Version-sensitivity.** MEDIUM-HIGH. `SurfaceSchema.v` keys the
-component-versioning story (INTENT #37). During a mixed-version rolling update the
-slug-keyed LWW store may serve whichever `v` won convergence
-(`dashboard-serving.md` concern 4 open question, tied to `supervision`'s OPEN
-mixed-version protocol, INTENT #66) — the frontend must render whatever `v` it
-receives via the graceful-degradation rule above. The frontend does NOT attempt
-to reconcile two `v`s; it renders the one served. Flagged as an open question I
-consume from `dashboard-serving`, not resolve.

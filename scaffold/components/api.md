@@ -424,178 +424,41 @@ not a model-strength one.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only; the per-pair round reconciles both sides. wave2-plan §3a/§3b make
-api a party to `v1-completion-api`, `node-state-poll`, `inference-events`,
-`api-dispatch`, and the cross-cutting `surface-schema`. `completion-router`
-authored the router (consumer) side of the first three; api authors the
-**terminus** side here, noting reconciliations. I do NOT edit
-`scaffold/contracts/*`. Structs reference `types::{stream, system, event, pubsub,
-surface, node}`.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including Reconciliation notes). Detailed proposals formerly here
+are superseded by them.
 
-### `v1-completion-api` (client / mesh.completion-router ↔ inference.api) — api is the terminus
-
-**Purpose.** api owns the `/v1/` REST+WS completion surface's schema; the router
-forwards it byte-transparently. This proposal pins **api's obligations as the
-surface owner** (the router's forward-plane shape is completion-router's proposal;
-the two meet at "bytes in = bytes out").
-
-**Route surface (grounded in the live `rest.rs`/`ws.rs`, re-affirmed):**
-
-```
-POST   /v1/completions            -> 201 { id }
-GET    /v1/completions            -> 200 [ {id, model_id, state, priority, ...} ]   (list, ?state=&limit=)
-GET    /v1/completions/:id        -> 200 { id, state, ... } | 404
-DELETE /v1/completions/:id        -> 204 | 404 | 409(terminal)
-PATCH  /v1/completions/:id/priority  { priority:i32 } -> 204 | 409
-GET    /v1/completions/:id/result -> 200 <result> | 409(not terminal) | 404
-GET    /v1/completions/:id/stream -> WS StreamEvent* (Started, Token*, terminal; Heartbeat)   [token seam, concern 2]
-POST   /v1/collections            -> 201 { id }
-GET    /v1/collections/:id        -> 200 { ..., member_counts } | 404
-DELETE /v1/collections/:id        -> 204 | 409 | 404
-GET    /v1/models                 -> 200 [ {id, status, is_downloaded, is_loaded, ...} ]
-POST   /v1/models/:id/download    -> 202 { id, status }        [stub seam, concern 8]
-POST   /v1/estimate               { CompletionShape } -> 200 { tokens_per_second, estimated_ms, confidence }
-```
-
-**Error map (live `err_response`, re-affirmed):** `*NotFound` → 404;
-`*Terminal` → 409; `InvalidRequest`/`EmptyCollection` → 422; else → 500. These
-status codes are part of the byte-transparent contract (the router copies them
-through) — stable.
-
-**Conformance requirement.** Bodies MUST be forward-proxy-clean (concern 1: no
-`:8420`/host/absolute-URL leakage); the `/v1/completions/:id/stream` path shape is
-stable (router's index/relay key); api MUST NOT parse a `node` query param
-(stripped upstream). `StreamEvent` frames follow the `stream.rs` ordering
-guarantee, now sourced from the token broadcast, not the poll loop.
-
-**Version-sensitivity.** LOW for the router (byte-transparent, never parses the
-body). MEDIUM for typed consumers (`ccd`/`org`/dashboard): `/v1` bodies and
-`StreamEvent` evolve **additive-only**; `StreamEvent`/`LifecycleEvent` need a
-`#[serde(other)]` catch-all arm in `types::stream` for mixed-version tolerance
-(flagged to `types`).
-
-### `node-state-poll` (mesh.completion-router → inference.api) — api is the terminus
-
-**Purpose.** api serves the cheap reconcile/bootstrap reads the router polls off
-the request path (concern 5). Reconciles with completion-router's `SystemStatePoll`
-/`ModelInventory` shapes.
-
-```rust
-// GET /v1/system/state (+/metrics) -> types::system::SystemState (live), serialized as-is
-//   carries: resident_model: Option<ModelId>, running/pending counts, memory/cpu/gpu pressure
-// GET /v1/models -> [ ModelRow-derived {id, is_downloaded, is_loaded(=resident), status, ...} ]
-// GET /health -> { status:"ok", version }
-```
-
-**Error cases.** None api-specific beyond the standard map; these reads never
-mutate and never touch the scheduler submit path (api.md wave-1 concern 2). A
-poll during model swap returns a consistent snapshot (telemetry's `current_state`).
-
-**Conformance.** `GET /v1/system/state` MUST expose `resident_model` +
-running/pending + pressure (the router's affinity/least-loaded inputs);
-`GET /v1/models` MUST distinguish downloaded vs resident (Tier-1/Tier-2 input).
-GPU pressure is an honest estimate on Apple Silicon (INTENT #9) — the poll carries
-the raw value; the honesty marker is on the `surface-schema`, not the poll.
-
-**Version-sensitivity.** MEDIUM — derives from `types::system::SystemState` +
-`types::node`; all fields `#[serde(default)]` additive; enums reserve
-`#[serde(other)]` so a newer node's richer state never breaks an older router
-mid-rollout (INTENT #66).
-
-### `inference-events` (mesh ← inference.api) — api is the publisher (pub/sub in v2)
-
-**Purpose.** api publishes the external lifecycle+throughput subset onto pub/sub
-via `mesh-client`, riding `pubsub-protocol` on `inference.<node>.*` (concern 4).
-Consumed by the router (live-primary load feed, completion-router.md concern 3)
-and the dashboard.
-
-**Published events** (as `types::event::Event<P>` on an `Envelope`; `EventType`
-open ids per the concern-4 mapping):
-
-```rust
-// topic: inference.<node>.<kind> ; scope Fleet
-inference.model.loaded {model_id}          inference.model.evicted {model_id}
-inference.queue.depth_changed {pending, running}   // carries the router's running delta
-inference.execution.paused {}              inference.execution.resumed {}
-inference.throughput.sample {model_id, output_tokens, tokens_per_second}
-inference.backend.* {..}                   // observability (ready/stopped/installing)
-```
-
-**Error cases.** Lossy by pub/sub contract; a `Lagged` notice on the local
-mesh-client connection triggers no api action (the router reconciles via
-`node-state-poll`; concern 3). Publish while the local daemon is down is buffered
-best-effort by mesh-client (bounded, drop-oldest) — standalone mode falls back to
-the raw `/events` WS (concern 4).
-
-**Conformance.** api MUST emit the router's five load-affecting kinds
-(model.loaded/evicted, execution.paused/resumed, and running-count via
-queue.depth_changed) — the router depends only on these; all other kinds are
-observability. **Open reconciliation (per-pair round):** whether `running` deltas
-ride `queue.depth_changed` (recommended — reuse) or dedicated
-`completion.started/finished` count events.
-
-**Version-sensitivity.** LOW at the relay (payload-opaque, pubsub-relay concern
-2); consumers match on the open `event_type` string and ignore unknown kinds. New
-inference event kinds never break a consumer.
-
-### `surface-schema` (inference.api → mesh dashboard) — api constructs inference's schema
-
-**Purpose.** api builds inference's `types::surface::SurfaceSchema` (concern 6) and
-exposes it via `GET /v1/surface` + pushes it through `mesh-client` at register /
-reconnect. Cross-cutting, surface-schema-style; the render/serve side is
-`dashboard-serving`'s, the client-half carrier is `mesh-client`.
-
-**Struct (from `types::surface`).** `SurfaceSchema { v, service:"inference",
-title, sections:[system, queue, models, kernel, throughput], actions:[submit,
-pause, resume, benchmark_run, download_model, cancel] }` — stable `id` on every
-section/field/action (INTENT #16); GPU pressure field carries
-`honesty: Estimate{note}` (INTENT #9); `data_source` mixes `Rest{path}` and
-`PubSub{topic: inference.<node>.*}`.
-
-**Error cases.** None owned by api — a fetch failure means inference is simply
-absent from the dashboard (dashboard-serving's reconciliation); a malformed schema
-is a compile-time concern (typed in `types`). Best-effort publish (mesh-client
-retries on reconnect).
-
-**Version-sensitivity.** MEDIUM — `SurfaceSchema.v` keys the component-versioning
-story (INTENT #37); the dashboard renders an older schema and ignores unknown
-`SectionKind`/`ValueType` variants (`#[serde(other)]`, types.md surface.rs).
-Additive fields only.
-
-### `api-dispatch` (api → {scheduler, store, telemetry, benchmark}) — node-internal, extended in wave-2
-
-**Purpose.** The in-process dispatch every `/v1` route makes (api holds no
-business logic). Internal-lib seam, NOT a cross-process contract edge (INTENT
-#29/#45); documented here because wave-2 extends it.
-
-**Dispatch surface (grounded in the live handlers) + wave-2 additions:**
-
-```rust
-// scheduler (Arc<Scheduler>)
-submit(CompletionRequest) -> CompletionId ; cancel(id) ; is_queue_empty()
-subscribe_tokens(id) -> Option<broadcast::Receiver<StreamEvent>>   // NEW (concern 2) — closes the ws gap
-// store (Store)
-get/list_completions* ; get/insert/cancel_collection ; collection_member_counts
-get/list_models ; get_result ; update_priority ; benchmark_runs_for_model
-// telemetry (Arc<Telemetry>)
-current_state() -> SystemState
-kernel_surface() -> <telemetry's multi-axis kernel>               // NEW (concern 7) — replaces api's local fit
-// benchmark (BenchmarkOrchestrator)
-schedule_if_idle(model_id, queue_empty) -> Option<CollectionId>
-```
-
-**Error cases.** All dispatch returns `Result<_, SubstrateError>`; api maps via
-`err_response`. `subscribe_tokens` returning `None` (no live channel — completion
-already terminal or never admitted) is a normal branch, not an error (the WS
-handler falls back to store replay).
-
-**Conformance.** api adds NO logic on top of dispatch — a route is
-extract → dispatch → serialize. The wave-2 removals are conformance items: **no
-curve fit** (`fit_quadratic_tps` deleted, concern 7) and **no poll loop** (concern
-2) may remain in api.
-
-**Version-sensitivity.** N/A (compiled-in; the whole `inference` crate revs as
-one binary — INTENT #45). The seam is a Rust trait/method surface, not a wire
-format.
+- `v1-completion-api` (client / mesh.completion-router ↔ inference.api; api is
+  the terminus) — the `/v1/` REST+WS completion surface api owns; the router
+  forwards it byte-transparently. → `scaffold/contracts/v1-completion-api.md`
+- `node-state-poll` (mesh.completion-router → inference.api) — cheap
+  reconcile/bootstrap health+inventory reads (`GET /v1/system/state`,
+  `GET /v1/models`), strictly off the request path.
+  → `scaffold/contracts/node-state-poll.md`
+- `inference-events` (mesh ← inference.api; api publishes) — external
+  lifecycle+throughput events on `inference.<node>.*` via mesh-client; router
+  and dashboard consume. → `scaffold/contracts/inference-events.md`
+  - Resolved at the pair round: the router's running-count feed rides
+    `inference.queue.depth_changed` (the authoritative `(pending, running)`
+    snapshot); `completion.started/finished` remain observability-only.
+- `surface-schema` (inference.api → mesh dashboard; cross-cutting) — api
+  constructs and publishes inference's `SurfaceSchema` via `GET /v1/surface` +
+  mesh-client push at register/reconnect.
+  → `scaffold/contracts/surface-schema.md`
+- `api-dispatch` (api → {scheduler, store, telemetry, benchmark}; in-process
+  seam, not a wire contract) — the node-internal dispatch surface with its
+  wave-2 extensions (`scheduler.subscribe_tokens`, the telemetry-kernel
+  dispatch, benchmark's reconciled method surface).
+  → `scaffold/contracts/api-dispatch.md`
+- `pubsub-protocol` (every service ↔ mesh; api participates via mesh-client) —
+  the carrier for api's `inference.<node>.*` publishes.
+  → `scaffold/contracts/pubsub-protocol.md`
+- `restart-protocol` (mesh ↔ every service; participation note) — the
+  `inference` crate supplies the interruptibility callback via mesh-client.
+  → `scaffold/contracts/restart-protocol.md`
+  - Component-side note (not in the contract file): api's stake is that
+    `CriticalSection` covers an in-flight completion so the node isn't torn
+    down mid-generation; the interruptibility state is fed from scheduler's
+    admission view, not from api.

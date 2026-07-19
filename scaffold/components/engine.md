@@ -90,7 +90,7 @@ re-downloading and re-extracting from GitHub. After a fresh GitHub download +
 extract, the provisioner **publishes** the extracted build back into VFS so the
 next node (a cold Pi, a peer that just joined) provisions from the fleet, not the
 internet. This is a NEW edge, `engine-vfs`, not named in the wave-2 inventory —
-surfaced explicitly (Proposed contracts) and flagged; it is optional (a
+surfaced explicitly (see Contracts section) and flagged; it is optional (a
 `VfsHandle` capability handed down by inference's composition root, absent when
 no mesh), so it never becomes a hard dependency. Model *weights* becoming VFS
 artifacts is `models`' parallel story (`model-ensure`/`models-vfs`); backend
@@ -343,155 +343,22 @@ The trait-signature moves (concern 5) are mechanical once `types`' `StreamEvent`
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only; the per-pair round reconciles both sides. wave2-plan §3 assigns
-engine two inference-internal pairs it authors (`engine-exec`, `kv-cache`) and
-two it consumes (`gc-managed-dirs` authored by gc; `store-access` authored by
-store). I add the newly-surfaced `engine-vfs` and the `InferenceEvent` vocabulary
-that feeds api's `inference-events`. Structs reference `types` vocabulary;
-Rust-flavoured pseudocode. I do NOT edit `scaffold/contracts/*`.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `engine-exec` (scheduler → engine) — the execution surface
+- `engine-exec` — (scheduler → engine) — the execution surface. → `scaffold/contracts/engine-exec.md`
+- `kv-cache` — (engine ↔ cache) — save/restore, now save-window-triggered. → `scaffold/contracts/kv-cache.md`
+- `gc-managed-dirs` — (engine → gc) — participation (authored by gc). → `scaffold/contracts/gc-managed-dirs.md`
+- `store-access` — (engine → store) — participation (authored by store). → `scaffold/contracts/store-access.md`
+- `inference-events` — engine is the event SOURCE (api bridges the broadcast bus onto pub/sub). → `scaffold/contracts/inference-events.md`
 
-**Purpose.** The scheduler's submit/drain/swap/cancel surface over the engine.
-In-process trait (both are libs in `inference`); re-affirms the wave-1 shape,
-adds the modality-neutral request (concern 5a) and the interruptibility reads
-(concern 7).
+Also a party to (authored elsewhere / cross-cutting): `node-state-poll`, `pubsub-protocol`, `vfs-content` — see `scaffold/contracts/`.
 
-**Sketch** (grounded in the real `ExecutionEngine` methods):
-```rust
-trait EngineExec {                       // implemented by ExecutionEngine
-    // submit takes the modality-NEUTRAL request now (concern 5a), not CompletionPayload
-    async fn submit(&self, row: CompletionRow, token_tx: mpsc::Sender<StreamEvent>) -> Result<()>;
-    async fn swap_model(&self, model_id: ModelId, model_path: &Path) -> Result<()>;
-    async fn unload(&self) -> Result<()>;
-    async fn drain(&self, timeout_secs: u64) -> Result<()>;      // L2 finish-and-relinquish
-    async fn cancel_all_running(&self) -> Result<()>;            // L4 kill path
-    async fn abort_slot(&self, id: CompletionId) -> Result<()>;
-    fn take_running_ids(&self) -> Vec<CompletionId>;             // crash-recovery requeue
-    // interruptibility inputs for inference's restart-protocol (concern 7):
-    fn resident_model(&self) -> Option<ModelId>;
-    fn running_count(&self) -> usize;
-    fn is_swapping(&self) -> bool;                               // NEW: guards the swap CriticalSection
-    async fn is_healthy(&self) -> bool;
-}
-```
-**Error cases.** `EngineError::SlotsBusy { max }` (admission ceiling — today's
-"all N slots busy"); `EngineError::DrainTimeout { remaining }`;
-`CompletionNotFound` on `abort_slot`; `EngineError::BackendUnavailableOffline
-{ version, platform }` bubbling from `swap_model` when provisioning fails offline
-(concern 3) — **catchable**, the scheduler holds the completion queued rather than
-failing it. **Version-sensitivity.** None (compiled-in, in-process). The one
-behavioral contract: `submit` must **drain or cancel before a swap** (swap does
-NOT drain) — a precondition the scheduler owns.
+Component-side notes:
+- `engine-vfs` (engine → vfs) — the fleet llama.cpp build cache (INTENT #33):
+  proposed edge, but NO contract file was authored (coverage gap flagged for
+  the owners); not citable as an authored edge.
 
-### `kv-cache` (engine ↔ cache) — save/restore, now save-window-triggered
-
-**Purpose.** Save/restore a slot's KV/prefix state to/from disk via
-`LlamaClient::slot_action`, keyed by cache's `sha256(model_id || prompt_hash)`.
-Wave-2 gives save a trigger: the L3 restart save-window (concern 6). Cache owns
-the keying/eviction (cache.md); engine owns the backend-side slot action.
-
-**Sketch.**
-```rust
-trait KvCache {                          // cache implements; engine calls
-    async fn try_restore(&self, model_id: &ModelId, prompt_hash: &Hash, slot: u32) -> Result<bool>;
-    async fn save(&self, model_id: &ModelId, prompt_hash: &Hash, slot: u32) -> Result<()>;
-    async fn purge_model(&self, model_id: &ModelId) -> Result<()>; // on model eviction (models coupling)
-}
-// engine-side driver on L3 SaveWindow: for each resident slot -> cache.save(..).
-```
-**Error cases.** `EngineError::SlotAction { slot, action, detail }` (llama-server
-`/slots/:id/action` non-2xx — a failed restore MUST fall back to a full prefill,
-never serve a corrupt/stale context, cache.md concern 1); a failed save inside
-the save-window is logged and the yield proceeds (best-effort, L3 is bounded).
-**Version-sensitivity.** LOW — an in-process seam; the on-disk slot-blob format is
-llama-server's, versioned with the provisioned build (a build swap may invalidate
-saved blobs — cache keys already include `model_id`, and a version change purges).
-
-### `gc-managed-dirs` (engine → gc) — participation (authored by gc)
-
-**Purpose.** Disk-budget enforcement for the backend-build cache dir. Engine is a
-**consumer** of gc's shared `GcApi` (gc.md authors it); noted here, not
-re-authored. Engine's usage: `register_dir({llama_data_dir}/backends/...)` with a
-lock-with-expiry policy (never pin forever), then **`register_and_lock`** on the
-freshly-extracted binary (gc.md's atomic wave-2 op — replaces today's
-`register_entry` + `lock(86400*30)` two-step), renewing the lock while the build
-is resident. Reached through `GcHandle` (`Embedded` standalone / `Remote` under
-mesh). **Version-sensitivity.** In `Embedded`: none. In `Remote`: inherits gc's
-shared command version rules (additive `GcCommand`, unknown policy variants
-rejected not coerced — gc.md).
-
-### `store-access` (engine → store) — participation (authored by store)
-
-**Purpose.** Engine writes only completion **terminal transitions**:
-`insert_result(&CompletionResult)` then `mark_completed(id)` / `mark_failed(id,
-reason)` from the tee-forwarder task (real code in `lib/lib.rs`'s spawned task).
-Consumer only; store owns the contract + the single-writer `Mutex<Connection>`
-discipline. Engine's terminal writes are exactly what fire store's
-`StoreObserver` → `PromiseRegistry` (store.md concern 1) — the forwarder must not
-hold any engine lock across the store write. **Version-sensitivity.** None
-(in-process, per-node SQLite).
-
-### `engine-vfs` (engine → vfs) — NEW, flagged; the fleet build cache (INTENT #33)
-
-**Purpose.** Pull a compatible cached llama.cpp build from the mesh before
-GitHub; publish a freshly-downloaded build back for the fleet (concern 2b).
-Optional — gated on a `VfsHandle` capability; absent → the local-disk/GitHub
-ladder (concern 3). Builds are immutable content-addressed VFS artifacts.
-
-**Sketch** (rides `vfs-content`; vfs is the storage party):
-```rust
-// key by (version, platform) -> a VFS path holding the extracted build tree
-fn build_path(version: &str, platform: Platform) -> String   // "vfs://backends/llama-<v>-<plat>/"
-struct BuildLookup { version: String, platform: Platform }
-struct BuildHit    { path: String, content_hash: Hash, size: u64 }
-// engine: vfs.exists(build_path)? -> pull via vfs-content (Read{cache_local:true})
-//         else GitHub-download+extract -> vfs.write(build_path, Immutable) (publish)
-```
-**Error cases.** `VfsUnavailable` (no mesh / vfs down) → fall through to the
-GitHub tier, never block (concern 3); `BuildNotInVfs` (clean miss, not an error) →
-GitHub tier; a corrupt pulled build fails its content-hash verify (vfs.md
-concern 3) and the provisioner re-downloads from GitHub. **Version-sensitivity.**
-The build tree is opaque bytes, content-addressed (frozen `Hash`); the
-`(version, platform)` path key is stable. Publishing is best-effort — a failed
-publish leaves the local build usable and simply doesn't seed the fleet.
-
-### `InferenceEvent` vocabulary (engine → api, feeding `inference-events`) — flagged for api's pass
-
-**Purpose.** The domain-event superset engine emits on its in-process broadcast
-bus (concern 4); `api` (batch-5 sibling) bridges these onto `pubsub-protocol`
-topics — engine owns no mesh vocabulary. Flagged so api guarantees the **five
-load-affecting kinds** the completion-router depends on (completion-router.md
-concern 3).
-
-**Sketch** (generalizes today's `LifecycleEvent`; lossy bus, cap ~256):
-```rust
-enum InferenceEvent {
-    // --- router-critical load deltas (api -> inference.<node>.*) ---
-    CompletionStarted  { id: CompletionId, model_id: ModelId },            // running += 1
-    CompletionFinished { id: CompletionId, model_id: ModelId, success: bool }, // running -= 1
-    ModelLoaded   { model_id: ModelId, path: String },                     // resident = model_id
-    ModelUnloaded { model_id: ModelId },                                    // resident/inventory delta
-    ModelSwapping { from: ModelId, to: ModelId },
-    // --- per-completion token stream (api -> inference.completion.<id>) ---
-    Token { id: CompletionId, model_id: ModelId, index: u32, text: String },// lossy live view (INTENT #5)
-    CompletionMetricsRecorded { id: CompletionId, model_id: ModelId,
-                                output_tokens: u32, tokens_per_second: f32 },// throughput dashboard
-    // --- provisioning progress (api -> inference.backend.*) — offline/degraded UX (concern 3) ---
-    BackendInstalling { version: String, platform: String, source: BackendSource }, // Vfs|GitHub|Cache
-    BackendInstalled  { version: String, binary_path: String },
-    BackendUnavailableOffline { version: String, platform: String },        // degraded, catchable-mirror
-    BackendStarting { port: u16 }, BackendReady { port: u16 },
-    BackendStopping, BackendStopped,
-}
-enum BackendSource { LocalDisk, VfsCache, GitHub }
-```
-**Error cases.** Bus is lossy by contract — a lagged subscriber drops events and
-resyncs from the node's REST surface (`node-state-poll`), never blocking the
-engine (pubsub-relay concern 6). **Version-sensitivity.** MEDIUM — these become
-`Event<P>` payloads over the wire once api bridges them; additive-only variants,
-`#[serde(other)]` on `BackendSource`, and the router matches only the open
-`event_type` strings it consumes so new kinds never break it. Engine guarantees
-the five router-critical kinds are emitted; api owns their on-wire schemas.

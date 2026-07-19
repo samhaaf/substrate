@@ -270,7 +270,7 @@ not the database plane) but present from the start.
   `replicated-kv`'s cloud snapshot leg (export/list/fetch of encrypted kernel
   snapshots to/from S3). SQS-someday (mesh `queues` → real SQS) rides this
   edge too, anticipated. `replicated-kv` authors the snapshot *payload* half;
-  `aws` authors the S3-mechanics half (proposed below).
+  `aws` authors the S3-mechanics half (authored — see Contracts section).
   (scaffold/contracts/aws-mesh.md).
 - **vfs** via `aws-vfs` — the S3 overflow tier: VFS pushes/reads/pulls/lists
   object bodies (opaque ciphertext) against S3 through `aws`, choosing storage
@@ -280,11 +280,11 @@ not the database plane) but present from the start.
   provision/describe an RDS instance, deploy/invoke Lambda handlers, run the
   copy/verify migration under a lock (local→cloud promotion). Connection
   *secrets* for the target come via `vdb`↔`secrets` (`vdb-secrets`), NOT from
-  `aws`. Design-only in v1. (proposed below; stub `aws-vdb` to be created.)
+  `aws`. Design-only in v1. *(authored: scaffold/contracts/aws-vdb.md)*
 - **secrets** via `aws-secrets` — **NEW (proposed).** Two facets: (1)
   secrets→aws, the AWS Secrets Manager PUSH adapter (design-only, INTENT
   #105); (2) aws→secrets, `aws` sourcing its own AWS account credentials
-  (concern 2). (proposed below; stub `aws-secrets` to be created.)
+  (concern 2). *(authored: scaffold/contracts/aws-secrets.md)*
 - **kg** (anticipated, no direct edge) — KG's cross-boundary S3 sync (INTENT
   #50) flows `kg → mesh → aws`; it rides `aws-mesh`, not a direct stub (see
   `components/kg.md`).
@@ -337,200 +337,16 @@ whole crate now — the design has bought the fill down.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only — a later per-pair round reconciles both sides. `aws` is party
-to four edges; two have existing stubs authored from the consumer/replicated-kv
-side (I propose `aws`'s half + refine), two are new. All request/response
-structs land in `types::aws`; `Slug`/`NodeId`/`Endpoint`/`Provenance` reuse the
-existing `types` vocabulary. A single well-known error `AwsDisabled { adapter,
-op }` is shared across all four (the not-built-now signal, concern 6).
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `aws-vfs` (EXISTING stub — aws proposes its half)
+- `aws-vfs` (aws ↔ vfs) — the S3 overflow tier data path (cold classes, client-side encryption). → `scaffold/contracts/aws-vfs.md`
+- `aws-mesh` (aws ↔ mesh) — registration + the replication plane's S3/AWS distribution leg. → `scaffold/contracts/aws-mesh.md`
+- `aws-vdb` (vdb → aws) — the RDS+Lambda cloud target; DESIGN-ONLY v1 (`AwsDisabled`). → `scaffold/contracts/aws-vdb.md`
+- `aws-secrets` (secrets ↔ aws) — SM push (design-only) + AWS creds fetch + S3 CSE keys + the genesis-key rule. → `scaffold/contracts/aws-secrets.md`
 
-**Purpose.** The S3 overflow tier data path: VFS moves file object bodies
-(opaque, already client-side-encrypted) to/from S3 through `aws`, choosing
-storage class and transfer mode. `aws` provides S3 mechanics; the data key
-never reaches it (concern 4).
+Also a party to (authored elsewhere / cross-cutting): `restart-protocol`, `service-lookup` — see `scaffold/contracts/`. (`vdb-secrets` is related but aws is deliberately NOT a party: the RDS connection secret flows vdb ↔ secrets; aws returns only the endpoint.)
 
-**Message/struct sketch** (`vfs → aws`, over `mesh-transport` request/response):
-
-```rust
-// namespaced object identity; bucket_ns scopes per-node/per-project so
-// encryption + lifecycle policy stay stable and isolated.
-struct ObjKey { bucket_ns: String, key: String }
-
-enum AwsS3Request {
-    PutBegin { key: ObjKey, storage_class: S3Class, size_hint: Option<u64>,
-               transfer: TransferPref, idempotency_key: Uuid },   // -> PutBegun
-    PutCommit { key: ObjKey, transfer_id: Uuid, sha256: [u8;32] }, // Path A finalize
-    GetBegin { key: ObjKey, transfer: TransferPref },              // -> GetBegun
-    Head     { key: ObjKey },                                      // -> ObjMeta
-    List     { bucket_ns: String, prefix: String, cont: Option<String> }, // -> ObjPage
-    Delete   { key: ObjKey },
-    Restore  { key: ObjKey, tier: RestoreTier },                  // Glacier thaw
-}
-
-enum S3Class { Standard, IntelligentTiering, StandardIa,
-               GlacierInstant, GlacierFlexible, DeepArchive }
-enum TransferPref { Presigned, Relay }        // concern 3; Presigned default here
-enum RestoreTier  { Expedited, Standard, Bulk }
-
-enum Transfer {                               // returned in Put/GetBegun
-    Presigned { url: String, headers: Vec<(String,String)>, expires_at_ms: i64 },
-    Relay     { transfer_id: Uuid },          // then stream chunks over mesh-transport
-}
-struct PutBegun { transfer: Transfer }
-struct GetBegun { transfer: Transfer, meta: ObjMeta }
-struct ObjMeta  { size: u64, storage_class: S3Class, etag: String,
-                  restore: RestoreState, ts_millis: i64 }
-enum   RestoreState { Warm, Archived, Restoring { ready_at_ms: Option<i64> } }
-struct ObjPage  { items: Vec<ObjMeta>, cont: Option<String> }
-```
-
-**Error cases.** `AwsDisabled { adapter:"s3", op }` (v1 default / adapter off);
-`ObjectNotFound`; `InRestore { restore: RestoreState }` (GET on an archived
-object — catchable, consumer waits for `aws.s3.restore_ready`);
-`CredentialsUnavailable` (secrets couldn't provide AWS creds, concern 2);
-`StorageClassUnsupported`; `ChecksumMismatch` (Path-A `PutCommit` sha256 ≠
-stored); `TransferExpired` (presigned URL / relay transfer id expired);
-`Unreachable` (AWS/network down — best-effort, retry). None panic; all
-best-effort (concern 7).
-
-**Version-sensitivity.** `S3Class`/`RestoreTier` are **additive** enums (new
-tiers as AWS adds them — old consumers ignore unknown classes on read).
-`TransferPref`/`Transfer` are negotiated per request, so adding a mode is
-backward-compatible. `bucket_ns` scoping is **frozen** once objects exist under
-it (it's baked into the S3 key layout and the encryption scope) — renaming a
-namespace is a data-migration, not a schema change. Object bodies are opaque,
-so encryption/format churn never touches this contract.
-
-### `aws-mesh` (EXISTING stub — aws's S3-mechanics half)
-
-**Purpose.** `aws`'s two participations: (a) ordinary registration/resolution
-via `service-lookup` (no new schema — reuses `mesh-transport` + the registry);
-(b) executing `replicated-kv`'s cloud snapshot leg — storing/serving encrypted
-kernel-state snapshots in S3 for disaster recovery. `aws` is a **passive
-push-only peer** (concern 7): never consulted during normal sync.
-
-**Message/struct sketch.** The snapshot *payload* types are `replicated-kv`'s
-(`KvSnapshotExport { snapshot_id, taken_at_ms, node, keyspaces, kv_proto,
-storage_class, ciphertext }`, `KvSnapshotList`, `KvSnapshotFetch`). `aws`'s
-half is the S3 mapping + receipt:
-
-```rust
-// aws maps snapshot_id -> s3 key under a reserved prefix, applies the class,
-// stores the ciphertext opaquely, and receipts it.
-struct KvSnapshotReceipt { snapshot_id: Uuid, s3_key: String, etag: String }
-struct KvSnapshotMeta    { snapshot_id: Uuid, s3_key: String, node: NodeId,
-                           taken_at_ms: i64, kv_proto: u16, storage_class: S3Class }
-// s3 key layout owned by aws:  mesh-kv/<node_id>/<taken_at_ms>-<snapshot_id>
-```
-
-Because kernel snapshots are **bounded** (not GB-scale cold files), this leg
-uses **inline ciphertext over the mesh relay** (Path A) by default — the
-`ciphertext: Bytes` already rides `KvSnapshotExport`; no presigned handle
-needed. (Very large snapshots may opt into `TransferPref::Presigned`, shared
-with `aws-vfs`.)
-
-**Error cases.** `AwsDisabled { adapter:"s3", op }`; `ExportFailed {
-snapshot_id }` (surfaced as `aws.export_failed`, retried next schedule, blocks
-nothing); `SnapshotNotFound` (on fetch/list of a missing key);
-`CredentialsUnavailable`. Restores validate on the `replicated-kv` side
-(`DecryptFailed`/`ProtoTooNew`/`StoreNotEmpty` are its errors, not aws's — aws
-returns opaque ciphertext).
-
-**Version-sensitivity.** Snapshots are self-describing (`kv_proto` embedded by
-`replicated-kv`); `aws` treats the body as opaque so a `kv_proto` bump never
-touches this contract. The **s3 key layout is frozen** (a restore must find old
-keys) — additive prefixes only. SQS-someday is a **future additive facet** of
-`aws-mesh` (a `queues → SQS` deploy op), not designed here.
-
-### `aws-vdb` (NEW — proposed; stub `aws-vdb` to be created)
-
-**Purpose.** VDB's **cloud deploy target** — the RDS+Lambda third adapter after
-local-SQLite and Supabase (INTENT #93/#96). Since SQLite-locally is LOCKED,
-this surface is reached **only** on a local→cloud *promotion* (INTENT #98
-routing: local→SQLite, cloud→promote), never for local work. **Design-only in
-v1** (concern 6): the whole surface answers `AwsDisabled` until built.
-
-**Message/struct sketch** (`vdb → aws`):
-
-```rust
-enum AwsVdbRequest {
-    ProvisionTarget { spec: RdsSpec },                 // -> RdsTarget (ensure/create)
-    DescribeTarget  { target_id: String },             // -> RdsTarget
-    DeployFunction  { target_id: String, func: LambdaSpec }, // deploy a TS/SQL handler as Lambda
-    InvokeFunction  { func_id: String, payload: Box<RawValue> }, // -> InvokeResult
-    Migrate         { target_id: String, plan: MigrationPlan },  // copy/verify under a lock
-    Teardown        { target_id: String },
-}
-struct RdsSpec    { engine: RdsEngine, size: String, multi_az: bool }  // Postgres only, per INTENT
-enum   RdsEngine  { Postgres }                          // no local pg; cloud RDS Postgres only
-struct RdsTarget  { target_id: String, endpoint: Endpoint, status: TargetStatus }
-enum   TargetStatus { Provisioning, Available, Migrating, Failed }
-struct LambdaSpec { name: String, runtime: LambdaRuntime, code_ref: ObjKey }
-enum   LambdaRuntime { Deno, Sql }                      // Deno = confirmed TS runtime (INTENT #65)
-struct MigrationPlan { from: SourceRef, verify: VerifyMode }  // copy/verify/switch (INTENT #86)
-```
-
-**Boundary note (load-bearing):** the target's **connection secret** (RDS
-connection string / password) is held and brokered by `secrets` via
-`vdb`↔`secrets` (`vdb-secrets`), **not** returned by `aws`. `aws` returns the
-*endpoint*; `secrets` holds the *credential*. This is the use-without-seeing
-split that keeps a connection secret out of any agent/LLM context.
-
-**Error cases.** `AwsDisabled { adapter:"rds"|"lambda", op }` (v1 default);
-`ProvisionFailed { reason }`; `TargetNotFound`; `DeployFailed`;
-`InvokeFailed { detail }`; `MigrationConflict` (copy/verify mismatch — the
-promotion aborts, local DB untouched, concern 7); `CredentialsUnavailable`.
-
-**Version-sensitivity.** Entirely design-only in v1, so the whole surface is
-"proposed, not frozen" — additive `AwsVdbRequest` variants and `RdsEngine`/
-`LambdaRuntime` growth are expected as VDB's cloud path is actually built.
-`RdsEngine` is intentionally `Postgres`-only (INTENT: no local pg; cloud RDS is
-the only Postgres). Coupled to `restart-protocol`: promotions treat the target
-DB as a service under mesh's restart/upgrade protocol (INTENT #86).
-
-### `aws-secrets` (NEW — proposed; stub `aws-secrets` to be created)
-
-**Purpose.** Two directional facets on one edge:
-
-**Facet 1 — secrets→aws: the AWS Secrets Manager PUSH adapter (DESIGN-ONLY,
-INTENT #105).** `secrets` pushes a secret value into AWS Secrets Manager
-through `aws` (one of secrets' three push adapters, alongside Supabase Vault
-and GitHub Actions). `aws` is a **transient conduit** to the destination store
-(SM re-encrypts under KMS); it never persists the value (concern 4 exception).
-
-```rust
-enum AwsSecretsRequest {                    // secrets -> aws  (facet 1)
-    PutSecret    { path: String, value: SecretBytes, kms_key: Option<String> },
-    RotateSecret { path: String, value: SecretBytes },
-    DeleteSecret { path: String },
-}
-```
-
-**Facet 2 — aws→secrets: aws sources its own AWS account credentials
-(concern 2).** This is `aws`'s CredentialProvider asking `secrets` for the AWS
-account credential (role ARN to assume, or access-key/secret). It rides
-`secrets`' general brokerage shape (owned by `secrets`' design pass); `aws`'s
-requirement on it:
-
-```rust
-enum AwsCredRequest {                       // aws -> secrets  (facet 2)
-    FetchAwsCreds { role_ref: SecretRef },  // -> AwsCreds { access_key, secret, session_token, expires_at_ms }
-}
-```
-
-**Error cases.** Facet 1: `AwsDisabled { adapter:"secretsmgr", op }` (v1
-default — the push is designed, not built); `PushFailed { detail }`;
-`CredentialsUnavailable`. Facet 2: `SecretNotFound { role_ref }`;
-`SecretsUnavailable` (the whole `secrets` service unreachable → `aws` can do
-nothing real → all ops degrade to `CredentialsUnavailable`).
-
-**Version-sensitivity.** Facet 1 is **design-only** (proposed, not frozen) —
-it firms up only when the AWS SM adapter is actually built. Facet 2 is
-**load-bearing even in the stub**: `aws` needs it the moment *any* adapter goes
-`Live`, so its shape should be pinned early with `secrets`' designer. The
-`SecretRef`/`SecretBytes` types are `secrets`' vocabulary (reused, not
-redefined here); flagged for the per-pair round with `secrets`.

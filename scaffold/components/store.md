@@ -223,7 +223,7 @@ move whenever types does. No behavior change; matchability improves.
 ## Relationships / edges
 
 - **{engine, scheduler, models, cache, telemetry, benchmark, api}** (siblings)
-  via **`store-access`** *(exists — content proposed below)* — the SQLite
+  via **`store-access`** *(authored: scaffold/contracts/store-access.md)* — the SQLite
   system-of-record CRUD + queue view + the observer seam, plus (wave 2) the
   provenance-on-completions surface and the benchmark pressure covariates. This is
   an **inference-internal, in-process edge** (store is compiled into `inference`),
@@ -288,87 +288,11 @@ error-enum alignment are pure transcription.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposal only — the per-pair round reconciles; I do NOT edit
-`scaffold/contracts/*`. Shared vocabulary lands in `types` (`Provenance` in
-`types::provenance`; `SystemState` in `types::system`; `StoreError` in
-`types::error::store`). wave2-plan §3a assigns `store` exactly one pair:
-**`store-access`** (store ↔ all seven siblings + the observer seam). Because store
-is compiled into `inference`, this is an **in-process Rust API surface**, not a
-serialized wire contract — the "schema" below is the trait/method surface the
-Skeleton Builder freezes, and the conformance requirement is the reentrancy
-invariant.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `store-access` (store ↔ {engine, scheduler, models, cache, telemetry, benchmark, api} + inference observer) — EXISTS; content proposed
+- `store-access` — (store ↔ {engine, scheduler, models, cache, telemetry, benchmark, api} + the composition root's `StoreObserver`; store owns/authors) — the in-process `Store` trait surface + the reentrancy contract for the observer seam; every sibling filed a participation note against it. → `scaffold/contracts/store-access.md`
 
-- **Purpose.** The single in-process access surface to the per-node
-  system-of-record: completion CRUD + the priority queue view, collection
-  lifecycle, model registry, result blobs, benchmark runs (now with pressure
-  covariates), kv-cache metadata, and the `StoreObserver` notification seam. It is
-  the intra-node hub every inference sibling reads/writes through; there is no
-  network, no relay, no serialization — callers hold a cloned `Store` handle
-  (`#[derive(Clone)]`, cheap `Arc`, `lib.rs:90`).
-
-- **Surface (method families on `Store`, real signatures + wave-2 deltas):**
-  ```rust
-  // completions (completions.rs) — WAVE-2: insert takes provenance
-  fn insert_completion(&self, row: &CompletionRow, prov: &Provenance) -> Result<()>; // + prov (concern 4)
-  fn get_completion(&self, id: CompletionId) -> Result<CompletionRow>;
-  fn mark_running/completed/failed/cancelled(&self, id: CompletionId, ..) -> Result<()>;
-  fn requeue_preempted/requeue_error_retry(&self, id: CompletionId) -> Result<()>;
-  fn select_pending(&self) -> Result<Vec<CompletionRow>>;            // scheduler tick
-  fn select_pending_for_model(&self, m: &ModelId) -> Result<Vec<CompletionRow>>;
-  fn count_by_state(&self) -> Result<Vec<(CompletionState,u64)>>;    // system-state reporting
-  fn list_completions_by_state(&self, states: &[CompletionState], limit: u32) -> ..;
-  fn recover_running(&self) -> Result<u64>;                          // crash recovery (lib.rs:128)
-  // results (results.rs)
-  fn insert_result(&self, r: &CompletionResult) -> Result<()>;
-  fn get_result(&self, id: CompletionId) -> Result<Option<CompletionResult>>; // observer defers this
-  // models / collections / kv_cache — registry + lifecycle + metadata (unchanged)
-  // benchmarks (benchmarks.rs) — WAVE-2: BenchmarkRun + insert/map grow pressure covariates
-  fn insert_benchmark_run(&self, run: &BenchmarkRun) -> Result<i64>; // run now carries mem/cpu/gpu/is_gpu_estimate/sample_source
-  fn benchmark_runs_for_model(&self, m: &ModelId) -> Result<Vec<BenchmarkRun>>;
-  // observer seam (lib.rs) — WAVE-2: methods carry &Provenance (additive)
-  trait StoreObserver: Send + Sync {
-      fn on_completion_inserted(&self, id: CompletionId, prov: &Provenance) {}
-      fn on_completion_state_changed(&self, id: CompletionId, old: CompletionState, new: CompletionState) {}
-      fn on_model_registered(&self, id: &ModelId) {}
-      fn on_benchmark_recorded(&self, model: &ModelId, run_id: i64) {}
-  }
-  fn with_observer(self, obs: Arc<dyn StoreObserver>) -> Self;
-  ```
-
-- **The reentrancy invariant (the contract's teeth — concern 2).** Observer
-  callbacks fire **synchronously on the writer thread with the store `Mutex`
-  HELD.** An implementer MUST: (1) never call any `Store` method that acquires the
-  connection (non-reentrant `std::sync::Mutex` → deadlock) — defer any store read
-  to `tokio::spawn`; (2) never block or `.await` inside the callback; (3)
-  `try_lock` (not blocking-lock) its own state and **skip on contention**
-  (delivery is best-effort); (4) never panic (poisons the store mutex). This is a
-  hard part of the contract, not advice.
-
-- **Error cases.** `StoreError::{Sqlite, Poisoned, CompletionNotFound, Json}`
-  (adopting `types::error::store`, concern 6); today surfaced as
-  `SubstrateError::Store(String)` / `CompletionNotFound(id)` / `Internal(json)`.
-  Queries cap at 1000 rows (`list_completions_by_state`) to protect callers.
-
-- **Version-sensitivity.** **In-process, single-build → no wire skew** (store is
-  compiled into `inference`; there is no cross-node `store` deserialization). The
-  only compatibility concern is **on-disk schema forward-safety**, handled by the
-  append-only `schema.sql` convention: new columns are added at the bottom
-  (`IF NOT EXISTS`/nullable), so an older binary reading a newer file ignores
-  unknown columns and a newer binary reads old rows with `NULL` covariates. The
-  `StoreObserver` `&Provenance` addition is a source-level additive change (one
-  in-tree implementer, `PromiseRegistry`).
-
-- **Conformance requirement.** A Filler's `store` (and any `StoreObserver`
-  implementer) passes iff: (a) an observer that reads the store does so via
-  deferred `tokio::spawn`, never re-entrant, proven by a **deadlock-freedom test**
-  — register an observer whose callback attempts a store read and assert the
-  writing call returns without hanging; (b) `insert_completion` persists the
-  passed `Provenance` and `get_completion` round-trips it; (c) a `benchmark_runs`
-  row written with pressure covariates round-trips through
-  `benchmark_runs_for_model`, and a row written by the *old* schema (no covariate
-  columns) reads back with `NULL`/`None` covariates (backward-compat); (d)
-  `recover_running` requeues `running`→`pending` and stamps `recovered_at`.

@@ -354,20 +354,19 @@ edges.
 - **ccd** via `rollup-ccd` — CCD's on-demand plugin/prompt assembly (directory
   rollup, `OutputSink`), the PRIMARY consumer; ccd is the consumer, rollup
   authors this side. *(scaffold/contracts/rollup-ccd.md — exists,
-  requirements-only; content proposed below.)*
+  content authored at the contract round.)*
 - **mesh (queues/triggers)** via `rollup-mesh` — rollup's registration
   (`service-lookup` instance) + the resolve surface a trigger's `AssemblyTemplate`
   calls to resolve `Rollup(RollupRef)` nodes (queues is the consumer; queues.md
   proposed the consumer view `ResolveReferences`). rollup authors this contract.
-  *(MISSING — proposed below.)*
+  *(authored at the contract round.)*
 - **secrets** via `rollup-secrets` — rollup resolves `RefTarget::Secret`
   references through secrets; unconditionally reference-only in output; the
   no-secret-in-output invariant (concern 4/8). rollup is the consumer; secrets.md
-  authored its side; this design proposes the matching consumer view. *(MISSING —
-  proposed below.)*
+  authored its side. *(authored at the contract round.)*
 - **vfs** via `rollup-vfs` — fragment/plugin residence: read versioned fragment
   files, list versions, write materialized `VfsDir` plugins. rollup is the
-  consumer of vfs's file surface. *(MISSING — proposed below.)*
+  consumer of vfs's file surface. *(authored at the contract round.)*
 - **projects** via `projects-rollup` — the migrated `.mind` workspace schema
   brings rollup into projects ("tasks are rolled up"); projects supplies the
   `ScopeChain` from the project hierarchy. *(stub-track anticipated — named below,
@@ -432,183 +431,19 @@ explicitly deferred.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only — the per-pair round reconciles both sides. I do NOT edit
-`scaffold/contracts/*`. Shared vocabulary lands in `types::rollup`
-(`RollupError` in the reserved `types::error::rollup`).
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-Shared vocabulary referenced by every edge below:
+- `rollup-mesh` — (rollup ↔ mesh; rollup authors) — registration (`AnyNode` `service-lookup` instance) + the resolve surface callers invoke; the operation is canonically `ResolveRefs` (queues' `ResolveReferences` recorded as the alias). → `scaffold/contracts/rollup-mesh.md`
+- `rollup-ccd` — (ccd → rollup; rollup authors, ccd is the primary consumer) — on-demand plugin assembly; `AssemblePlugin` and `rollup-mesh`'s `Materialize` are ONE operation, one implementation. → `scaffold/contracts/rollup-ccd.md`
+- `rollup-secrets` — (rollup → secrets) — reference-only secret resolution (consumer side). → `scaffold/contracts/rollup-secrets.md`
+- `rollup-vfs` — (rollup → vfs) — fragment/plugin residence (consumer side). → `scaffold/contracts/rollup-vfs.md`
+- `projects-rollup` — (projects → rollup) — stub-track (anticipated, content deferred). → `scaffold/contracts/projects-rollup.md`
 
-```rust
-// types::rollup
-pub struct RollupRef { pub target: RefTarget, pub form: InsertForm, pub version: VersionSpec, pub inline_slots: SlotMap }
-pub enum InsertForm { Raw, Reference }
-pub enum RefTarget { Prompt(FragmentId), File(VfsPath), PromptFile(VfsPath), Skill(Slug), Secret(String) }
-pub enum VersionSpec { Latest, Pinned(u32), AncestorLatest(String), AncestorPinned(String, u32) }
-pub enum RollupTarget { String(String), File(VfsPath), Directory(PluginManifest) }
-pub type SlotMap = std::collections::HashMap<String, String>;
-pub struct ScopeChain { pub scopes: Vec<Scope> }               // most-specific → most-general
-pub struct Scope { pub id: ScopeId, pub name: String, pub prefix: VfsPath }
-pub struct PluginManifest { pub name: String, pub description: String, pub version: String,
-                            pub skills: Vec<FragmentEntry>, pub agents: Vec<FragmentEntry>, pub commands: Vec<FragmentEntry> }
-pub struct FragmentEntry { pub slug: String, #[serde(default)] pub slot_overrides: SlotMap,
-                           #[serde(default)] pub alias_map: std::collections::HashMap<String,String>,
-                           #[serde(default)] pub volatility: Volatility }
-pub enum Volatility { Stable, Volatile }
-pub struct Resolved { pub text: String, pub stable_prefix_len: usize, pub provenance: RollupProvenance }
-pub struct RollupProvenance { /* concern 9 */ pub fragments_used: Vec<FragmentUse>, pub slots_filled: Vec<String>,
-    pub files_included: Vec<String>, pub secret_refs: Vec<SecretRef>, pub referenced_not_inlined: Vec<RollupRef>,
-    pub warnings: Vec<String>, pub trace: Provenance }
-pub struct FragmentUse { pub id: FragmentId, pub version: u32, pub scope: ScopeId, pub vfs_path: VfsPath, pub content_hash: String }
-pub struct MaterializeResult { pub files_written: Vec<VfsOrLocalPath>, pub provenance: RollupProvenance }
-pub struct CallerContext { pub service_slug: String, pub llm_safe: bool }  // shared shape with secrets/queues
-```
-
-```rust
-// types::error::rollup
-pub enum RollupError {
-    Parse { offset: usize, message: String },
-    MissingSlot { name: String },
-    PromptNotFound { id: String },
-    PinnedVersionNotFound { id: String, version: u32 },
-    AncestorNotFound { ancestor: String },
-    AmbiguousAncestor { ancestor: String },
-    AncestorVersionNotFound { id: String, version: u32, ancestor: String },
-    CircularReference { cycle: String },
-    FileNotFound { path: String, scope: String },
-    ScopeInvalid(String),
-    Vfs(String),                    // stringified at the boundary — vfs's error never becomes a rollup type
-    Secrets(String),                // stringified secrets-side failure (never a value)
-    Store(String),
-}
-```
-(The first eight arms are the harness `RollupError` ported verbatim; the last
-four are substrate wiring.)
-
-### `rollup-mesh` (rollup ↔ mesh) — registration + the resolve surface — NEW, mine
-
-- **Purpose.** Two facets over the local `:3649` daemon: (a) rollup's
-  registration/resolution (a `service-lookup` instance); (b) the **resolve
-  surface** any service — chiefly a queues trigger's `AssemblyTemplate` — calls to
-  turn `RollupRef`s / a `RollupTarget` into text + provenance. Answers queues.md's
-  consumer-side `ResolveReferences` ask.
-- **Message/struct sketch** (over `pubsub-protocol`/mesh WS):
-  ```rust
-  enum RollupClientMsg {
-      Resolve        { target: RollupTarget, slots: SlotMap, scope: ScopeChain, caller: CallerContext } , // -> Resolved
-      ResolveRefs    { refs: Vec<RollupRef>, subject: serde_json::Value, scope: ScopeChain, caller: CallerContext }, // -> Vec<ResolvedInsert> (the trigger-assembly subset queues needs)
-      Materialize    { manifest: PluginManifest, slots: SlotMap, scope: ScopeChain, output: OutputSink }, // -> MaterializeResult (also the rollup-ccd shape)
-      ListFragments  { scope: ScopeChain },                                                                // -> Vec<FragmentUse (metadata only)>
-  }
-  enum ResolvedInsert { Inlined(String), Reference(RollupRef), Degraded { r#ref: RollupRef, warning: String } }
-  ```
-  `subject` on `ResolveRefs` is queues' generic subject document (event/payload)
-  so a fragment's `{{slot:}}` markers bind event variables at reference time
-  (INTENT #79 slots at reference time; queues.md concern 2).
-- **Error cases.** All `RollupError` arms; delivered as a first-class error frame
-  so a trigger's assembly reports `AssemblyFailed` (queues.md) rather than
-  panicking. A degraded secret is NOT an error — it is `ResolvedInsert::Degraded`
-  (the delivery proceeds with the reference + warning; no leak, no failure).
-- **Version-sensitivity.** HIGH — `RollupRef`/`RefTarget`/`InsertForm`/
-  `VersionSpec`/`TemplateNode` cross nodes and persist inside trigger definitions
-  in `replicated-kv`. Additive-only, every enum reserves `#[serde(other)]`, every
-  new field `#[serde(default)]` (an older rollup daemon receiving an unknown
-  `RefTarget` fails *that reference* loudly and locally — never crashes the
-  resolve or drops the whole assembly). `FragmentId`/scope prefixes are open
-  strings, never closed enums. The **raw-vs-reference distinction is LOCKED**
-  (INTENT #94) — part of the contract, not commentary.
-
-### `rollup-ccd` (ccd → rollup) — on-demand plugin assembly — mine (side), ccd consumes
-
-- **Purpose.** CCD's specialized-plugin-per-agent assembly: a `PluginManifest` +
-  runtime slots → a materialized plugin directory (Claude-Code layout), generated
-  fresh on demand, no symlinks/copies. The `Materialize` shape of `rollup-mesh`,
-  named as its own edge because ccd is a distinct first-class consumer.
-- **Message/struct sketch.**
-  ```rust
-  // ccd -> rollup
-  struct AssemblePlugin { manifest: PluginManifest, runtime_slots: SlotMap, scope: ScopeChain, output: OutputSink }
-  enum OutputSink { LocalDir(PathBuf), VfsDir(VfsPath), Inline }
-  // rollup -> ccd
-  struct AssembleResult { result: MaterializeResult, plugin_json: serde_json::Value } // provenance = the agent's bill of materials
-  ```
-  For `OutputSink::Inline`, the file set is returned in-band (small plugins);
-  otherwise rollup writes to the local dir ccd will hand Claude Code, or to VFS.
-  The `MaterializeResult.provenance` (fragment id:version + content_hash per
-  entry) is what ccd records against the agent's thread in its usage DB — exact
-  reproducibility of what an agent ran with.
-- **Error cases.** `RollupError` (a missing fragment/slot fails the whole
-  assembly — ccd surfaces it to the caller/priority owner; a plugin is
-  all-or-nothing). A degraded secret is a warning in the provenance, not a
-  failure.
-- **Version-sensitivity.** MEDIUM — `PluginManifest`/`FragmentEntry`/`OutputSink`
-  are additive with `#[serde(other)]`; the Claude-Code output layout
-  (`skills/<slug>/SKILL.md`, `agents/<slug>.md`, `commands/<slug>.md`,
-  `plugin.json`) is ported verbatim from working harness code and stable.
-
-### `rollup-secrets` (rollup → secrets) — reference-only secret resolution (consumer side)
-
-- **Purpose.** rollup resolves `RefTarget::Secret` markers through secrets;
-  **unconditionally reference-only** — rollup requests a reference and treats any
-  raw request as degrade-to-reference, so no secret value ever lands in rollup
-  output (concern 4/8). Mirrors secrets.md's authored `rollup-secrets` from the
-  consumer side.
-- **Message/struct sketch** (aligned to secrets.md):
-  ```rust
-  // rollup -> secrets (rollup ALWAYS sends form: Reference for output; caller.llm_safe := true)
-  struct RollupSecretResolve { r#ref_or_name: SecretRefOrName, form: InsertForm, caller: CallerContext }
-  // secrets -> rollup
-  enum ResolveOutcome { Reference(SecretRef), DegradedToReference { r#ref: SecretRef, warning: String } }
-  // NOTE: the Raw arm of secrets' ResolveOutcome is UNREACHABLE on this edge — rollup never requests
-  //       raw for output, and secrets' llm_safe forecloses it regardless. Frozen by contract.
-  ```
-- **Error cases.** `Secrets(NotFound)`; never `RawRefusedLlmSafe` as an
-  *error* on this edge — rollup uses degrade mode, so the outcome is
-  `DegradedToReference` (warning carried into provenance), never a hard failure.
-- **Version-sensitivity.** Low, but the invariant is FROZEN: **a plaintext secret
-  is never returned to rollup for output** — the unreachable-Raw arm is contract
-  text, not commentary (the same freezing discipline secrets applied to its
-  `Raw` arm under `llm_safe`).
-
-### `rollup-vfs` (rollup → vfs) — fragment/plugin residence (consumer side)
-
-- **Purpose.** rollup reads versioned fragment files and lists fragment versions
-  from VFS (the `FragmentStore` production impl), and writes materialized `VfsDir`
-  plugins. rollup is a plain consumer of vfs's file surface (the `repo-vfs`-style
-  read/list/write path), imposing only the layout convention
-  `<scope.prefix>/prompts/<id>/<version>.md`.
-- **Message/struct sketch.**
-  ```rust
-  // rollup -> vfs
-  struct VfsRead  { path: VfsPath }               // -> Bytes            (a fragment/file body)
-  struct VfsList  { prefix: VfsPath }              // -> Vec<VfsEntry>    (version discovery: integer-named *.md)
-  struct VfsWrite { path: VfsPath, bytes: Bytes, class: FileClass }  // -> FileManifest (materialize-to-VFS; Immutable)
-  struct VfsExists{ path: VfsPath }                // -> bool
-  ```
-  Fragments are read as `Immutable` content-addressed VFS files (vfs.md concern
-  2) — the `content_hash` vfs returns is exactly what rollup records per
-  `FragmentUse` for reproducibility (concern 9). Reads may trigger vfs's
-  access-can-migrate caching (vfs.md concern 7) — transparent to rollup.
-- **Error cases.** `Vfs(...)` (path not found, node unreachable, replication
-  gap) stringified at the boundary — vfs's error type never becomes a rollup type
-  (types.md guardrail). A missing fragment version surfaces as the ported
-  `PromptNotFound`/`PinnedVersionNotFound`, not a raw vfs error.
-- **Version-sensitivity.** Low — vfs's read/list/write surface is boring and
-  stable; the fragment layout convention is rollup's and versions *inside* the
-  path (`<version>.md`), so it never bumps the vfs wire.
-
-### `projects-rollup` (projects → rollup) — stub-track (anticipated, content deferred)
-
-`projects` is an L6 stub ("not implementing now"). Named per wave2-plan §3c so
-the pair exists; content deferred to when projects leaves the stub track. **What
-it will carry:** (a) projects derives the `ScopeChain` from the project/hierarchy
-graph (replacing v1's caller-passed chain) and hands it to rollup; (b) "tasks are
-rolled up" — a task/artifact in the migrated `.mind` workspace schema is a
-`RollupTarget` projects asks rollup to resolve. No new mechanism — it is the
-existing `rollup-mesh` `Resolve`/`Materialize` surface with a projects-supplied
-scope. Satisfies every invariant above unchanged (secret-safety, provenance,
-determinism).
+Also a party to (authored elsewhere / cross-cutting): `pubsub-protocol`, `repo-vfs`, `service-lookup` — see `scaffold/contracts/`.
 
 ## Non-obvious tests (conformance + correctness)
 

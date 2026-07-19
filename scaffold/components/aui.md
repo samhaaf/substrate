@@ -131,7 +131,7 @@ AUI consumes the mesh's cross-cutting planes, not a fixed roster of services.
 stub track. Recorded now so the cross-cutting planes stay shaped for a
 voice consumer.*
 
-- **`aui-mesh`** (aui ↔ mesh; MISSING — aui's assigned pair, wave2-plan §3c).
+- **`aui-mesh`** (aui ↔ mesh; authored — aui's assigned pair, wave2-plan §3c).
   *Purpose:* the single entry surface by which the audio interface drives the
   whole mesh. *Rough shape (the load-bearing point):* **NOT a new protocol —
   a thin composition of three already-designed cross-cutting edges**:

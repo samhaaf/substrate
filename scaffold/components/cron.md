@@ -197,8 +197,7 @@ carried but DST correctness is explicitly out of scope for v1 (naive is blessed)
   enable / list / run-now for "on node N" and "anywhere" jobs; cross-cutting,
   surface-schema-style (one shared document, every service a party — the
   wave2-plan §5.4 model). Rides `mesh-transport`/`pubsub-protocol` on the wire; the
-  client half is `mesh-client`. **MISSING stub — proposed below.**
-  *(scaffold/contracts/cron-api.md — to be created by the per-pair round)*
+  client half is `mesh-client`. *(authored: scaffold/contracts/cron-api.md)*
 
 **Internal-lib seams (compiled-in, NOT contract edges — INTENT #29/#45; the Ring-4-
 rides-Ring-3 wiring from `mesh-core.md`):**
@@ -236,7 +235,7 @@ deterministic-`event_id` single-fire semaphore (with its CAP-honest partition
 caveat), the fire-on-wake-vs-skip misfire policy with grace/coalesce, the emit-to-
 queues (never pub/sub) decision, the naive-wall-clock racing evaluator, and the
 pg_cron-replacement decomposition are all decided and specified. The `cron-api`
-wire shape is proposed below (approach-sketched → the per-pair round finalizes
+wire shape is authored in scaffold/contracts/cron-api.md (approach-sketched → the per-pair round finalized
 field names and reconciles against `queues`/`locks`). Two items are deliberately
 left downstream: the enqueue-dedup-on-merge property (needs the `queues` designer's
 confirmation) and the exact cron-expression crate/grammar (a fill-time pick, not a
@@ -263,198 +262,13 @@ conformance-checkable against the example data below.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-wave2-plan §3b assigns `cron` exactly one contract pair: **`cron-api`** — "any
-service ↔ mesh.cron — schedule 'on node N' / 'anywhere' tasks." Modeled as ONE
-shared document naming every service as a party (the surface-schema precedent,
-wave2-plan flag §5.4), not N per-pair files. Proposal only; the per-pair round
-reconciles it — in particular the `Event`/`Provenance` structs live in `types`
-(flagged for that designer) and the emit/dedup semantics touch `queues` and
-`locks` (flagged for those designers). I do NOT edit `scaffold/contracts/*`.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### Contract: `cron-api`
+- `cron-api` (any service ↔ mesh.cron) — schedule "on node N" / "anywhere" tasks. → `scaffold/contracts/cron-api.md`
 
-**Purpose.** The WS protocol a service speaks to its LOCAL mesh daemon on `:3649`
-to create, update, delete, enable/disable, inspect, and manually run scheduled
-jobs of both flavors. Registration is the *only* thing a service does with cron;
-everything after a fire is a `queues-api` + handler concern (concern 5/6). Job
-definitions persist in `replicated-kv` and converge fleet-wide, so a job created
-from the laptop fires on whatever node its `target` names.
+Also a party to (authored elsewhere / cross-cutting): `locks-api`, `queues-api` — see `scaffold/contracts/`.
 
-**Job definition + schedule (Rust-flavored; `CronJob` persists as a `replicated-kv`
-row, so it follows the wire-crossing discipline — `types` guardrail 4):**
-
-```rust
-struct CronJob {
-    job_id: JobId,                 // uuid; or caller "<owner>/<name>" for idempotent upsert
-    owner: String,                 // registering service slug (provenance + soft authz)
-    schedule: Schedule,
-    target: FireTarget,            // Anywhere (single-fire) | Node(NodeId) (pinned)
-    emit: EmitSpec,                // what event to publish + which queue
-    misfire: MisfirePolicy,
-    #[serde(default = "default_true")] enabled: bool,
-    // server-managed / bookkeeping:
-    version: LwwVersion,           // (wall_clock, node_id) — from replicated-kv
-    #[serde(default)] last_fired: Option<FireRecord>,  // advisory + misfire cursor
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-}
-
-enum Schedule {
-    Cron  { expr: String, #[serde(default)] tz: Option<String> },  // 5/6-field
-    Every { interval: Duration, #[serde(default)] anchor: Option<DateTime<Utc>> },
-    Once  { at: DateTime<Utc> },   // one-shot; auto-disables after fire
-    #[serde(other)] Unknown,       // older node tolerates a newer schedule kind (fail-safe: never fires it)
-}
-
-enum FireTarget { Anywhere, Node(NodeId), #[serde(other)] Unknown }
-
-struct EmitSpec {
-    target_queue: String,          // queue the cron.fired Event lands in
-    #[serde(default)] event_type: Option<EventType>,   // default "cron.fired"
-    #[serde(default)] payload: serde_json::Value,      // static declarative passthrough
-}
-
-enum MisfirePolicy {
-    Skip,                          // missed-while-asleep -> skip to next
-    FireOnWake { #[serde(default)] grace: Option<Duration>,
-                 #[serde(default = "default_true")] coalesce: bool },
-    #[serde(other)] Unknown,
-}
-
-struct FireRecord { scheduled_for: DateTime<Utc>, fired_at: DateTime<Utc>, fire_node: NodeId }
-```
-
-**The emitted event (published into `emit.target_queue`; `Event`/`Provenance` from
-`types`) — the payload half of the pg_cron leg:**
-
-```rust
-// types::event::Event<CronFired> with a DETERMINISTIC event_id:
-//   event_id = uuid_v5(CRON_NS, job_id ++ scheduled_for.to_rfc3339())
-struct CronFired {
-    job_id: JobId,
-    scheduled_for: DateTime<Utc>,  // nominal fire time (deterministic; single-fire key)
-    fired_at: DateTime<Utc>,       // actual wall-clock of firing
-    fire_node: NodeId,             // node that won the semaphore
-    catch_up: bool,                // true for a FireOnWake catch-up fire
-    payload: serde_json::Value,    // EmitSpec.payload, passed through untouched
-}
-```
-
-**Client → daemon (over the local WS):**
-
-```rust
-enum CronRequest {
-    Upsert  { job: CronJobSpec },     // create-or-replace; spec omits server-managed fields
-    Patch   { job_id: JobId, patch: CronJobPatch, expect_version: Option<LwwVersion> },
-    Delete  { job_id: JobId },
-    Enable  { job_id: JobId, enabled: bool },
-    Get     { job_id: JobId },
-    List    { owner: Option<String>, target: Option<FireTarget> },
-    RunNow  { job_id: JobId },        // fire immediately off-schedule (ops/testing); still single-fire
-}
-```
-
-**Daemon → client:**
-
-```rust
-enum CronResponse {
-    Job(CronJob),
-    Jobs(Vec<CronJob>),
-    Ok,
-    Error(CronError),
-}
-```
-
-**Error cases (`CronError` → `types` error taxonomy, likely a `mesh.rs`/new
-`cron.rs` sub-enum, per `types.md` concern 3):**
-
-- `InvalidSchedule { detail }` — un-parseable cron expr / zero interval / `Once`
-  in the past.
-- `UnknownJob { job_id }` — patch/delete/get/run-now on a missing job.
-- `UnknownTargetQueue { queue }` — `emit.target_queue` names no known queue.
-  (Soft: a job may be registered before its queue exists — flagged; the per-pair
-  round with `queues` decides register-time reject vs fire-time warn. Lean warn, so
-  schedule and queue can be provisioned in any order.)
-- `UnknownNode { node }` — `Node(N)` names a node not (yet) known to the registry.
-  Also soft/CAP-honest: N may be a currently-offline walk-along Pi (INTENT #84);
-  lean accept + fire-when-N-appears, rather than reject.
-- `NotOwner { job_id }` — a non-owner slug tried to modify another owner's job
-  (soft authz; access control is deprioritized per INTENT #39 but ownership is
-  cheap provenance).
-- `VersionConflict { job_id, current: LwwVersion }` — optimistic `expect_version`
-  on `Patch` lost the LWW race.
-
-Non-errors by design: firing a job while the target node is offline is **not** an
-error (deferred per misfire policy); an `Anywhere` fire where every racing node but
-one loses the semaphore is normal (the losers drop silently).
-
-**Version-sensitivity.**
-
-- **HIGH — `CronJob` rows cross nodes via `replicated-kv` anti-entropy**, so they
-  carry the full wire-crossing discipline (`types` guardrail 4): every added field
-  `#[serde(default)]`, no `deny_unknown_fields`, and the `Schedule`/`FireTarget`/
-  `MisfirePolicy` enums each reserve a `#[serde(other)] Unknown` arm so a newer
-  node's new schedule kind never breaks an older node's *deserialize*.
-- **Fail-safe evaluation of unknown variants:** a daemon that deserializes a job
-  into an `Unknown` `Schedule`/`MisfirePolicy` **must not fire it** — it skips and
-  lets a newer-version node handle it. For `Anywhere` jobs this is transparent (a
-  capable node fires). **Sharp edge (flagged):** a `Node(N)`-pinned job using a
-  schedule kind N's build cannot parse would silently *never* fire. Mitigation: new
-  schedule kinds should be gated on fleet-wide capability, or such jobs pinned only
-  to capable nodes — this couples cron's evolution to the OPEN mixed-version update
-  protocol (`supervision`, INTENT #66); carried there.
-- **The emitted `CronFired` / `Event`** follows the same additive discipline;
-  `event_type` is an open namespaced identifier (never a closed enum), so custom
-  per-job event types cost cron nothing.
-- **The deterministic `event_id` recipe (`uuid_v5(CRON_NS, job_id ++
-  scheduled_for)`) is itself a versioned contract detail** — it must be computed
-  identically on every node and across versions, because it is the cross-node
-  single-fire key *and* the consume-side dedup key. Changing the recipe is a
-  breaking, fleet-coordinated change (would let two versions double-fire the same
-  occurrence). Pinned in this contract, not left to fill.
-
-**Example data (one job + its fire, drawn from a shared example world for the
-Contract Harmonizer to reconcile with `queues-api`/`locks-api`).**
-
-```jsonc
-// A run-anywhere nightly rollup on the stack DB "analytics" — the pg_cron leg.
-// Registered once from the laptop; fires on whatever node wins the semaphore.
-{
-  "job_id": "vdb/analytics/nightly-rollup",
-  "owner": "vdb",
-  "schedule": { "Cron": { "expr": "0 3 * * *", "tz": "UTC" } },
-  "target": "Anywhere",
-  "emit": {
-    "target_queue": "vdb.analytics.jobs",
-    "event_type": "stack.analytics.nightly-rollup.tick",
-    "payload": { "db": "analytics", "task": "nightly_rollup" }
-  },
-  "misfire": { "FireOnWake": { "grace": "PT6H", "coalesce": true } },
-  "enabled": true,
-  "version": { "wall_clock": 1721448000000, "node_id": "laptop" },
-  "last_fired": { "scheduled_for": "2026-07-19T03:00:00Z",
-                  "fired_at": "2026-07-19T03:00:01Z", "fire_node": "pi-01" },
-  "created_at": "2026-07-01T12:00:00Z", "updated_at": "2026-07-01T12:00:00Z"
-}
-
-// The event pi-01 published into queue "vdb.analytics.jobs" at that fire.
-// event_id is deterministic: uuid_v5(CRON_NS, "vdb/analytics/nightly-rollup" +
-// "2026-07-19T03:00:00Z"). A trigger on that queue filters this event_type and
-// assembles the handler payload; the stack handler runs the rollup SQL.
-{
-  "event_id": "d5c2f4a1-...(v5)...",
-  "event_type": "stack.analytics.nightly-rollup.tick",
-  "occurred_at": "2026-07-19T03:00:01Z",
-  "provenance": { "origin_node": "pi-01", "origin_service": "cron",
-                  "emitted_at": "2026-07-19T03:00:01Z",
-                  "causation_id": null, "correlation_id": null },
-  "payload": {
-    "job_id": "vdb/analytics/nightly-rollup",
-    "scheduled_for": "2026-07-19T03:00:00Z", "fired_at": "2026-07-19T03:00:01Z",
-    "fire_node": "pi-01", "catch_up": false,
-    "payload": { "db": "analytics", "task": "nightly_rollup" }
-  }
-}
-```

@@ -366,7 +366,7 @@ availability-leaning alternative default is defensible — friction point).
 A branch (or cloud replica, concern 9) merges by shipping its element set
 (or a cursor-bounded delta: elements with Version > the last-merged
 watermark + the `write_id` set) to the home leg over `mesh-transport`
-(`Node{home}`, streamed — the `kg-mesh` sync frames, Proposed contracts).
+(`Node{home}`, streamed — the `kg-mesh` sync frames — scaffold/contracts/kg-mesh.md).
 The home leg applies Rules 1–2 transactionally, appends the provenance
 union, mints conflict rows, publishes conflict events, snapshots. Boring,
 resumable, no new gossip protocol — graphs are personal-scale (10³–10⁵
@@ -555,22 +555,22 @@ path named.
 Contract edges (cross-process, over the local `:3649` daemon; client halves
 via `mesh-client`):
 
-- **vdb** via **`kg-vdb`** (MISSING pair, assigned by wave2-plan §3b —
-  proposed below) — graph-database lifecycle: create-from-core-schema,
-  transactional mutation/query actions, kg-owned-database marking (no
-  direct writes), promotion delegation, restart-ladder inheritance.
-  *(scaffold/contracts/kg-vdb.md — to be created in the per-pair round.)*
-- **vfs** via **`kg-vfs`** (existing stub — content proposed below) —
+- **vdb** via **`kg-vdb`** (authored; assigned by wave2-plan §3b) —
+  graph-database lifecycle: create-from-core-schema, transactional
+  mutation/query actions, kg-owned-database marking (no direct writes),
+  promotion delegation, restart-ladder inheritance.
+  *(authored: scaffold/contracts/kg-vdb.md)*
+- **vfs** via **`kg-vfs`** (authored) —
   FileRef existence validation (`Exists`), body-blob reads, sweep
   re-validation. kg's database *files* reach VFS through VDB (`vdb-vfs`),
   not this edge — this edge is pointers only.
-- **mesh** via **`kg-mesh`** (existing stub — content proposed below) —
+- **mesh** via **`kg-mesh`** (authored) —
   registration (NodeScoped), the `kg/` replicated-kv keyspace claim, the
   `kg.*` pubsub topic prefix, and the branch/cloud **merge-sync frames**
   over mesh-transport. The S3 leg is REMOVED from this edge (inherited via
   vdb-vfs/aws-vfs + aws-mesh — concern 9; flagged supersession).
 - **any service ↔ kg** via **`kg-api`** (**NEW pair, not in the wave-2
-  inventory — surfaced here**; proposed below) — the consumer surface:
+  inventory — surfaced here**; authored: scaffold/contracts/kg-api.md) — the consumer surface:
   templates, graph lifecycle, mutations with push-back, queries, conflicts,
   trigger registration. Modeled surface-schema-style (one document, every
   consumer a party).
@@ -599,7 +599,7 @@ event semaphores), `cron-api` (pointer sweeps, cloud sync ticks).
 Internal-lib seams (compiled in, NOT contract edges): `execution-engine`
 (kg-nodes adapter — the locked shared lib), `mesh-client`,
 `substrate-types` (Provenance/Event/trigger vocabulary + the new
-`types::kg` module proposed below).
+`types::kg` module authored in the contracts).
 
 ## Nesting
 
@@ -663,221 +663,26 @@ replicated-kv, locks, vfs, vdb, execution-engine.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only; the per-pair round reconciles both sides. wave2-plan
-assigns kg: `kg-mesh` (existing), `kg-vfs` (existing), and `kg-vdb`
-(MISSING, §3b). `kg-api` is additionally surfaced as a NEW pair the
-inventory did not name (the consumer surface has to live somewhere;
-precedent: vfs surfacing `vfs-content`/`vfs-secrets`). Wire-crossing
-structs land in a new `types::kg` module under guardrail-4 discipline
-(additive-only, `#[serde(default)]`, `#[serde(other)]` on enums, explicit
-`v` on top-level messages). I do NOT edit `scaffold/contracts/*`.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `kg-vdb` (NEW stub to create — kg ↔ vdb; the locked-layering edge)
+- `kg-vdb` (kg ↔ vdb) — the locked-layering edge (KG built ON VDB). → `scaffold/contracts/kg-vdb.md`
+- `kg-vfs` (kg → vfs) — node→file pointers + existence validation (pointers only). → `scaffold/contracts/kg-vfs.md`
+- `kg-mesh` (kg ↔ mesh) — registration + graph replication (S3 leg rides aws). → `scaffold/contracts/kg-mesh.md`
+- `kg-api` (any service ↔ kg) — the consumer surface (added by the contract round as a deviation-by-addition). → `scaffold/contracts/kg-api.md`
 
-**Purpose.** KG built ON VDB, concretely: kg asks VDB to (1) provision a
-graph database from kg's core schema on a target (local SQLite-in-VFS /
-Supabase / RDS+Lambda), (2) execute transactional mutation batches and
-bounded queries against it (VDB uses `db` to run the actions — kg never
-speaks to `db` directly), (3) mark the database **kg-owned** (writes only
-via kg — direct mutation would bypass schema locking and provenance; VDB
-refuses non-kg writers), (4) run the copy/verify/switch **promotion** under
-kg's WholeFleet lock, and (5) fold the database into the restart/upgrade
-ladder (INTENT #86) with kg notified before its graphs' databases restart.
+Also a party to (authored elsewhere / cross-cutting): `ccd-escalation`, `kv-replication`, `projects-kg`, `service-lookup`, `vdb-vfs`, `vfs-content` — see `scaffold/contracts/`.
 
-**Message/struct sketch** (over mesh-transport to slug `vdb`; kg's
-REQUIREMENTS half — verbs reconcile with VDB's own batch-4 design):
-
-```rust
-// lifecycle
-struct EnsureGraphDb   { graph_id: GraphId, target: VdbTarget, core_schema_v: u16, owner: Slug /*"kg"*/ }
-struct EnsureGraphDbAck{ db_ref: DbRef, created: bool }        // idempotent
-struct DropGraphDb     { db_ref: DbRef, tombstone: bool }
-// data plane (transactional; kg's write path — concern 3b/4)
-struct ExecBatch  { db_ref: DbRef, ops: Vec<SqlOp>, atomic: bool /*always true from kg*/,
-                    provenance: Provenance }                   // VDB traces the touch too (its first-order home)
-struct QueryPage  { db_ref: DbRef, query: BoundQuery, cursor: Option<Cursor>, limit: u32 }
-// promotion (concern 8; INTENT #86 mechanics are VDB's)
-struct PromoteDb  { db_ref: DbRef, to: VdbTarget, lock: HoldToken /* kg.promote.<graph_id>, WholeFleet */ }
-enum   PromotePhase { Copying, Verifying, Draining /*handlers finishing*/, Switched, Failed { reason: String } }
-// lifecycle coupling
-struct DbRestartNotice { db_ref: DbRef, level: RestartLevel }  // vdb -> kg, pre-restart (ladder inheritance)
-```
-
-**Error cases.** `TargetUnavailable { target }` (cloud target unreachable —
-kg surfaces `kg.sync.deferred` / fails promotion cleanly);
-`NotOwner { db_ref }` (a non-kg writer touched a kg-owned database — VDB
-refuses; also raised to kg as an integrity alarm); `BatchConflict`
-(SQLite busy/transaction failure — kg retries, its serialization makes
-this rare); `VerifyFailed` during promotion (promotion aborts, old
-database stands — never a half-switch); `SchemaDrift { db_ref }` (the
-core schema on the target doesn't match `core_schema_v` — a migration of
-kg's OWN core schema is a VDB-mediated migration, versioned).
-
-**Version-sensitivity.** MEDIUM-HIGH. `core_schema_v` versions kg's
-generic table schema (bumps are rare, migrated via VDB across all graph
-databases — a fleet-wide choreography flagged to supervision).
-`VdbTarget`/`PromotePhase` are wire-crossing enums → `#[serde(other)]`.
-The `ExecBatch` op stream is VDB-version-coupled — the pair rides the
-mesh-transport proto floor. **Mid-batch reconciliation REQUIRED** with the
-vdb designer: verb granularity (raw-SQL ops vs typed graph ops), the
-kg-owned marking mechanism, and whether `DbRestartNotice` rides
-restart-protocol instead of this edge.
-
-### `kg-vfs` (existing stub — content proposed; kg → vfs, pointers only)
-
-**Purpose.** FileRef existence validation and body reads (concern 5). The
-graph database FILES are NOT on this edge (they reach VFS through
-`vdb-vfs`); this edge is node→file pointers.
-
-**Message/struct sketch** (consumes vfs.md's proposed kg-facing surface):
-
-```rust
-struct Exists      { path: String }
-struct ExistsReply { present: bool, content_hash: Option<Hash>, size: Option<u64> }
-struct ReadBody    { path: String, cache_local: bool }        // vfs-content Read, for body fetches
-// sweep batching (kg-side convenience over N Exists calls):
-struct ExistsBatch { paths: Vec<String> } -> Vec<ExistsReply>
-```
-
-kg-side semantics pinned here: write-time absent →
-`SchemaViolation` push-back (unless `allow_dangling_file_refs` →
-`pointer_state: pending`); sweep-time absent → `pointer_state: broken` +
-`kg.pointer.broken` + conflict row, node retained; pinned-hash mismatch →
-`pointer_state: stale`. A kg pointer does NOT pin a file against VFS
-eviction in v1 (advisory-only durability coupling — flagged).
-
-**Error cases.** None beyond a clean `present: false` (vfs.md's own
-stance); vfs unreachable during a sweep → sweep defers (`kg.sweep.deferred`
-event), pointers keep their last state — a sweep failure never flags
-pointers.
-
-**Version-sensitivity.** LOW — small additive request/reply shapes; `Hash`
-algorithm frozen by vfs's contract (SHA-256, absolute names). Batch form
-is additive sugar the per-pair round may drop.
-
-### `kg-mesh` (existing stub — content proposed; kg ↔ mesh)
-
-**Purpose.** Three sub-surfaces, all riding existing mesh protocols: (1)
-**registration** — `service-lookup` `Registration { slug: "kg",
-addressing: NodeScoped, meta.requires: [vdb, vfs] }`; every node's leg
-registers; graph-home authority is kg-level data (the descriptor), not
-registry data. (2) **the `kg/` keyspace claim** on replicated-kv
-(concern 2): `kg/graph/*` (LWW descriptors), `kg/template/*` (immutable
-versions — LWW-safe), with `pubsub_mirror: true, mirror_values: false`
-(metadata-only observability). (3) **merge-sync frames** — the branch/cloud
-element-delta stream of concern 4 Rule 4, over mesh-transport
-`Request`/`Response` with streamed body, addressed `Node{home}` (the same
-bulk pattern as `vfs-content`, NOT pubsub, NOT KV values):
-
-```rust
-struct MergeOffer  { graph_id: GraphId, branch_id: BranchId, since: Option<VersionWatermark>,
-                     element_count: u64, kg_proto: u16 }
-struct MergeDelta  { graph_id: GraphId, elements: Vec<ElementRecord>,   // node/edge rows w/ Version + write_id
-                     provenance: Vec<TraceRecord>, done: bool }         // paged; provenance unions (concern 6)
-struct MergeResult { graph_id: GraphId, applied: u64, conflicts_minted: u32, new_watermark: VersionWatermark }
-struct BranchRetire{ graph_id: GraphId, branch_id: BranchId }
-```
-
-The **S3 leg is removed from this edge** (round-3 stub supersession,
-concern 9): graph-file durability to S3 is inherited via vdb-vfs→aws-vfs;
-registry durability via replicated-kv's aws-mesh snapshots. Flagged for the
-harmonizer as a simplification with the requirement fully accounted for.
-
-**Error cases.** `HomeMoved { graph_id, home_node }` (descriptor changed
-mid-sync — retry against the new home); `ProtoTooNew { kg_proto }` (older
-home cannot merge a newer branch's delta — merge deferred, alarmed, never
-half-applied); `MergeBusy` (another merge holds `kg.merge.<graph_id>` —
-retry after); `PageTooLarge` (re-page). Transport failures are
-mesh-transport's (`PeerUnreachable`).
-
-**Version-sensitivity.** HIGH — deltas cross nodes on mixed versions and
-element records persist. `ElementRecord` is additive-only with the
-**Version total order frozen forever** (identical rule and reasoning as
-replicated-kv's `kv-replication`: reordering is data-corrupting, the one
-thing the contract may never do). `kg_proto` rides the first frame; an
-incompatible major defers the merge rather than degrading (a wrong merge
-is worse than a late one — deliberately stricter than kv's
-digest-fallback).
-
-### `kg-api` (NEW pair — any service ↔ kg; the consumer surface)
-
-**Purpose.** The one surface consumers speak (over the local `:3649`
-daemon, `AnyNode { slug: "kg" }` — the local leg relays to the graph's
-home transparently): templates, graph lifecycle, schema-locked mutation
-with push-back, bounded queries, conflicts/audit, trigger registration.
-Surface-schema-style: one shared document, every consumer a party
-(projects, org-future, ccd-driven agents, dashboard).
-
-**Message/struct sketch** (abridged to the load-bearing verbs;
-`types::kg`):
-
-```rust
-// templates
-PublishTemplate { template: TemplateVersion }            // static-validated; immutable once accepted
-GetTemplate     { template_id: TemplateId, version: Option<u32> } -> TemplateVersion
-// graph lifecycle
-CreateGraph  { slug: String, template: TemplateBinding, project: Option<ProjectId>,
-               environment: Option<EnvironmentId>, policy: Option<GraphPolicy>,
-               provenance: Provenance } -> GraphDescriptor
-MigrateGraph { graph_id: GraphId, to_version: u32 } -> MigrationReport   // whole-or-nothing (concern 3)
-PromoteGraph { graph_id: GraphId, target: CloudTarget } -> PromotePhase-stream
-ListGraphs   { filter: GraphFilter } -> Vec<GraphDescriptor>             // the global registry read
-// mutation — atomic batch, schema-locked, push-back (concerns 3/4)
-Mutate { graph_id: GraphId, ops: Vec<GraphOp>, provenance: Provenance }
-  -> MutateAck { applied: Vec<ElementVersion>, minted_branch: bool }     // honesty receipt (concern 4)
-enum GraphOp { CreateNode { node_type, props }, UpdateNode { node_id, props, if_version: Option<Version> },
-               DeleteNode { node_id }, CreateEdge { edge_type, from_id, to_id, props },
-               UpdateEdge { edge_id, props, if_version: Option<Version> }, DeleteEdge { edge_id } }
-// reads (concern 10 — all bounded)
-GetNode / GetEdge / Scan { graph_id, subject, type_filter, prop_filter, cursor, limit }
-Neighbors { graph_id, node_id, edge_types, direction, include_orphaned: bool /*default false*/, limit }
-Traverse  { graph_id, roots, edge_types, direction, max_depth, limit }   // depth+limit mandatory
-// conflicts + audit (concerns 4/6)
-ListConflicts { graph_id, unresolved_only: bool } -> Vec<ConflictRecord>
-Audit { graph_id, subject_id: Option<Uuid>, correlation_id: Option<Uuid>, cursor } -> Vec<TraceRecord>
-// triggers (concern 7; types::trigger UNCHANGED)
-RegisterTrigger { graph_id, trigger: Trigger } / DeregisterTrigger { graph_id, trigger_id }
-```
-
-**Error cases (`KgError`, lands in `types` `error/kg.rs` per the
-O(components) error-module discipline).**
-`SchemaViolation { violations }` — THE push-back, per-element diagnostics,
-batch atomic; `GraphNotFound` / `TemplateNotFound` /
-`TemplateVersionYanked`; `GraphHomeUnreachable { graph_id, home_node }` —
-the typed CP outcome under `OfflineWrites::Refuse` (catchable; the caller's
-partition seam); `VersionConflict { current }` — optimistic `if_version`
-failed (local CAS at the serialization point — genuinely safe here, unlike
-distributed CAS, because writes serialize at home); `MigrationRejected
-{ report }` — whole-graph validation failed, graph untouched;
-`GraphBusy { op }` — promotion/migration/merge holds the graph;
-`InvalidTraversal` — missing depth/limit; `TriggerInvalid` — static
-validation failure (queues' property, same reason). Non-errors by design:
-creating an edge to a `pointer_state: broken` node (broken pointers flag,
-they don't poison); `Mutate` on a branch under `Allowed` succeeds with
-`minted_branch: true`.
-
-**Version-sensitivity.** HIGH on the persisted vocabulary
-(`TemplateVersion`, `GraphDescriptor`, `GraphOp` — additive-only,
-`#[serde(default)]`, `#[serde(other)]`; `TemplateVersion` is additionally
-content-hashed so fleet/cloud copies are identity-checkable); MEDIUM on
-the request verbs (new verbs additive; `PartitionMergeExceeded`-class
-behavior — i.e. `GraphHomeUnreachable` and conflict surfacing — is the
-shape applications match on, so those variants freeze at harmonization,
-same rule as locks' required error). The three built-in templates are
-versioned DATA, not code — evolving them is `PublishTemplate v2` +
-per-graph opt-in migration, never a silent redefinition.
-
-### Consumer-side notes (owned elsewhere, kg is a party)
-
-- **`projects-kg`** (batch 7 authors): kg's half is `kg-api` verbatim plus
-  a projects-authored `project-tree@1` template; no kg-side special
-  surface — recorded so batch 7 starts from the substrate half above.
-- **`ccd-escalation`**: kg hosts the engine's `LoopDepthExceeded` arm
-  (execution-engine authors it; queues.md's union shape already reserves
-  it). kg contributes `context` enrichment only: graph_id, element ids,
-  the causal chain slice from `kg_provenance`.
+Component-side notes:
+- `ccd-escalation` participation: kg hosts the engine's `LoopDepthExceeded` arm
+  (execution-engine authors it); kg contributes `context` enrichment only —
+  graph_id, element ids, the causal chain slice from `kg_provenance` (not
+  captured in the contract file).
+- `projects-kg`: kg's half is `kg-api` verbatim + the projects-authored
+  `project-tree@1` template (recorded in the contract file).
 
 ## Non-obvious tests (conformance + correctness)
 

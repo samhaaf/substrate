@@ -364,19 +364,19 @@ service; `SecretsError` lands in `types::error::secrets` (the reserved slot).
   — exists, requirements-only; this design proposes its content below.)*
 - **db** via `db-secrets` — secrets drives `db`'s existing Supabase-Vault
   module (`vault.rs`) as the Supabase push adapter, over WS/CLI, never linked
-  (INTENT #29/#105). *(MISSING — proposed below.)*
+  (INTENT #29/#105). *(authored at the contract round.)*
 - **vdb**/`stack` via `vdb-secrets` — the local-mesh-database push adapter
   (BUILD) + connection-string/credential use-without-seeing for cloud targets.
-  *(MISSING — proposed below.)*
+  *(authored at the contract round.)*
 - **repo** via `repo-secrets` — repo names the secret↔workflow linkage; secrets'
   GitHub-Actions adapter pushes values on `git push` (injection-on-push, the
-  v1 capability). *(MISSING — proposed below.)*
+  v1 capability). *(authored at the contract round.)*
 - **rollup** via `rollup-secrets` — raw/ID addressing from rollup content;
   `llm_safe` fail-or-degrade governs; the no-secret-in-LLM-output invariant
-  (concern 8). *(MISSING — proposed below.)*
+  (concern 8). *(authored at the contract round.)*
 - **aws** via `aws-secrets` — AWS Secrets Manager push adapter (DESIGN-ONLY,
   lives in `aws`) **and** the S3 CSE runtime-key handoff + the MRK-derived
-  genesis snapshot-key resolution (concern 7). *(MISSING — proposed below.)*
+  genesis snapshot-key resolution (concern 7). *(authored at the contract round.)*
 - **environments** via `secrets-environments` — pushing secrets into a
   specific environment (anticipated; environments is a L6 stub). *(stub-track
   anticipated — named below, content deferred.)*
@@ -428,189 +428,19 @@ to a cheap model — the failure mode is silent disclosure, not a crash.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only — the per-pair round reconciles; I do NOT edit
-`scaffold/contracts/*`. Structs land in `types` (`types::secrets` for the
-shared vocabulary; `SecretsError` in the reserved `types::error::secrets`).
-The `SecretsAdapter` trait is an internal lib boundary, NOT a contract.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-Shared vocabulary referenced by every edge below:
+- `secrets-mesh` — (secrets ↔ mesh) — registration + the mesh-brokered `secrets/` keyspace. → `scaffold/contracts/secrets-mesh.md`
+- `db-secrets` — (secrets → db) — the Supabase Vault push adapter (REUSE, over the wire). → `scaffold/contracts/db-secrets.md`
+- `vdb-secrets` — (secrets ↔ vdb) — local-mesh-db push adapter (BUILD) + credential use-without-seeing. → `scaffold/contracts/vdb-secrets.md`
+- `repo-secrets` — (secrets ↔ repo) — GitHub-Actions injection-on-push (THE v1 capability). → `scaffold/contracts/repo-secrets.md`
+- `rollup-secrets` — (secrets ↔ rollup) — raw/ID addressing under llm_safe. → `scaffold/contracts/rollup-secrets.md`
+- `aws-secrets` — (secrets ↔ aws) — SM push (DESIGN-ONLY) + S3 CSE keys + genesis resolution. → `scaffold/contracts/aws-secrets.md`
+- `secrets-environments` / `openrouter-secrets` — stub-track (anticipated, content deferred). → `scaffold/contracts/secrets-environments.md`, `scaffold/contracts/openrouter-secrets.md`
 
-```rust
-// types::secrets
-pub struct SecretRef { pub id: Uuid, pub name: String, pub scope: SecretScope, pub version: u32 }
-pub enum SecretScope { Global, Project{project:String}, Database{project:String,db:String}, Environment{project:String,env:String} }
-pub struct SecretMeta { pub r#ref: SecretRef, pub updated_at: DateTime<Utc>, pub adapters: Vec<AdapterKind>, pub provenance: Provenance }
-pub struct CallerContext { pub service_slug: String, pub llm_safe: bool, pub purpose: Option<String> }
-pub enum AdapterKind { Supabase, LocalMeshDb, GitHubActions, AwsSecretsManager }
-```
+Also a party to (authored elsewhere / cross-cutting): `db-control-plane`, `pubsub-protocol`, `service-lookup` — see `scaffold/contracts/`.
 
-```rust
-// types::error::secrets
-pub enum SecretsError {
-    NotFound { name: String },
-    RawRefusedLlmSafe { secret: String },     // llm_safe raw request, fail mode
-    NotDecryptable,                            // this node holds ciphertext but no MRK (unenrolled replica)
-    KeychainUnavailable(String),               // root-of-trust access failed
-    DecryptFailed,                             // AEAD tag / AAD mismatch (tamper or wrong key)
-    AdapterFailed { adapter: AdapterKind, detail: String },
-    ScopeInvalid(String),
-    Store(String),                             // mesh-brokered KV surface error
-}
-```
-
-### `secrets-mesh` (secrets ↔ mesh) — registration + the mesh-brokered `secrets/` keyspace
-
-- **Purpose.** Two facets over the local mesh daemon (`:3649`, single-port
-  locality): (a) ordinary registration/resolution (`service-lookup` instance);
-  (b) a **keyspace-scoped KV surface** giving the registered secrets service
-  put/get/scan/watch over the `secrets/` keyspace of `replicated-kv` — opaque
-  ciphertext blobs, `Replication::All` (≥3 satisfied), `expiry_events:false`,
-  `mirror_values:false`. Only the registered `secrets` slug may touch it (mesh
-  enforces).
-- **Message/struct sketch** (over `pubsub-protocol`/mesh WS):
-  ```rust
-  struct SecretsKvPut  { path: String, blob: Bytes, if_version: Option<u32> } // blob = the envelope, opaque
-  struct SecretsKvGet  { path: String } -> Option<SecretsKvEntry>
-  struct SecretsKvScan { prefix: String } -> Vec<SecretsKvEntry>
-  struct SecretsKvEntry { path: String, blob: Bytes, kv_version: Version }     // Version from types::kv
-  struct SecretsKvWatch { prefix: String } -> stream<SecretsKvEvent>           // key+version only, never blob on the mirror
-  ```
-- **Error cases.** `KeyspaceAccessDenied` (caller is not the `secrets` slug),
-  `Store(...)` (wraps `KvError` — incl. `PartialReplication` surfaced so a
-  `set` can report "written locally + on N peers, M pending"),
-  `VersionMismatch` (CAS on `if_version`).
-- **Version-sensitivity.** The blob is opaque end-to-end — the envelope format
-  (concern 2) versions *inside* the blob (a 1-byte format tag), so KV and mesh
-  never parse it and secret-format churn never bumps `kv_proto`. Rides KV's
-  frozen `Version` total order. Registration/resolve is a plain
-  `service-lookup` instance.
-
-### `db-secrets` (secrets → db) — the Supabase Vault push adapter (REUSE, over the wire)
-
-- **Purpose.** Push a secret's value into a Supabase project's `vault.secrets`
-  by driving `db`'s existing `vault.rs` — over `db-control-plane` WS or the
-  `db vault set` CLI, **never by linking `substrate-db`** (INTENT #29). Also
-  covers metadata `exists`/`remove` and rendering the `reference_sql`
-  expression so handlers reference the secret at runtime without storing
-  plaintext.
-- **Message/struct sketch.**
-  ```rust
-  // secrets -> db (maps onto db vault set/rm/exists over db-control-plane)
-  struct DbVaultPush   { env: String, name: String, value_ciphertext_channel: SecureValue, description: Option<String> }
-  struct DbVaultRemove { env: String, name: String }
-  struct DbVaultExists { env: String, name: String } -> bool
-  // db -> secrets
-  struct DbVaultReceipt { name: String, outcome: SetOutcome }   // Created|Updated, from vault.rs
-  ```
-  `SecureValue` denotes the value crosses a non-LLM, in-mesh confidential
-  channel (mesh-relayed WS between two trusted services) — it is the plaintext
-  going secret→db-vault; it never transits an LLM path.
-- **Error cases.** `AdapterFailed{Supabase,...}` wrapping db's typed
-  `NotImplemented` (the `sqlite` driver has no Vault — degrade cleanly),
-  connection/SQL errors stringified at the boundary (db's error never becomes
-  a secrets type — types.md guardrail).
-- **Version-sensitivity.** Low — `vault.rs`'s surface is stable, bound-param
-  SQL; adapter is a thin shim. If `db` gains the operator-authorized
-  reconciliation (its keychain reads become secrets-mediated), that is a `db`
-  change tracked in `db.md`, additive to this edge.
-
-### `vdb-secrets` (secrets ↔ vdb) — local-mesh-db push adapter (BUILD) + credential use-without-seeing
-
-- **Purpose.** (a) Push a secret into a `vdb`/stack-hosted local SQLite
-  database's secret facility (the SQLite equivalent of Supabase Vault: an
-  encrypted column + decrypt-at-read view, keys rooted in secrets — the adapter
-  v1 actually builds). (b) Hand `vdb` connection strings/credentials for its
-  Supabase/AWS cloud targets, use-without-seeing (vdb receives a `SecretRef` +
-  a `use(ref, connect)` verb, or a resolved connection assembled by secrets).
-- **Message/struct sketch.**
-  ```rust
-  struct VdbSecretPush   { project:String, db:String, name:String, value:SecureValue }
-  struct VdbCredentialUse{ r#ref: SecretRef, target: CloudTarget } -> ConnectionHandle // secrets connects; vdb never sees raw
-  enum   CloudTarget { Supabase{project_ref:String}, AwsRds{arn:String} }
-  ```
-- **Error cases.** `AdapterFailed{LocalMeshDb,...}`, `NotFound`,
-  `RawRefusedLlmSafe` (if a vdb *handler* is flagged llm_safe — normally not).
-- **Version-sensitivity.** Medium — `CloudTarget` grows with vdb's adapter
-  matrix (Supabase/RDS now, more later); additive, `#[serde(other)]` reserved.
-
-### `repo-secrets` (secrets ↔ repo) — GitHub-Actions injection-on-push (THE v1 capability)
-
-- **Purpose.** repo owns the secret↔workflow *linkage* and, on `git push`,
-  asks secrets' GitHub-Actions adapter to push linked values into the repo's
-  Actions secrets (libsodium sealed-box under the repo's Actions public key).
-- **Message/struct sketch.**
-  ```rust
-  // repo -> secrets (on push, per linked secret)
-  struct GhSecretPush   { owner:String, repo:String, gh_name:String, r#ref: SecretRef }
-  struct GhSecretRemove { owner:String, repo:String, gh_name:String }
-  // secrets -> repo
-  struct GhPushReceipt  { gh_name:String, pushed:bool }
-  ```
-  secrets resolves `ref` → plaintext internally (non-LLM path), seals it,
-  PUTs to the GH API; the value never returns to repo. repo supplies only
-  linkage + identity.
-- **Error cases.** `AdapterFailed{GitHubActions, detail}` (GH API/auth
-  failure — the GH PAT is itself a Global secret here), `NotFound{ref}`.
-- **Version-sensitivity.** Low — GH Actions secrets API is stable; the linkage
-  shape is repo's to evolve. rollup is explicitly EXCLUDED from GH-Actions
-  content (repo.md) — this edge carries only value push, never templating.
-
-### `rollup-secrets` (secrets ↔ rollup) — raw/ID addressing under llm_safe
-
-- **Purpose.** rollup resolves secret references embedded in fragments; secrets
-  enforces the `llm_safe` fail-or-degrade so no raw secret enters LLM-bound
-  rollup output (concern 8, both sides).
-- **Message/struct sketch.**
-  ```rust
-  struct RollupSecretResolve { r#ref_or_name: SecretRefOrName, form: InsertForm, caller: CallerContext }
-  enum   InsertForm { Reference, Raw }
-  enum   ResolveOutcome { Reference(SecretRef), Raw(SecureValue), DegradedToReference{ r#ref:SecretRef, warning:String } }
-  ```
-- **Error cases.** `RawRefusedLlmSafe{secret}` (fail mode) — else
-  `DegradedToReference` (degrade mode, the default) carrying the operator's
-  warning text; `NotFound`.
-- **Version-sensitivity.** Low, but the invariant is FROZEN: `Raw` under
-  `caller.llm_safe==true` must NEVER be returned — that arm is unreachable by
-  contract, part of the contract text, not commentary.
-
-### `aws-secrets` (secrets ↔ aws) — SM push (DESIGN-ONLY) + S3 CSE keys + genesis resolution
-
-- **Purpose.** Three things, all through the `aws` crate's WS surface (INTENT
-  #105 — the adapter *lives in* `aws`): (a) **DESIGN-ONLY** AWS Secrets Manager
-  push (data contract designed, not built v1); (b) hand `aws`/`vfs` the S3
-  client-side-encryption **runtime** key for the overflow tier
-  (use-without-seeing, `aws` is a trusted non-LLM caller → raw allowed);
-  (c) the **genesis** kernel-state snapshot key resolution (concern 7): NOT a
-  stored secret — `HKDF(MRK, "mesh-kv-snapshot")`, so a dead mesh restores from
-  the operator's keychain/offline MRK with no running secrets service.
-- **Message/struct sketch.**
-  ```rust
-  // (a) DESIGN-ONLY: secrets -> aws
-  struct AwsSmPush { region:String, sm_name:String, value:SecureValue } // NOT built v1; contract only
-  // (b) runtime S3 CSE key: aws/vfs -> secrets
-  struct S3CseKeyGet { scope: SecretScope } -> SecureValue               // aws is non-llm_safe; raw allowed
-  // (c) genesis: NOT a secrets-service call — aws/mesh derive locally from the keychain MRK
-  //     documented here as the resolution of KV's aws-mesh circularity, no message
-  ```
-- **Error cases.** `AdapterFailed{AwsSecretsManager, ...}` (design-only —
-  never fires in v1), `KeychainUnavailable`/`NotDecryptable` for the CSE key on
-  an unenrolled node.
-- **Version-sensitivity.** The SM adapter is design-only so its wire is a
-  placeholder to be pinned when built. The **genesis-key rule is frozen** —
-  changing the KDF label or source is a data-corrupting change (old snapshots
-  become unrecoverable), exactly the class KV froze for `Version`.
-
-### `secrets-environments`, `openrouter-secrets` — stub-track (anticipated, content deferred)
-
-Both partners are L6 stubs ("not implementing now"). Named per wave2-plan §3c
-so the pairs exist; content is deferred to when those modules leave the stub
-track. **`secrets-environments`:** pushing/scoping secrets into a specific
-environment — rides the `Environment{project,env}` scope (concern 6) and the
-existing adapters targeted at that environment's backing store; no new
-mechanism, just an environment-addressed push. **`openrouter-secrets`:**
-storage/rotation of per-key OpenRouter API keys — ordinary Global/Project
-secrets with rotation; `openrouter-mgmt` reads a `SecretRef`, never the raw
-key, and uses it via a proxied call. Both satisfy the invariants above
-unchanged.

@@ -232,10 +232,10 @@ atomic operations (model swap, KV save/restore) are `CriticalSection`, because
 interrupting them orphans a half-spawned server or leaves store/disk inconsistent.
 This is consistent with measurement isolation (concern 2): benchmark yields both
 to scheduled priority≥1 work *and* to restarts; it is the universal yielder.
-**Flagged as a friction point** to reconcile with inference.md in the per-pair
-round — I believe my transition table is the correct one and inference.md should
-adopt it; the change is small (one row) and inference.md explicitly delegated the
-transitions to this module.
+**RESOLVED at harmonization in this module's favor:** inference.md's concern-4
+table adopted the one-row change (benchmark sweep reports `Idle`), and
+benchmark.md's batch-scoped `CriticalSection` label carries a supersession
+note. Operator confirmation still pending (friction report).
 
 `foreground_running()` is cheap: because exclusivity (concern 2) makes benchmark
 and real work **mutually exclusive on the engine**, the scheduler tracks a single
@@ -443,199 +443,19 @@ Sequence the whole module **after** `telemetry` (owns `effective_max_concurrent`
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only; the per-pair round reconciles both sides. I do NOT edit
-`scaffold/contracts/*`. wave2-plan §3a makes `scheduler` a party to seven
-inference-internal pairs. Three I **author** (`model-ensure`; the scheduler side
-of `benchmark-collections`; my consumption side of `kernel-confidence`); four I
-**consume** and note against the authoring neighbor (`engine-exec` — engine;
-`system-state` — telemetry, plus the one field I ask it to add; `api-dispatch` —
-api; `store-access` — store). All are **in-process Rust API surfaces** (compiled
-into `inference`), not serialized wire contracts — the "schema" is the trait/method
-surface the Skeleton Builder freezes; version-sensitivity is N/A (the whole
-`inference` crate revs as one binary, INTENT #45). Structs reference
-`types::{system, restart, completion, model}`.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `kernel-confidence` (scheduler → telemetry) — the consumption side (co-authored)
+- `kernel-confidence` — (scheduler → telemetry) — the consumption side (co-authored). → `scaffold/contracts/kernel-confidence.md`
+- `system-state` — (telemetry → scheduler) — consumer side; the `effective_max_concurrent: Option<u32>` field the scheduler asked for LANDED in the authored contract (additive, `None`-tolerant fallback). → `scaffold/contracts/system-state.md`
+- `benchmark-collections` (benchmark → scheduler) — the scheduler-side exclusivity guarantee. NOTE: scheduler's benchmark-as-`Idle` interruptibility position WON at harmonization (inference.md concern-4 adopted it; operator confirmation pending). → `scaffold/contracts/benchmark-collections.md`
+- `model-ensure` — (scheduler → models; **models owns**) — ensure-downloaded before swap. Contract resolution: models' authored `ModelEnsure` trait superseded scheduler's `ensure_downloaded`/`EnsureState` consumer sketch (owner wins; scheduler's semantics preserved). → `scaffold/contracts/model-ensure.md`
+- `engine-exec` — (scheduler → engine) — consumer note + my call obligations (engine authors). → `scaffold/contracts/engine-exec.md`
+- `api-dispatch` — (api → scheduler) — scheduler-provided methods (api authors). → `scaffold/contracts/api-dispatch.md`
+- `store-access` — (scheduler ↔ store) — consumer note (store authors). → `scaffold/contracts/store-access.md`
 
-- **Purpose.** The scheduler reads the kernel's `effective_max_concurrent` at the
-  current operating point to drive admission (concern 1). `benchmark` reads the
-  *other* half of this edge ("where is confidence lowest?"); telemetry authors the
-  fitted-surface/confidence query. This proposal pins **the scheduler's read**.
-- **Surface (the scheduler's default read is the `SystemState` scalar, concern 1):**
-  ```rust
-  // Default hot path: telemetry stamps this on SystemState each sample; scheduler reads it.
-  //   sys.effective_max_concurrent: Option<u32>
-  //     Some(k) => kernel is confident here: sustain k parallel completions at this
-  //                operating point (observed pressure × resident model × parallelism)
-  //     None    => kernel confidence below threshold at this point → scheduler falls
-  //                back to the scalar memory heuristic (concern 1c)
-  // Optional (approach-sketched, off the hot path): an explicit query telemetry may expose
-  //   fn effective_max_concurrent_at(&self, op: OperatingPoint) -> Option<u32>;
-  //   struct OperatingPoint { model_id, est_output_len, parallelism, mem/cpu/gpu pressure }
-  ```
-- **How the scheduler uses it.** ONLY to set the admission target ceiling
-  (concern 1b); it never writes the kernel, never triggers a fit, and never blocks
-  on it (a stale/absent read degrades to the fallback, never an error). Under
-  **benchmarking mode the scheduler ignores this read** and admits to physical
-  `max_concurrent` (concern 2.5 — the kernel must not clamp its own training data).
-- **Error cases.** None surfaced to the scheduler: `None` is a normal branch (the
-  fallback), not an error. A telemetry read that would block is treated as `None`.
-- **Conformance requirement.** With `effective_max_concurrent: Some(k)`,
-  `slots_to_admit` returns `k.min(max_concurrent).saturating_sub(running)` below
-  hard pressure and `0` at/above hard pressure; with `None`, it reproduces today's
-  scalar-heuristic outputs **exactly** (the existing `admission.rs` tests pass
-  unchanged). Under benchmarking mode, admission uses `max_concurrent` regardless
-  of `effective_max_concurrent`.
+Also a party to (authored elsewhere / cross-cutting): `node-state-poll` — see `scaffold/contracts/`.
 
-### `system-state` (telemetry → scheduler) — consumer note + the ONE field I ask telemetry to add
-
-- **Purpose.** The per-tick `SystemState` snapshot the scheduler classifies for
-  pressure and admission. Authored by `telemetry`; I consume it. Wave-2 ask:
-  **add `effective_max_concurrent: Option<u32>`** to `types::system::SystemState`
-  (concern 1) — the field wave-1 flagged as stubbed/absent (OQ-2).
-- **Consumer note.** The scheduler reads `memory_pressure` (hard/soft gates,
-  unchanged), `resident_model` (swap decision), `running_count`/`pending_count`
-  (bookkeeping), and the new `effective_max_concurrent` (admission target). It
-  treats the GPU fields as honest-estimate-flagged (`is_gpu_estimate`) but does
-  not itself render the tilde — that is the dashboard/surface's job.
-- **Version-sensitivity.** `effective_max_concurrent` is additive
-  (`#[serde(default)]` → `None` on older producers, which the fallback handles), so
-  a scheduler build reading an older telemetry's `SystemState` simply always takes
-  the scalar path — no break. (Same-binary in practice; the additive discipline
-  matters only for the `/v1/system/state` wire read via `node-state-poll`.)
-
-### `benchmark-collections` (benchmark → scheduler) — the scheduler-side exclusivity guarantee (I author)
-
-- **Purpose.** Benchmark submits priority-0 `request_full_system` sweep collections
-  *through* the scheduler; the scheduler **guarantees measurement isolation**
-  (concern 2). Benchmark owns *which* completions to submit and re-plans discarded
-  ones; the scheduler owns the exclusivity/preemption semantics.
-- **Surface (how benchmark reaches the scheduler — grounded in real code).**
-  Benchmark inserts a `CollectionRow{ request_full_system: true }` and priority-0
-  `CompletionRequest`s (`preemption_threshold: Some(1)`) via `store` +
-  `scheduler.notify_new_work()` (today's `lib.rs`/`suite.rs` path is preserved). No
-  new submit API is required — the exclusivity lives in the scheduler's admission
-  gate, keyed on the completion fields benchmark already sets.
-- **The guarantee (scheduler side).**
-  ```
-  admit a preemption_threshold=Some(t) completion  ⟺  no pending/running work has priority >= t
-  a priority>=t arrival                             ⟹  preempt every running preemption_threshold=Some(t) completion THIS tick
-  a preempted background completion                 ⟹  Cancelled + DISCARDED (benchmark re-plans); never recorded
-  benchmarking mode admission target                =  physical max_concurrent (kernel bypass, concern 2.5)
-  ```
-- **Error cases.** A benchmark completion that fails on its own (engine error) goes
-  through the normal `mark_failed` path — benchmark distinguishes a *discarded*
-  (preempted) sample from a *failed* one via the terminal state (`Cancelled` vs
-  `Failed`). No scheduler-specific error type.
-- **Conformance requirement.** (a) With any priority≥1 work pending/running, zero
-  priority-0 completions are admitted; (b) a priority≥1 `submit` during a running
-  sweep transitions all running priority-0 completions to `Cancelled` within one
-  tick and does not record their runs as benchmark samples; (c) with no priority≥1
-  work, priority-0 completions admit up to physical `max_concurrent` (not the
-  kernel target).
-
-### `model-ensure` (scheduler → models) — ensure-downloaded before swap (I author)
-
-- **Purpose.** Before `execute_model_swap` loads a target model, the scheduler
-  ensures its weights are present, and surfaces download-pipeline status (unblocks
-  the no-op `download_model` REST stub — model-ensure.md). Today `execute_model_swap`
-  fails with `ModelNotDownloaded` if `file_path` is absent (`lib.rs:428`); wave-2
-  routes that miss into `models`' resumable pipeline instead of a hard fail.
-- **Surface (scheduler calls `models`; models authors its internals):**
-  ```rust
-  trait ModelEnsure {                       // implemented by models
-      // idempotent: returns the local path if resident, else kicks/observes the pipeline
-      async fn ensure_downloaded(&self, model_id: &ModelId) -> Result<EnsureState>;
-      fn download_status(&self, model_id: &ModelId) -> Option<DownloadProgress>;
-  }
-  enum EnsureState { Ready { path: String }, InProgress { pct: f32 }, NotFound }
-  ```
-- **How the scheduler uses it.** In `execute_model_swap`: call `ensure_downloaded`;
-  on `Ready{path}` proceed to `engine.swap_model`; on `InProgress` leave the
-  triggering completions `Pending` and `notify_new_work` when the download completes
-  (models signals via the store/notify) — the swap simply retries a later tick; on
-  `NotFound` fail the completions with a catchable `ModelNotFound`. The scheduler
-  never blocks its tick on a download.
-- **Error cases.** `EnsureState::NotFound` → the scheduler fails the pending
-  completions for that model (they can't ever run) rather than looping. A transient
-  download error surfaces as `InProgress` retryable, not a completion failure.
-- **Conformance requirement.** A swap target that is not yet downloaded does NOT
-  fail the completion outright while a download is in progress — it stays `Pending`
-  and the swap succeeds once `ensure_downloaded` returns `Ready`.
-
-### `engine-exec` (scheduler → engine) — consumer note + my call obligations (engine authors)
-
-- **Purpose.** The scheduler's submit/drain/swap/cancel surface over the engine.
-  **engine.md authors the `EngineExec` trait**; I consume it and pin the *behavioral
-  preconditions the scheduler owns.*
-- **Call obligations (the scheduler's side of the behavioral contract).**
-  - **Drain-or-cancel before swap.** `swap_model` does NOT drain (engine.md); the
-    scheduler MUST `drain(timeout)` (normal) or `cancel_all_running` + requeue
-    (hard pressure) before `swap_model` — exactly today's `execute_model_swap`.
-  - **`is_swapping()` bracket.** The scheduler sets its own `swapping` flag around
-    the whole `execute_model_swap` (drain→swap), so the interruptibility function
-    reports `CriticalSection` for the *entire* swap window, not just engine's inner
-    `is_swapping()` (concern 3).
-  - **Preemption uses `abort_slot`/`cancel_all_running` + the discard/requeue split**
-    (concern 2.3): background (benchmark) → `mark_cancelled`; foreground →
-    `requeue_with_circuit_breaker`.
-  - **Crash-recovery drain.** `take_running_ids()` feeds requeue on boot
-    (`recover_running`), the L4 backstop (inference.md concern 4).
-- **Error cases (consumed).** `EngineError::BackendUnavailableOffline` from
-  `swap_model` is **catchable** — the scheduler holds the completions `Pending`
-  (does not fail them) and retries provisioning opportunistically (engine.md
-  concern 3). `DrainTimeout` → requeue remaining ids and proceed with the swap
-  (today's behavior, `lib.rs:444`).
-
-### `api-dispatch` (api → scheduler) — scheduler-provided methods (api authors)
-
-- **Purpose.** The in-process methods `api` dispatches into (api holds no business
-  logic). **api.md authors the dispatch surface**; I note what the scheduler
-  provides.
-- **Scheduler-provided surface (grounded in real code + the wave-2 addition):**
-  ```rust
-  // on Arc<Scheduler>:
-  fn submit(&self, req: CompletionRequest) -> Result<CompletionId>;   // lib.rs:222
-  async fn cancel(&self, id: CompletionId) -> Result<()>;             // lib.rs:273
-  fn is_queue_empty(&self) -> bool;                                   // benchmark idle-gate + api
-  // WAVE-2 (api.md concern 2 — closes the ws.rs poll-loop gap):
-  fn subscribe_tokens(&self, id: CompletionId)
-        -> Option<broadcast::Receiver<StreamEvent>>;
-  ```
-- **`subscribe_tokens` note.** The per-completion token `broadcast::Sender` is
-  created at **submit** time (not admit — so a client connecting immediately after
-  `POST /v1/completions` cannot miss it; api.md concern 2), lives in a scheduler-owned
-  registry keyed by `CompletionId`, is fed by the engine tee via the `token_tx`
-  the scheduler already creates in `admit_pending` (`lib.rs:398` — today the
-  receiver is dropped; wave-2 keeps it in the registry), and is dropped shortly
-  after the terminal event. `None` = no live channel (already terminal or never
-  admitted) → api falls back to a store replay (a normal branch, not an error).
-  **This is the concrete producer side of the seam api specified as a consumer** —
-  the wave-1 "receiver currently dropped here; the WebSocket layer will wire this
-  up in a future phase" comment is now resolved on the scheduler side.
-- **Error cases.** `submit` validates the model exists (`get_model`, `lib.rs:224`)
-  → `ModelNotFound`; `cancel` on a terminal completion → `CompletionTerminal`
-  (mapped to 409 by api). No new error types.
-
-### `store-access` (scheduler ↔ store) — consumer note (store authors)
-
-- **Purpose.** The scheduler's per-tick queue reads + state transitions. **store.md
-  authors the contract**, including the single-writer `Mutex<Connection>` discipline
-  and the observer-reentrancy invariant; I consume it.
-- **Consumer note.** The scheduler uses the priority-ordered pending views
-  (`select_pending`, `select_pending_for_model` — `(priority DESC, created_at ASC)`,
-  which is what makes `FifoSelection`/exclusivity correct without an in-memory
-  queue), the transitions (`mark_running`/`mark_cancelled`/`mark_failed`/
-  `requeue_preempted`), `get_model`/`get_completion`, and `recover_running` on boot.
-  It respects the store contract: **no `.await` while holding a store guard**
-  (every scheduler store call is a synchronous take-and-drop), and it never
-  registers a `StoreObserver` (that seam is inference's `PromiseRegistry` + the
-  future KG observer — store.md concern 2). The queue's crash-survival property
-  (queue == a store query, so no separate recovery) is preserved verbatim.
-- **Wave-2 touchpoint.** `insert_completion` gains a `&Provenance` arg (store.md
-  concern 4) that `api` stamps from the inbound request envelope; the scheduler's
-  `submit` **threads that provenance through** rather than defaulting it at the
-  store boundary (a defaulted provenance is a silent INTENT #85 violation) — the
-  provenance originates at `api`, passes through `submit`, lands on the row.

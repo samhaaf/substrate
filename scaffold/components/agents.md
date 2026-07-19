@@ -106,7 +106,7 @@ per-application owning agents become instances managed through this umbrella.
 stub track. Recorded now so CCD, inference, and org are shaped for a future
 type-generalizing consumer from the start.*
 
-- **`agents-ccd`** (agents → ccd; MISSING stub — `agents`' assigned pair, and
+- **`agents-ccd`** (agents → ccd; authored — `agents`' assigned pair, and
   already sketched from CCD's side in ccd.md). *Purpose:* the generalization
   layered ON CCD — `agents` drives CCD's process-supervision + admission +
   metering engine for whatever agent type it is managing. *Rough shape:*

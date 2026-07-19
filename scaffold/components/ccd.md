@@ -317,7 +317,7 @@ caller) over `spend-ccd`. Provenance on every row satisfies INTENT #85/#92.
   — spawn/track/signal/stream/reap by stable handle; the multi-agent substrate
   Org layers on. **I author this edge (wave 2).**
 - **mesh.queues(DLQ) / execution-engine** via `ccd-escalation`
-  (scaffold/contracts/ccd-escalation.md — MISSING; queues proposed the DLQ half,
+  (scaffold/contracts/ccd-escalation.md — authored; queues proposed the DLQ half,
   execution-engine the loop-depth arm) — **I own the receiver + `EscalationAck`
   (wave 2).**
 - **rollup** via `rollup-ccd` (scaffold/contracts/rollup-ccd.md) — on-demand
@@ -344,12 +344,12 @@ caller) over `spend-ccd`. Provenance on every row satisfies INTENT #85/#92.
   downstream maximalist consumer; inbound-to-CCD only, DEFERRED/open (Org is the
   maximalist-consumer exception). Callers like Org call CCD **with a priority**
   the budget engine honors. I record the shaped-for surface; content deferred.
-- **projects** via `ccd-projects` (MISSING; stub-track) — thread↔project (+
+- **projects** via `ccd-projects` (authored; stub-track) — thread↔project (+
   optional environment) linkage stored in CCD's ledger. Anticipated; projects is
   L6-stub, content deferred.
-- **spend** via `spend-ccd` (MISSING; stub-track) — pull-shaped spend queries of
+- **spend** via `spend-ccd` (authored; stub-track) — pull-shaped spend queries of
   the usage ledger. Anticipated; spend is L6-stub, content deferred.
-- **agents** via `agents-ccd` (MISSING; stub-track) — the future generalization
+- **agents** via `agents-ccd` (authored; stub-track) — the future generalization
   layered on CCD (never absorbs it). Anticipated; content deferred.
 - **Cross-cutting mesh protocols** (surface-schema-style, one stub many parties —
   I am a party, I do not author): `pubsub-protocol` (ccd-events transport),
@@ -432,218 +432,25 @@ math in the admission engine regress silently without rigor. Fill `strategy` wit
 a shared understanding of `scheduler`'s admission (co-read scheduler.md concern 1)
 so the convergence is real in code, not just on paper.
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only — the per-pair round reconciles both sides. I do NOT edit
-`scaffold/contracts/*`. Shared vocabulary lands in `types::ccd`
-(`CcdError` in `types::error::ccd`). Reused from `types`: `Provenance`,
-`Event`, `EventType`, `Interruptibility`, `RestartPriority`; from `types::rollup`:
-`PluginManifest`, `RollupProvenance`, `MaterializeResult`, `CallerContext`,
-`SlotMap`, `ScopeChain`, `OutputSink`.
+The per-pair contract round authored these edges; the contract files are authoritative (including Reconciliation notes). Detailed proposals formerly here are superseded by them.
 
-Shared vocabulary I introduce:
+- `agent-management` (ccd ↔ cloud-code agents; shaped-for org/agents/dashboard/aui) — spawn/track/signal/stream/reap by stable handle; every spawn admission-gated with a `BudgetGrant`. → `scaffold/contracts/agent-management.md`
+- `ccd-escalation` (queues + execution-engine → ccd) — the single investigation surface; ccd owns the receiver + `EscalationAck`. Reconciled: execution-engine's enriched `LoopDepthExceeded` arm won (`engine` → `host`); `Investigating.thread` is `ThreadId`. → `scaffold/contracts/ccd-escalation.md`
+- `rollup-ccd` (ccd → rollup) — on-demand plugin materialization; `AssemblePlugin` is the same shape as `rollup-mesh::Materialize` (`runtime_slots` name kept on this edge); provenance recorded on `agent_runs`. → `scaffold/contracts/rollup-ccd.md`
+- `llm-calls` (ccd / future agents → inference `/v1`) — thin alias of `v1-completion-api` + CCD metering; NOT the Claude Code path (INTENT #40 — CC usage meters from `agent-management` `TurnUsage`). → `scaffold/contracts/llm-calls.md`
+- `service-registration` (ccd ↔ mesh.service-registry) — register/resolve by slug; instance of `service-lookup`. → `scaffold/contracts/service-registration.md`
+- `ccd-events` (ccd → mesh observability) — `ccd.*` event catalog; CONFIRMED live (wave-1 "pending" marker resolved) and re-grounded as a topic-prefix catalog on `pubsub-protocol`, not a parallel WS wire; `AgentEvent` vocabulary lives in `agent-management`. → `scaffold/contracts/ccd-events.md`
+- `org-on-ccd` (org → ccd) — maximalist-consumer shaping (callers pass a `priority` the strategy engine honors); content DEFERRED. → `scaffold/contracts/org-on-ccd.md`
+- `ccd-projects` (ccd ↔ projects, stub-track) — thread↔project(+environment) ledger linkage; content deferred (INTENT #51/#68). → `scaffold/contracts/ccd-projects.md`
+- `spend-ccd` (spend → ccd, stub-track) — pull-shaped usage-ledger queries; content deferred (INTENT #41/#68). → `scaffold/contracts/spend-ccd.md`
+- `agents-ccd` (agents → ccd, stub-track) — future generalization layered on CCD, never absorbs it; content deferred (INTENT #49). → `scaffold/contracts/agents-ccd.md`
+- `surface-schema` (ccd is a publishing party) — observable-surface schema: budget/limit meters, agent roster, strategy set, escalation feed. → `scaffold/contracts/surface-schema.md`
+- Cross-cutting protocols ccd is party to (does not author): `pubsub-protocol` (ccd-events transport) → `scaffold/contracts/pubsub-protocol.md`; `restart-protocol` (interruptibility = f(live agent work)) → `scaffold/contracts/restart-protocol.md`; `queues-api` (escalation delivery) → `scaffold/contracts/queues-api.md`; `locks-api` (single-writer on limit surfaces) → `scaffold/contracts/locks-api.md`; `cron-api` (periodic limit/percentile recompute + session-reset roll) → `scaffold/contracts/cron-api.md`
 
-```rust
-// types::ccd
-pub struct AgentHandle(pub String);      // stable, survives CCD restart if the process survives
-pub struct ThreadId(pub String);
-pub struct StrategyId(pub String);
-pub enum ModelTier { Cutting(String), Standard(String), Fast(String) }  // open string inside — never a closed model enum
-pub struct BudgetGrant { pub token_ceiling: u64, pub max_parallel: u32,
-                         pub strategy_id: StrategyId, pub expires_at: DateTime<Utc> }
-// Strategy / Rule / Predicate / Term / AdmissionVerdict / Guard — see "The strategy language".
-pub struct AdmitRequest { pub estimated_tokens: u64, pub priority: u8,
-                          pub caller: CallerContext, pub thread: Option<ThreadId> }
-pub enum AdmissionOutcome { Admitted(BudgetGrant), Throttled(BudgetGrant),
-                            Deferred { retry_after: Duration }, Denied { reason: String } }
-```
-
-```rust
-// types::error::ccd
-pub enum CcdError {
-    UnknownHandle(String),
-    SpawnFailed { reason: String },
-    AgentExited { handle: String, code: Option<i32> },
-    StrategyInvalid { message: String },       // parse/validate of declarative Strategy data
-    BudgetExhausted { window: String },        // hard-pressure defer surfaced as error where sync
-    LimitUnobserved { surface: String },       // no ledger data yet to bind a Term (warm-start)
-    Rollup(String),                            // stringified rollup-side failure — never becomes a rollup type
-    Inference(String),                         // stringified — future agents path only
-    Registry(String),
-}
-```
-
-### `agent-management` (ccd ↔ cloud-code agents) — I author
-
-- **Purpose.** Spawn/track/signal/stream/reap Claude Code processes by stable
-  handle; the surface Org and the dashboard build on. Every spawn carries a
-  `BudgetGrant` (from the strategy engine) the supervisor enforces.
-- **Message/struct sketch** (control API over mesh WS + the thin CLI):
-  ```rust
-  // caller -> ccd
-  enum AgentCmd {
-      Spawn  { task: String, workdir: PathBuf, plugin: Option<PluginManifest>, slots: SlotMap,
-               caller: CallerContext, priority: u8, thread: Option<ThreadId>,
-               project: Option<ProjectId>, environment: Option<EnvironmentId> }, // -> Result<AgentHandle, CcdError>
-      Send   { handle: AgentHandle, input: String },        // deliver input/signal to a running agent
-      Signal { handle: AgentHandle, sig: AgentSignal },      // Interrupt | Pause | Resume | Terminate
-      List   { filter: AgentFilter },                        // -> Vec<AgentStatus>
-      Logs   { handle: AgentHandle, from: Option<u64> },     // -> stream of AgentEvent
-  }
-  enum AgentSignal { Interrupt, Pause, Resume, Terminate }
-  struct AgentStatus { handle: AgentHandle, state: AgentState, thread: Option<ThreadId>,
-                       usage: TurnUsageSummary, grant: BudgetGrant }
-  enum AgentState { Spawning, Running, Idle, Exited { code: Option<i32> }, Failed { reason: String } }
-  // ccd -> caller (also the ccd-events payloads)
-  enum AgentEvent { Started { handle: AgentHandle }, TurnCompleted { handle: AgentHandle, usage: TurnUsage },
-                    ReportEmitted { handle: AgentHandle, path: PathBuf }, StateChanged { handle: AgentHandle, state: AgentState } }
-  ```
-  When `plugin` is present, ccd first calls `rollup-ccd` to materialize it, then
-  spawns Claude Code pointed at the materialized dir; the `RollupProvenance` is
-  recorded on the `agent_runs` row.
-- **Error cases.** `SpawnFailed`, `UnknownHandle`, `AgentExited`,
-  `BudgetExhausted`/`Deferred` (spawn is admission-gated: a `Spawn` that the
-  strategy defers returns `Deferred{retry_after}`, not a live handle).
-- **Version-sensitivity.** MEDIUM. `AgentCmd`/`AgentEvent`/`AgentState` are
-  wire-crossing (Org, dashboard) → additive-only, `#[serde(other)]` on every enum,
-  `#[serde(default)]` on new fields. Handle format is an open string.
-
-### `ccd-escalation` (mesh.queues(DLQ) / execution-engine → ccd) — I own the receiver
-
-- **Purpose.** The single investigation surface for the two conditions INTENT
-  #70/#89 treat as one pattern: queues **dead-letter exhaustion** and
-  execution-engine **loop-depth-exceeded**. I own the **receiver + `EscalationAck`**;
-  queues authors the `DeadLetter` arm, execution-engine the `LoopDepthExceeded`
-  arm (agreed in queues.md's `ccd-escalation` proposal — I adopt its struct
-  verbatim so the union is one shape).
-- **Struct sketch** (adopted from queues.md; receiver-side additions marked):
-  ```rust
-  struct EscalationRequest {                    // authored jointly (queues + execution-engine arms)
-      escalation_id: Uuid,
-      kind: EscalationKind,
-      correlation_id: Option<Uuid>,             // provenance root — the causal chain to investigate
-      provenance: Provenance,
-      context: serde_json::Value,               // failure_history / chain snapshot for the agent
-  }
-  enum EscalationKind {
-      DeadLetter { queue: QueueName, dlq: QueueName, trigger_id: TriggerId,
-                   event_id: Uuid, receive_count: u32, last_error: String },   // queues authors
-      LoopDepthExceeded { engine: Slug, depth: u32, threshold: u32 },          // execution-engine authors
-      // #[serde(other)] reserved so a future third kind never breaks ccd's deserialize
-  }
-  enum EscalationAck { Investigating { thread: ThreadId }, Declined { reason: String } }  // I OWN this
-  ```
-- **Receiver behavior (mine).** Dedup on `escalation_id` (the `escalations`
-  table — an escalation may arrive twice under at-least-once, INTENT #95). On a
-  new escalation: assemble the investigation plugin via `rollup-ccd`, spawn a
-  high-priority investigating agent through the ordinary admission engine, thread
-  the `correlation_id`/`context`, and return `Investigating { thread }`. If the
-  strategy defers under hard budget pressure, return `Declined { reason }` (the
-  escalation re-delivers / retains on the DLQ — never lost silently).
-- **Error cases.** `CcdUnreachable` (offline → the escalation dead-letters on the
-  DLQ's own retention, alarmed). Delivery is `queues-api` at-least-once +
-  `escalation_id` idempotency.
-- **Version-sensitivity.** MEDIUM — matches queues.md. `EscalationKind` additive
-  with `#[serde(other)]`; `context` open `Value`. **Ownership for the per-pair
-  round: queues = `DeadLetter`, execution-engine = `LoopDepthExceeded`, ccd =
-  receiver + `EscalationAck`.**
-
-### `rollup-ccd` (ccd → rollup) — consumer view; rollup authored the shape
-
-- **Purpose.** On-demand plugin assembly: a `PluginManifest` + runtime slots →
-  a materialized plugin dir (Claude-Code layout), no symlinks/copies. I consume
-  rollup.md's authored `AssemblePlugin`/`AssembleResult` (the `Materialize` shape).
-- **Consumer-side contract.** I send `AssemblePlugin { manifest, runtime_slots,
-  scope, output: OutputSink::LocalDir(dir) }` and receive `AssembleResult {
-  result: MaterializeResult, plugin_json }`; I record `result.provenance`
-  (fragment id:version + content_hash per entry) on the agent's `agent_runs` row
-  as its bill-of-materials (exact reproducibility of what an agent ran with).
-- **Invariants I rely on.** A missing fragment/slot fails the *whole* assembly
-  (a plugin is all-or-nothing) → I surface `Rollup(..)` to the caller/priority
-  owner and do NOT spawn. A degraded secret is a warning in provenance, never a
-  value in the plugin (INTENT #94 — rollup's `rollup-secrets` guarantees no secret
-  reaches the agent).
-- **Version-sensitivity.** MEDIUM — additive per rollup.md; the Claude-Code
-  output layout (`skills/…`, `agents/…`, `commands/…`, `plugin.json`) is stable.
-
-### `llm-calls` (ccd → inference) — metering-shaped; RESERVED for future agents
-
-- **Purpose.** **NOT the Claude Code path** (INTENT #40 LOCKED). Two clarifications
-  this edge must carry so the harmonizer doesn't mis-wire it: (a) Claude Code
-  usage is metered from the **CC subprocess output stream** (`agent-management`
-  `TurnUsage`), NOT via inference — inference sees no Claude Code traffic; (b)
-  the edge is reserved for the FUTURE `agents` umbrella's non-CC agent types,
-  which CAN choose models and MAY route completions to local inference — those
-  reuse `v1-completion-api` (api.md's fleet-facing surface), and CCD meters that
-  usage into the same ledger.
-- **Metering-shaped view.** When a future non-CC agent's completion goes through
-  `/v1/`, CCD records a `usage_records` row from the response usage block; no new
-  inference surface is introduced (reuse `v1-completion-api`). No content this
-  wave beyond the reservation + the metering shape.
-- **Version-sensitivity.** LOW (reserved). Flag for the per-pair round: keep
-  `llm-calls` a thin alias of `v1-completion-api` + a metering note; do not
-  author a Claude-Code-specific completion surface (there is none).
-
-### `service-registration` (ccd ↔ mesh.service-registry) — instance of `service-lookup`
-
-- **Purpose.** CCD registers its own `slug=ccd -> host:port` and resolves
-  `inference`/`rollup`/peers by slug; first-class registrant AND resolver.
-  Instance of the authored `service-lookup`; no new schema — CCD uses
-  `lib/mesh-client`'s `register`/`resolve`. Static-fallback on a single box.
-- **Version-sensitivity.** LOW — rides `service-lookup`/`mesh-client` verbatim.
-
-### `ccd-events` (mesh ← ccd) — agent-lifecycle/usage WS stream — I author
-
-- **Purpose.** CCD emits an agent-lifecycle/run/usage event stream mesh's
-  observability plane aggregates (mirrors `inference-events`/`gc-events`).
-  **Round-9: the wave-1 "proposed, pending confirmation" marker is STRUCK —
-  confirmed in scope** (wave2-plan §5 flag #6).
-- **Message/struct sketch** (typed `Event<P>` payloads over `pubsub-protocol`,
-  `types` envelope):
-  ```rust
-  // event_type: "ccd.agent.started" | ".turn_completed" | ".exited"
-  //           | "ccd.budget.throttled" | "ccd.budget.deferred" | "ccd.limit.observed"
-  //           | "ccd.escalation.received" | "ccd.escalation.investigating"
-  enum CcdEventPayload {
-      Agent(AgentEvent),
-      Budget { verdict: AdmissionOutcome, window: String, pressure: f64 },  // pressure = used/ceiling
-      LimitObserved { surface: String, limit_tokens: u64 },
-      Escalation { escalation_id: Uuid, kind_tag: String, thread: Option<ThreadId> },
-  }
-  ```
-- **Error cases.** None on the emit path (lossy broadcast — a dropped event never
-  blocks agent work; mesh's fan-out reconciles per-node subscription).
-- **Version-sensitivity.** MEDIUM — dashboard/observability consumers → additive-
-  only; event `payload` is `Value` at the generic relay/filter sites (types.md).
-
-### `org-on-ccd` (org → ccd) — shaped-for, DEFERRED (Org is the exception)
-
-- **Purpose.** Org is the maximalist downstream consumer; inbound-to-CCD only.
-  Content DEFERRED (Org is un-designed this pass). Recorded so `agent-management`,
-  `ccd-events`, and the priority-honoring admission engine are shaped for a broad
-  consumer from the start: **callers pass a `priority` the strategy engine
-  honors** (`AdmitRequest.priority`, `AgentCmd::Spawn.priority`), and Org reads
-  the whole agent roster + budget state through `agent-management`/`surface-schema`.
-- **Version-sensitivity.** N/A (deferred). No schema authored.
-
-### Stub-track anticipated contracts (content deferred — L6 stubs)
-
-- **`ccd-projects` (ccd ↔ projects).** thread↔project(+optional environment)
-  linkage. **What it will carry:** `agent_runs.project_id?`/`environment_id?`
-  are set at spawn (from `AgentCmd::Spawn`) and validated against projects when
-  projects leaves the stub track; projects reads CCD's per-project agent/usage
-  rollup. No new mechanism — fields already in the ledger + `agent-management`.
-  Content deferred (INTENT #51/#68).
-- **`spend-ccd` (spend → ccd).** pull-shaped spend queries. **What it will
-  carry:** a read-only query surface over `usage_records ⨝ agent_runs` grouped by
-  project/environment/caller/window (`UsageQuery -> UsageRollup`), returning token
-  counts + provenance; spend computes cost. Sources never push (INTENT #41/#68).
-  Content deferred.
-- **`agents-ccd` (agents → ccd).** the future generalization layered on CCD.
-  **What it will carry:** the `agents` umbrella manages non-CC agent types on top
-  of CCD's process-supervision + admission engine, reusing `agent-management` and
-  adding model-choice/inference-routing (the `llm-calls` path). Never absorbs CCD
-  (INTENT #49). Content deferred.
+Component-side notes:
+- Shared vocabulary lands in `types::ccd` (`CcdError` in `types::error::ccd`); rollup vocabulary (`PluginManifest`, `OutputSink`, …) is imported from `types::rollup`, never redefined.
 
 ## Non-obvious tests (conformance + correctness)
 

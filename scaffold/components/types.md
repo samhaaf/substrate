@@ -326,6 +326,13 @@ count has grown past the "same domain, judged at the time" call that put them in
 `system.rs`. Crate-root re-exports (`substrate_types::NodeInfo`) keep every
 existing import compiling — the move is additive at the public API.
 
+**`system.rs` wave-2 extension (acknowledged at harmonization):** telemetry
+extends `types::system::SystemState` with the pressure axes and the
+kernel-computed **`effective_max_concurrent: Option<u32>`** convenience scalar
+(telemetry.md concern 6; the scheduler's kernel-primary admission target —
+scheduler.md concern 1). All additive, `#[serde(default)]`, per guardrail 4;
+the authored shape lives in `scaffold/contracts/system-state.md`.
+
 ```rust
 pub type NodeId = String;            // Tailscale device name by convention
 
@@ -414,97 +421,27 @@ pass; both are conformance-checkable.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-`types` is a shared lib, so it is not a runtime party to any contract edge.
-What it contributes to wave 2 is the **shared struct vocabulary** that the
-cross-cutting, surface-schema-style protocol contracts are authored in. For each
-such contract that my modules ground, I propose the type-shape half below.
-Behavior (relay, routing, supervision, dashboard rendering) is the mesh side's
-proposal; these are reconciled in the per-pair round. I do NOT edit
-`scaffold/contracts/*` — these proposals live here only.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `pubsub-protocol` (every service ↔ mesh) — grounded by `pubsub.rs` + `event.rs` + `provenance.rs`
+- `pubsub-protocol` — (every service ↔ mesh) — grounded by `pubsub.rs` + `event.rs` + `provenance.rs`. → `scaffold/contracts/pubsub-protocol.md`
+  - Contract resolution: pubsub-relay's relay-authoritative shape won; this
+    file's first-cut `pubsub.rs` code sketch (typed `Envelope<P>`, per-message
+    `Ack`, flat `Topic`, `subscriber_id`) is superseded — typed `Envelope<P>`
+    survives only as the edge-decode convenience view. The merged canonical
+    `Provenance` (with `correlation_id`/`causation_id`) homes in
+    `provenance.rs`.
+- `surface-schema` — (every service → mesh dashboard) — grounded by `surface.rs`. → `scaffold/contracts/surface-schema.md`
+- `restart-protocol` — (mesh ↔ every service) — grounded by `restart.rs`; the contract adopts this crate's `RestartPriority` name and request-field `save_deadline` shape. → `scaffold/contracts/restart-protocol.md`
+- `queues-api` — (any service ↔ mesh.queues) — PARTIAL, event/provenance half only; the flagged trigger-home question closed concordant (home = `types::trigger`, shape authored by queues). → `scaffold/contracts/queues-api.md`
+- `node-state-poll` / `service-lookup` (mesh ↔ inference / any service) — node-identity half only (`node.rs`). → `scaffold/contracts/node-state-poll.md`, `scaffold/contracts/service-lookup.md`
 
-- **Purpose:** the standard WS pub/sub wire vocabulary — typed envelopes,
-  topics, subscription filters, control frames — that mesh relays "where it
-  needs to go" (INTENT #53).
-- **Structs (from `types`):** `Envelope<P>`, `Topic`, `TopicFilter`,
-  `Subscription`, `PubSubClientMsg`, `PubSubServerMsg`, `Provenance`, and
-  `Event<P>` as the common payload. Wire form: JSON, tagged enums
-  (`#[serde(tag="type")]`) matching the existing `stream.rs` convention.
-- **Error cases:** `PubSubError { UnknownTopic, NotSubscribed, PayloadTooLarge,
-  Malformed }` on the server frame; transport/relay failures surface as
-  `SubstrateError::Mesh(MeshError::…)` on the mesh side (mesh's proposal).
-- **Version-sensitivity:** HIGH — envelopes cross nodes on possibly-different
-  `types` versions. `Envelope.v` is the anchor; additive-only payload evolution;
-  relay sites operate on `Envelope<serde_json::Value>` and must not
-  `deny_unknown_fields`. An unknown `EventType` string must route/filter as a
-  pass-through, never a hard error (open identifiers, guardrail 4).
+Also a party to (as struct home, authored elsewhere): `system-state` —
+`SystemState` lives in `types::system`; telemetry's `effective_max_concurrent:
+Option<u32>` extension is adopted there in dual form (best-effort convenience
+scalar on the snapshot + the authoritative `kernel-confidence` query),
+acknowledged in this file's body. → `scaffold/contracts/system-state.md`
 
-### `surface-schema` (every service → mesh dashboard) — grounded by `surface.rs`
-
-- **Purpose:** each service publishes a boring schema of its observable surface;
-  the dashboard renders every service's component from it (INTENT #46), with
-  stable agent-drivable ids (#16) and honest estimate markers (#9).
-- **Structs (from `types`):** `SurfaceSchema`, `SurfaceSection`, `SurfaceField`,
-  `SurfaceAction`, `SectionKind`, `ValueType`, `Unit`, `Honesty`, `DataSource`,
-  `ActionCall`. The published endpoint returns a `SurfaceSchema`; the dashboard
-  is a pure function of it.
-- **Error cases:** a service that fails to publish is simply absent from the
-  dashboard (mesh's reconciliation concern); a malformed schema →
-  `MeshError::MalformedSurfaceSchema { service }` (mesh side). No error type in
-  `types` for this — it is mesh's to raise.
-- **Version-sensitivity:** MEDIUM-HIGH — `SurfaceSchema.v` keys the
-  service-component-versioning story (#37); the dashboard must render an older
-  schema and ignore unknown `SectionKind`/`ValueType` variants gracefully
-  (`#[serde(other)] => Custom/Unknown`). Additive fields only.
-
-### `restart-protocol` (mesh ↔ every service) — grounded by `restart.rs`
-
-- **Purpose:** the two-way, priority-laddered graceful-restart choreography
-  built into every service (INTENT #77), plus observable interruptibility and
-  port-handoff (#76).
-- **Structs (from `types`):** `RestartRequest`, `RestartResponse`,
-  `RestartPriority` (LOCKED 4-level ladder), `RestartReason`, `Interruptibility`,
-  `PortHandoff`, `SocketHint`.
-- **Error cases:** protocol-level failures (service unreachable, no response
-  before deadline) are mesh's supervision concern →
-  `MeshError::{RestartTimeout, ServiceUnreachable}`. A service refusing a
-  sub-`SaveWindow` request via `Busy` is a normal outcome, not an error; at
-  `SaveWindow`/`Kill` the `Busy` response is ignored by mesh.
-- **Version-sensitivity:** MEDIUM — the 4-level ladder is LOCKED so the enum is
-  stable; `RestartReason` may gain variants (reserve `#[serde(other)]`).
-  `RestartRequest.v` anchors it. Cross-node because mesh on node A may supervise
-  via relayed control to a service, but restart is primarily node-local.
-
-### `queues-api` (any service ↔ mesh.queues) — PARTIAL, event/provenance half only
-
-- **Purpose:** publish typed events, register declarative triggers, receive
-  assembled handler payloads (INTENT #101/#103). `types` owns the **event and
-  provenance** vocabulary this rides; the queue/trigger/handler *operations* are
-  mesh.queues' proposal.
-- **Structs (from `types`):** `Event<P>`, `EventType`, `Provenance`.
-- **Boundary flag (for the queues design pass / harmonizer):** the **declarative
-  trigger struct** (filter expression + payload-assembly template, registered as
-  DATA — INTENT #103) is cross-cutting shared data authored by many services.
-  My recommendation is it lives in `types` (a future `trigger.rs`) since it is
-  pure declarative data used by ≥2 crates and is part of the `queues-api`
-  schema — satisfying the inclusion test. But its shape is queues' domain to
-  design; I flag it rather than pre-empt it. If it lands in `types`, it gets its
-  own module, never folded into `event.rs`.
-- **Version-sensitivity:** HIGH — events cross nodes and persist in queues;
-  `EventType` is an open identifier (never a closed enum), payloads additive.
-
-### `node-state-poll` / `service-lookup` (mesh ↔ inference / any service) — node-identity half only
-
-- **Purpose:** the `NodeInfo`/`NodeCapabilities` shared shape (OQ-3) that the
-  completion-router's affinity balancer and the service-registry read.
-- **Structs (from `types`):** `NodeInfo`, `NodeCapabilities`, `NodeId`,
-  `NodeRole`, `Accelerator`, and (unchanged) `SystemState` for the live snapshot.
-- **Error cases:** none owned by `types`; registry/poll failures are mesh's
-  (`MeshError::{NodeUnreachable, StaleSnapshot}`).
-- **Version-sensitivity:** MEDIUM — `NodeCapabilities` is additive-heavy (roles,
-  accelerator kinds, and later `DriveInfo` all grow); every field
-  `#[serde(default)]` so a newer node's richer capabilities don't break an older
-  peer's deserialize. `NodeRole`/`AcceleratorKind` reserve `#[serde(other)]`.

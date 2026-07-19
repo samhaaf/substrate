@@ -1,13 +1,12 @@
-# Contract: stack-mesh
+# Contract: stack-mesh — RENAMED (tombstone)
 
-## Parties
-stack  <->  mesh
+**Status: RENAMED to `vdb-mesh` (2026-07-19, wave-2 harmonization).**
+See `scaffold/contracts/vdb-mesh.md`.
 
-## What the edge carries
-Stack's mesh participation, all through the **local mesh daemon on `:3649`**
-(single-port locality, rounds 4–5): service registration/resolution (an
-instance of `service-lookup`) and distributed-handler coordination via mesh's
-internal `locks` lib (so a trigger fires once across the mesh). The shared
-handler/execution engine itself is an internal library, NOT part of this
-contract. Schema/example deferred. **requirements-only** (rounds 4–5 lock,
-2026-07-18).
+Per the round-8 lock and vdb.md's naming resolution, **`vdb` is the crate and
+the module; "stack" survives as the PATTERN name only**. The edge itself is
+unchanged: vdb's registration/catalog/locks participation through the local
+mesh daemon on `:3649` (single-port locality). One scope correction recorded
+in the new file: the old "distributed-handler coordination" framing is
+REDUCED per vdb.md concern 6. Operator sign-off on the rename is pending
+(friction report); if declined, the rename reverts mechanically.

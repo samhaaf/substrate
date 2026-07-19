@@ -21,8 +21,9 @@ admission}.rs` — `preemption_threshold`/`preemption_count`/`requeue_preempted`
 and the neighbor designs: `telemetry.md` + `scheduler.md` (wave-1, co-batch —
 the kernel triangle), `store.md` (batch 5 — the pressure-covariate columns +
 `sample_source`), `api.md` (batch 5 — `api-dispatch`'s benchmark slice +
-`/v1/benchmark/run`), `inference.md` (batch 5 — the interruptibility mapping in
-which a benchmark sweep is a `CriticalSection`), `completion-router.md` (batch 3
+`/v1/benchmark/run`), `inference.md` (batch 5 — the interruptibility mapping; NOTE: superseded at
+harmonization — a benchmark sweep now reports `Idle`, not `CriticalSection`,
+per scheduler.md concern 3), `completion-router.md` (batch 3
 — benchmark node-pinning is a first-class routed path), `supervision.md` (batch
 2 — the ladder benchmark must yield to), and `types.md`. INTENT
 #8/#9/#12/#15/#22/#38/#44/#77/#85.
@@ -129,7 +130,7 @@ Confidence at `x` is defined as a monotone transform of predictive variance
 (e.g. `1/(1+cv)` on the coefficient of variation); the **stop threshold θ and
 the lattice are config**, owned by benchmark; the **surface and the argmax are
 computed by telemetry** (it owns `X`; benchmark passes constraints and gets a
-candidate back — the `kernel-confidence` edge, proposed below). Cold-start
+candidate back — the `kernel-confidence` edge, authored). Cold-start
 (fewer than MIN_DATA_POINTS samples): telemetry returns a seeded
 low-confidence-everywhere surface and the argmax degenerates to a **space-
 filling first pass** (maximin over the lattice) — the loop needs no special
@@ -273,7 +274,18 @@ node (anything preempts it); **fleet-wise**, an in-flight batch is a
 wastes the idle window — inference.md concern 4 already reports it as such).
 Reconciliation, refining inference.md's mapping:
 
-- **CriticalSection is scoped to the in-flight batch, never the sweep.**
+> **Superseded at harmonization (label only).** The wave landed on
+> **scheduler.md concern 3's `Idle`** for a running sweep — including the
+> in-flight batch — as the reported interruptibility label (adopted into
+> inference.md's concern-4 table; the benchmark-collections reconciler
+> concurred). Benchmark's legitimate don't-waste-a-nearly-done-batch intent is
+> served by the L1 `WaitForIdle` rung waiting out the batch bounded by the
+> kernel ETA, not by a `CriticalSection` label. Everything below about *yield
+> behavior* (cancel at completion boundary, discard without penalty, never
+> block an update) still stands. Pending operator confirmation (friction
+> report).
+
+- **CriticalSection is scoped to the in-flight batch, never the sweep.** *(label superseded — see note above)*
   Between batches the orchestrator contributes `Idle`. `until` = the batch's
   kernel-estimated completion time (benchmark asks the kernel for the ETA of
   its own test — the kernel estimating its own next training point is not
@@ -305,7 +317,7 @@ targeting a *routing* fact, already designed on the router side
 - **`POST /v1/benchmark/run` pinned via `?node=N` / `Node{N, inference}`**
   reaches node N's api through the mesh front door (`:3649` → router → pinned
   forward, pin authoritative, no failover); api dispatches into N's local
-  orchestrator (`api-dispatch`, proposed below): `run_now { model_id?,
+  orchestrator (`api-dispatch`, authored): `run_now { model_id?,
   target? }` — an on-demand active-learning session (or a specific candidate
   region) that runs under the same isolation/validation rules, just without
   waiting for the idle timer. The response is the collection id; progress is
@@ -359,7 +371,7 @@ Boring seams, no new plumbing classes:
   CriticalSection `until`, and the refit notify; scheduler's
   `effective_max_concurrent` read is the other half of this stub, owned by
   scheduler/telemetry (see scaffold/contracts/kernel-confidence.md; benchmark
-  half proposed below).
+  half authored — scaffold/contracts/kernel-confidence.md).
 - **benchmark ↔ store** via `store-access` — `benchmark_runs` writes
   (covariates + `sample_source='benchmark'` + the additive `collection_id`
   ask), existing-run reads, and the isolation-window queries for batch
@@ -368,7 +380,7 @@ Boring seams, no new plumbing classes:
 - **api → benchmark** via `api-dispatch` — `/v1/benchmark/run` → `run_now`,
   `/v1/benchmark/status`; `/v1/benchmark/kernel` deliberately does NOT
   dispatch here (it is telemetry's kernel, api.md concern 7) (see
-  scaffold/contracts/api-dispatch.md; benchmark slice proposed below).
+  scaffold/contracts/api-dispatch.md; benchmark slice authored there).
 - **NON-edges (deliberate):** benchmark ↔ mesh does not exist (fleet pinning
   is `completion-router` + `v1-completion-api`, caller-side — concern 7);
   benchmark ↔ engine does not exist (the scheduler mediates all execution);
@@ -431,175 +443,15 @@ block.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only; the per-pair round reconciles both sides. I do NOT edit
-`scaffold/contracts/*`. wave2-plan §3a makes benchmark a party to
-`benchmark-collections` (initiator — authored fully here), `kernel-confidence`
-(benchmark half — telemetry owns the kernel; scheduler owns the
-`effective_max_concurrent` read half), `store-access` (consumer slice — store.md
-authored the surface; I consume and add one additive ask), and `api-dispatch`
-(the benchmark dispatch slice). Shared vocabulary lands in `types`
-(`CompletionRequest`/`CollectionRow`/`MetricsFlags` already exist;
-`KernelPoint`/`KernelConfidence` proposed for `types::kernel` or as
-telemetry-internal — telemetry's call, since this seam is in-process).
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `benchmark-collections` (benchmark → scheduler) — EXISTS; content proposed
+- `benchmark-collections` (benchmark → scheduler) — priority-0 exclusive sweep collections. → `scaffold/contracts/benchmark-collections.md`
+- `kernel-confidence` (telemetry.kernel ↔ benchmark) — the adaptive next-test-selection read/write surface. → `scaffold/contracts/kernel-confidence.md`
+- `store-access` — (benchmark ↔ store) — consuming store.md's proposal; one additive ask. → `scaffold/contracts/store-access.md`
+- `api-dispatch` — (api → benchmark) — benchmark slice proposed (supersedes the wave-1 shape). → `scaffold/contracts/api-dispatch.md`
+- `restart-protocol` — participation: a running sweep reports `Idle` (scheduler's position, adopted at harmonization; benchmark's batch-scoped `CriticalSection` label superseded — see concern 6 note). → `scaffold/contracts/restart-protocol.md`
 
-- **Purpose.** Benchmark submits priority-0, fully-preemptible, full-system-
-  exclusive cell batches through the scheduler, and relies on the scheduler's
-  isolation guarantees to make its measurements valid. In-process seam
-  (both libs compiled into `inference`), not a wire contract.
-- **Submission shape** (grounded in the real `suite.rs` request construction):
-  ```rust
-  // one cell batch = one CollectionRow { request_full_system: true,
-  //   save_partial_results: true, cancel_on_failure: false, state: Active }
-  // + `parallelism` CompletionRequests, each:
-  CompletionRequest {
-      priority: 0,
-      preemption_threshold: Some(1),        // ANY real work preempts instantly
-      collection_id: Some(batch_collection),
-      max_tokens: Some(output_len),          // dial
-      prompt: synthetic(input_len),          // dial (~4 chars/token filler)
-      temperature: Some(0.0),
-      metrics: MetricsFlags::ALL,
-      metadata: {"benchmark": true, "cell": {output_len, parallelism, input_len},
-                 "target_pressure_band": ...},   // wave-2: selection provenance
-      ..
-  }
-  // wave-2 additions vs the live code: cells come from the active-learning
-  // selection (concern 2), never a grid; output_len ranges to 100_000 clipped
-  // by model n_ctx; exactly ONE batch in flight per node.
-  fn submit(&self, req: CompletionRequest) -> Result<CompletionId>;   // existing
-  fn cancel(&self, id: CompletionId) -> Result<()>;                   // L2-abort path (concern 6)
-  ```
-- **Scheduler guarantees benchmark relies on (the contract's substance):**
-  (1) priority-0 work is admitted only when no priority≥1 work is pending or
-  running; (2) arrival of any priority≥1 work preempts running benchmark
-  completions immediately (`preemption_threshold` honored, `requeue_preempted`
-  increments `preemption_count` faithfully — the validation predicate's
-  evidence); (3) `request_full_system` collections run with no co-scheduled
-  non-member work; (4) preempted benchmark completions re-enter Pending and
-  are NOT silently re-run into a corrupted sample — benchmark cancels
-  rejected batches rather than letting requeued members re-execute
-  (benchmark-side obligation, stated so the scheduler needn't special-case).
-- **Error cases.** `SubstrateError::ResourceExhausted(id, n)` on
-  max_preemption_count (never reached in practice — benchmark cancels rejected
-  batches first); submit against an unloaded model triggers the ordinary swap
-  path (a benchmark batch may legitimately cause a model swap on an idle,
-  multi-model node — the swap cost is excluded from the measurement window,
-  which starts at first-member `Running`).
-- **Conformance requirement.** A preemption test: submit a cell batch, inject
-  a priority-1 completion mid-batch, assert every benchmark member is
-  preempted within one tick, `preemption_count > 0` on each, and the
-  submitting benchmark cancels the batch and writes zero rows.
-- **Version-sensitivity.** N/A — in-process, one binary (INTENT #45).
-
-### `kernel-confidence` (telemetry.kernel ↔ benchmark) — EXISTS; benchmark half proposed
-
-- **Purpose.** The query surface benchmark's active-learning loop drives:
-  "where, within what I can reach, are you least certain?" plus the ETA read
-  (CriticalSection `until`) and the refit notify. The stub's other consumer —
-  scheduler's `effective_max_concurrent` at the current operating point — is
-  scheduler/telemetry's half, deliberately not re-authored here; both halves
-  read ONE fitted surface (the stub stays one document, two read patterns).
-- **Query surface** (in-process, on telemetry's per-model kernel handle):
-  ```rust
-  struct KernelPoint {           // full axis vector — the kernel's domain
-      input_tokens: u32, output_tokens: u32, parallelism: u32,
-      mem_pressure: f32, cpu_utilization: f32, gpu_utilization: f32,
-  }
-  struct FeasibleRegion {        // benchmark-constructed (concern 3)
-      lattice: Vec<DialPoint>,               // context-clipped dial anchors
-      reachable_pressure: Vec<PressureBand>, // predicted-from-baseline bands
-      excluded: Vec<LatticeKey>,             // backoff table (concern 4)
-  }
-  struct CandidatePoint {
-      dials: DialPoint,
-      target_pressure_band: PressureBand,
-      confidence: f32,           // σ̂-relative, in [0,1] (concern 4's honesty rule)
-      expected_gain: f32,        // predictive variance at the point (concern 2)
-  }
-  // benchmark -> telemetry:
-  fn lowest_confidence(&self, region: &FeasibleRegion) -> Option<CandidatePoint>;
-      // None => min confidence >= θ over region (CONVERGED input) — θ is
-      // calibrated against residual variance σ̂², not absolute (concern 4)
-  fn confidence_at(&self, p: &KernelPoint) -> f32;          // dashboard + tests
-  fn estimate(&self, p: &KernelPoint) -> EstimatedDuration; // batch ETA (concern 6);
-      // cold-start-safe (existing conservative default path)
-  fn notify_new_samples(&self, model: &ModelId);            // cheap refit trigger (concern 8)
-  ```
-- **Error cases.** None — total functions; cold-start returns the seeded
-  low-confidence surface (space-filling degeneration, concern 2); a poisoned
-  internal mutex degrades to cold-start semantics (matching the live
-  estimator's behavior).
-- **Conformance requirement.** (a) Selection steering: with samples dense in
-  one lattice region only, `lowest_confidence` returns a candidate *outside*
-  it; (b) monotonicity: after `notify_new_samples` with an accepted sample at
-  point p, `confidence_at(p)` does not decrease; (c) `lowest_confidence`
-  respects `excluded` and `reachable_pressure` (never returns an excluded or
-  unreachable candidate) — the termination proof's load-bearing property.
-- **Version-sensitivity.** N/A in-process; if `KernelPoint`/confidence ever
-  serialize outward (`/v1/benchmark/kernel`, dashboard), that wire shape is
-  api/telemetry's and follows guardrail-4 additive discipline.
-
-### `store-access` (benchmark ↔ store) — consuming store.md's proposal; one additive ask
-
-- **Consumed as proposed** (store.md concern 5 / its `store-access` proposal):
-  `insert_benchmark_run` / `benchmark_runs_for_model` with the pressure-
-  covariate columns (`mem_pressure`, `cpu_utilization`, `gpu_utilization`,
-  `gpu_mem_used_bytes`, `is_gpu_estimate`, `sample_source`); benchmark writes
-  `sample_source='benchmark'` for accepted batches ONLY (concern 5),
-  telemetry writes `'observed'` (concern 3.2 — producer assignment to
-  confirm with telemetry).
-- **Additive asks (small, flagged for the per-pair round):** (1) a
-  **`collection_id` column on `benchmark_runs`** — batch identity for
-  post-hoc auditability of the batch-atomic invariant (concern 8); (2)
-  covariates recorded as **(mean, peak)** pairs for the pressure fields
-  (concern 1) — peak is the stress-test half of INTENT #8; if store prefers
-  single columns, mean-only is acceptable and peak rides `metadata_json`.
-- **Validation reads benchmark performs:** `count_by_state` (idle gate,
-  existing), per-collection member states (batch terminal detection), and a
-  **window query** — completions (any priority ≥ 1) with activity inside
-  [batch_start, batch_end] — for the isolation check (concern 5); expressible
-  over existing rows via `created_at`/state timestamps, no new store surface
-  required.
-
-### `api-dispatch` (api → benchmark) — benchmark slice proposed (supersedes the wave-1 shape)
-
-- **Purpose.** The node-internal dispatch for `/v1/benchmark/*`. Supersedes
-  the `schedule_if_idle(model_id, queue_empty)` shape api.md transcribed from
-  the live code (reconciliation flagged — api.md wrote down what exists;
-  wave-2 benchmark replaces it):
-  ```rust
-  // POST /v1/benchmark/run  (node-pinned via ?node= at the router — concern 7)
-  fn run_now(&self, model_id: Option<ModelId>, target: Option<DialPoint>)
-      -> Result<CollectionId>;
-      // on-demand active-learning session (or one specific candidate),
-      // same isolation/validation rules, skips the idle timer; 409-shaped
-      // error if a batch is already in flight (one per node, ever)
-  // GET /v1/benchmark/status
-  fn status(&self) -> BenchmarkStatus;  // { enabled, phase: Idle|Converged|Quiescent|Running{collection_id, cell, eta},
-                                        //   per_model: [{model_id, min_confidence, lattice_coverage, backoff_count}] }
-  // operator toggle (dashboard action)
-  fn set_enabled(&self, enabled: bool);
-  ```
-- `/v1/benchmark/kernel` does NOT dispatch here — it serves telemetry's
-  kernel (api.md concern 7; the local `fit_quadratic_tps` recompute is
-  deleted). Benchmark exposes selection/coverage *status*; telemetry exposes
-  the *surface*.
-- **Conformance.** `run_now` while a batch is in flight returns the
-  409-shaped error, never queues a second batch (the one-batch invariant is
-  api-visible); `status().phase` transitions Idle→Running→(Converged|Idle)
-  observably across a session.
-- **Version-sensitivity.** N/A in-process; `BenchmarkStatus` serializes to
-  the dashboard via api → additive-only, `#[serde(default)]` per guardrail 4.
-
-### `restart-protocol` — participation refinement (not an owned contract)
-
-Inference.md's interruptibility mapping (benchmark sweep ⇒
-`CriticalSection{until}`) is consumed and refined per concern 6: scope =
-in-flight batch only, `until` = kernel ETA, L2+ ⇒ cancel-batch → discard
-(no attempt-count penalty) → yield at next completion boundary. This is an
-input to the per-pair `restart-protocol` round via the parent `inference`
-crate; benchmark owns no frames.

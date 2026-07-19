@@ -37,7 +37,7 @@ carries first-order provenance (INTENT #85) because pub/sub is a place where
 data is touched and relayed:
 
 ```rust
-// proposed to `types` (module `pubsub.rs`); see "Proposed contracts" below.
+// proposed to `types` (module `pubsub.rs`); authored in scaffold/contracts/pubsub-protocol.md.
 struct Envelope {
     msg_id: Uuid,            // unique per publish; subscriber-side dedup key
     topic: Topic,            // routing key (concern 3)
@@ -243,8 +243,7 @@ dependency. Flagged, not decided here.)
 
 - every service ↔ mesh via `pubsub-protocol` — the standard WS pub/sub envelope +
   subscribe/publish protocol; cross-cutting, surface-schema-style (one shared
-  document, every service a party). See Proposed contracts below.
-  *(scaffold/contracts/pubsub-protocol.md — MISSING, to be created)*
+  document, every service a party). *(authored: scaffold/contracts/pubsub-protocol.md)*
 - `types` — **library dependency, not a contract edge** (INTENT rounds 4–5): the
   `Envelope` / `Topic` / `Provenance` header structs and the standardized `Event`
   payload struct live in `types` (module `pubsub.rs` + `event.rs`), compiled into
@@ -277,7 +276,7 @@ downstream: (a) the exact interest-coarsening heuristic (how aggressively to
 collapse many exact filters into prefixes) — a fill-time tuning knob, not a design
 fork; (b) reconciling the five existing `*-events` contracts onto the topic
 prefixes — Contract Harmonizer work; (c) the `types` `pubsub.rs`/`event.rs` field
-sets — proposed below, reconciled in the per-pair round with the concurrent
+sets — authored, reconciled in the per-pair round with the concurrent
 `types` designer.
 
 ## Assigned design-depth
@@ -297,126 +296,31 @@ cheapest tier only because of the relay's cross-node concurrency.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-wave2-plan §3b assigns `pubsub-relay` exactly one contract pair:
-**`pubsub-protocol`** — "every service ↔ mesh — the standard WS pub/sub envelope
-protocol (typed structs, topics, relay semantics), cross-cutting,
-surface-schema-style." Modeled as ONE shared document naming every service as a
-party (the surface-schema precedent, wave2-plan flag §5.4), not N per-pair files.
-Proposal only; the per-pair round reconciles it — in particular with the concurrent
-`types` designer, since the structs live in `types` (I flag those as **envelope
-needs** for that designer).
+The per-pair contract round authored these edges; the contract files are
+authoritative (including Reconciliation notes). Detailed proposals formerly here
+are superseded by them.
 
-### Contract: `pubsub-protocol`
-
-**Purpose.** The single wire protocol a service speaks to its LOCAL mesh daemon on
-`:3649` to publish typed messages onto topics and subscribe to topics, with the
-mesh relaying across services and nodes. Best-effort/lossy by contract; durability
-is `queues`. Transport is WebSocket (INTENT #53/#28 "everything over WebSockets").
-
-**Envelope needs I propose to `types` (`pubsub.rs`).** These are the header structs
-publishers, subscribers, and the relay all compile in (concern 1). Flagged for the
-concurrent `types` designer to reconcile:
-
-```rust
-struct Envelope   { msg_id: Uuid, topic: Topic, origin: Provenance,
-                    causal_parent: Option<Uuid>, event_type: String,
-                    payload: Box<RawValue> /* serde_json::value::RawValue: opaque */ }
-struct Provenance { service: String /*slug*/, node_id: String,
-                    ts_millis: i64, seq: u64 }
-struct Topic      { scope: Scope, path: String /*validated dot-segmented*/ }
-enum   Scope      { Fleet, Node(String /*node_id*/) }
-enum   TopicFilter { All, Exact(Topic),
-                     Prefix { scope: ScopeFilter, prefix: Vec<String> } }
-enum   ScopeFilter { Any, Fleet, Node(String) }
-```
-
-Note the payload is `RawValue` (opaque) at the relay boundary; a party
-deserializes it into the concrete `types::event::Event` variant named by
-`event_type` only at the edge, never in the relay.
-
-**Client → daemon (over the local WS):**
-
-```rust
-enum PubSubClientMsg {
-    Publish   { topic: Topic, event_type: String,
-                causal_parent: Option<Uuid>, payload: Box<RawValue> },
-                // daemon stamps msg_id, origin.{node_id,ts_millis,seq}
-    Subscribe   { filters: Vec<TopicFilter> },   // additive to current set
-    Unsubscribe { filters: Vec<TopicFilter> },
-}
-```
-
-**Daemon → client:**
-
-```rust
-enum PubSubServerMsg {
-    Event(Envelope),                              // a matched message
-    SubAck   { active: Vec<TopicFilter> },        // current subscription set
-    Lagged   { dropped: u64, since_seq: u64 },    // lossy-drop notice (concern 6)
-    Error    { code: PubSubError, detail: String },
-}
-```
-
-**Daemon ↔ daemon (the relay link, concern 7) — an internal facet of the same
-contract, versioned together:**
-
-```rust
-enum RelayFrame {
-    Deliver { envelope: Envelope },               // implicitly relayed==true; never re-relayed
-    InterestSnapshot { node: String, epoch: u64, filters: Vec<TopicFilter> },
-    InterestDelta    { node: String, epoch: u64,
-                       add: Vec<TopicFilter>, remove: Vec<TopicFilter> },
-}
-```
-
-**Error cases (`PubSubError`).**
-- `InvalidTopicPath` — path not lower-snake dot-segmented / empty segment.
-- `InvalidFilter` — malformed prefix (e.g. empty prefix that isn't `All`).
-- `NotRegistered` — publishing service has no live registry lease (provenance
-  can't be attested; publish rejected — ties pub/sub honesty to the registry).
-- `PayloadTooLarge` — payload exceeds the per-message cap (a bounded-memory
-  guard; relay must not carry arbitrarily huge frames).
-- `Lagged` is a **notice, not an error** (delivered as its own `ServerMsg`, not a
-  connection failure) — the lossy contract in band.
-- Non-errors by design: publishing to a topic with **no subscribers** succeeds
-  silently (normal at startup, per V1 `Hub::publish`); a `Scope::Node(N)` publish
-  where N is offline is a silent best-effort drop.
-
-**Version-sensitivity notes.**
-- **Payload-opaque decoupling (concern 2) is the primary version-safety
-  property:** the relay's `RelayFrame`/`Envelope` header can be held stable while
-  `types::event::Event` variants churn freely — new event types cross old daemons
-  untouched. This is what lets pub/sub survive the OPEN mixed-version fleet problem
-  (`supervision`, INTENT #66) without a coordinated upgrade.
-- **Header evolution:** add only optional/`#[serde(default)]` fields to `Envelope`
-  and `#[serde(other)]`-tolerant variants to the message enums, so a newer daemon's
-  frames don't break an older peer's relay (it forwards what it can parse of the
-  header, and the header is small and stable by intent).
-- **`seq` is per-(service,node)** and resets if a service restarts on a node
-  (new process, new seq origin) — subscribers must treat a backward `seq` jump as
-  "publisher restarted," not corruption. The daemon should fold the service's
-  registry lease generation into the provenance so restart is detectable.
-- **Convergence coupling:** when `network-events` / `dashboard-feed` /
-  `inference-events` / `gc-events` / `ccd-events` are re-expressed as
-  `pubsub-protocol` topics at harmonization, those five contracts become *examples
-  of payloads on this envelope*, not independent wire formats — the Contract
-  Harmonizer should author their example data as `Envelope`s on the reserved topic
-  prefixes (concern 3), sharing this contract's one example world.
-
-**Example (one message, cross-node, per-completion).**
-
-```jsonc
-// inference on node "pi-01" publishes a token event for completion c-8f3;
-// a dashboard on the operator's laptop subscribed to Prefix{Any, ["inference"]}
-// (or Exact inference.completion.c-8f3) receives it after one relay hop.
-{
-  "msg_id": "b1e...", "event_type": "inference.completion.token",
-  "topic": { "scope": "Fleet", "path": "inference.completion.c-8f3" },
-  "origin": { "service": "inference", "node_id": "pi-01",
-              "ts_millis": 1721352000123, "seq": 4471 },
-  "causal_parent": null,
-  "payload": { "completion_id": "c-8f3", "token": " world", "index": 12 }
-}
-```
+- `pubsub-protocol` (every service via `mesh-client` ↔ mesh's pubsub-relay;
+  cross-cutting, ONE shared surface-schema-style document) — the WS
+  publish/subscribe envelope, scoped topics + filters, `RelayFrame`
+  daemon↔daemon facet, `PubSubError` taxonomy, and the best-effort/lossy +
+  payload-opaque guarantees. → `scaffold/contracts/pubsub-protocol.md`
+  - Contract resolution: **pubsub-relay's relay-authoritative shape won**
+    (opaque payload + header `event_type`, scoped `Topic`,
+    connection-as-subscriber, this module's error taxonomy); `types`' first-cut
+    `pubsub.rs` sketch is superseded. Normalizations against this module's old
+    proposal: `msg_id`→`envelope_id` plus an `Envelope.v` anchor;
+    `origin`→`provenance` with the merged canonical
+    `types::provenance::Provenance` (`ts_millis`→`emitted_at`, plus
+    `correlation_id`/`causation_id` shared with queues/cron).
+  - mesh-client's colliding multiplexing `Envelope` was renamed to the
+    `mesh-transport` `Frame` (Reconciliation note 6); pub/sub messages are one
+    frame kind inside it.
+  - Still pending at harmonization (contract note 8): `network-events` /
+    `dashboard-feed` / `inference-events` / `gc-events` / `ccd-events`
+    re-express as topic prefixes on this envelope — this module claims only the
+    topic-prefix taxonomy (concern 3), not those contracts.
+  - The retained-snapshot-per-topic capability `network-events` asks of the
+    relay is the one open design ask pushed to this pair.

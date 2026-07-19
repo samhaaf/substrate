@@ -1,13 +1,14 @@
 # stack
 
-> **SUPERSEDED-PENDING-HARMONIZER (wave 2, batch 4, 2026-07-19).** The full
-> component design of this module now lives in **`components/vdb.md`** (the
-> round-8 lock named the module `vdb`; "stack" survives as the PATTERN name
-> only — see vdb.md's naming-resolution note). All requirements below are
-> carried into vdb.md's concerns; this file is retained as verbatim
-> requirements HISTORY and is not edited further. Contract-stub renames
-> flagged there (NOT performed): `stack-vfs` → `vdb-vfs`, `stack-mesh` →
-> `vdb-mesh`. Do not extend this file; extend vdb.md.
+> **SUPERSEDED (wave 2; harmonized 2026-07-19).** The full component design
+> of this module now lives in **`components/vdb.md`** (the round-8 lock named
+> the module `vdb`; "stack" survives as the PATTERN name only — see vdb.md's
+> naming-resolution note). All requirements below are carried into vdb.md's
+> concerns; this file is retained as verbatim requirements HISTORY and is not
+> edited further. Contract-stub renames PERFORMED at harmonization:
+> `stack-vfs` → `vdb-vfs`, `stack-mesh` → `vdb-mesh` (old names are
+> rename-tombstones; operator sign-off pending). Do not extend this file;
+> extend vdb.md.
 
 **Status:** NEW (rounds 4–5 lock, 2026-07-18; round-7 update, 2026-07-19;
 **round-8 lock, 2026-07-19 — the stack-vs-db boundary is RESOLVED**;

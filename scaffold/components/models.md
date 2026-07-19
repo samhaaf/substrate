@@ -359,139 +359,35 @@ leg fills only after vfs lands and the operator blesses it.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-Proposals only; the per-pair round reconciles both sides. wave2-plan §3
-(Inference-internal) assigns models `model-ensure` (models owns), and names models
-a party to `gc-managed-dirs` and `store-access` (owned by gc / store — I note my
-usage, do not re-author). I add one **NEW deferred** edge, `models-vfs`, surfaced
-by concern 1/6. All structs live in `substrate-types` vocabulary; Rust-flavoured
-pseudocode. I do NOT edit `scaffold/contracts/*`.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including Reconciliation notes). Detailed proposals formerly here
+are superseded by them.
 
-### `model-ensure` (scheduler → models) — ensure-downloaded + pipeline status  [models OWNS]
-
-**Purpose.** The scheduler ensures a model is on local disk before a swap, and —
-NEW in wave-2 — kicks off / observes async downloads (the honest replacement for
-the `download_model` 202 stub; the readiness prerequisite completion-router.md
-named for Tier-3, which the router still defers). Both the blocking swap path and
-the async REST path resolve through **one** singleflight job (concern 2).
-
-**Message/struct sketch** (in-process trait, `lib/models` → its `inference`
-parent; the REST/`/v1/models/:id/download` expression is api's, lowering to this):
-
-```rust
-trait ModelEnsure {
-    /// Blocking: await the model present on disk; returns its abs path.
-    /// Joins the in-flight job if one exists (no double-download).
-    async fn ensure_available(&self, id: &ModelId) -> Result<String>;
-
-    /// Async: kick off (or attach to) a download; return immediately.
-    /// Backs POST /v1/models/:id/download (now a real 202).
-    async fn request_download(&self, id: &ModelId) -> Result<DownloadHandle>;
-
-    /// Poll live status (in-memory job + store row).
-    fn download_status(&self, id: &ModelId) -> Result<DownloadStatus>;
-
-    /// Drop a downloaded weight (unlock + gc evict); no-op if resident.
-    async fn evict(&self, id: &ModelId) -> Result<()>;
-}
-struct DownloadHandle { id: ModelId, download_id: Uuid }
-enum DownloadStatus {
-    Absent,
-    Downloading { bytes_done: u64, total: Option<u64>, pct: Option<f32>, source: SourceKind },
-    Ready { path: String, bytes: u64 },
-    Failed { message: String },
-}
-enum SourceKind { Origin /* hf/https/file */, Peer /* vfs pull — deferred */ }
-```
-
-**Error cases.** `ModelNotFound` (id not in registry → 404); `DownloadFailed{
-model, message }` (existing taxonomy — network/HTTP/integrity, `.partial`
-retained for resume); `IntegrityMismatch{ model }` (NEW — sha256/size check
-failed, corrupt file deleted); `InsufficientDiskBudget` (gc `DiskBudgetExceeded`
-after `make_room` exhausted unlocked candidates — scheduler must defer/downshift,
-concern 4); `SourceUnsupported{ scheme }`. All catchable, none panic.
-
-**Version-sensitivity.** LOW — in-process (compiled in; no wire skew). The REST
-lowering inherits the byte-transparent `v1-completion-api` discipline (the router
-never parses this body). `DownloadStatus`/`SourceKind` reserve additive/
-`#[serde(other)]` for the day `Peer` (concern 6) turns on.
-
-### `gc-managed-dirs` (models → gc)  [models is a party — gc.md AUTHORS the vocabulary]
-
-**Purpose.** In-process disk-budget enforcement for the local model-weights
-directory, expressed through gc.md's `GcHandle` (Embedded standalone / Remote
-under mesh) — I do not re-author gc's `GcCommand`/`GcQuery`/`GcEvent`/`DirPolicy`
-structs; I pin **models' usage** of them.
-
-**Models' usage (against gc.md's `GcApi`).**
-```rust
-// once, at start:
-gc.register_dir(weights_dir, Some(DirPolicy {
-    max_size_bytes: cfg.model_weights_budget_bytes,
-    eviction: EvictionPolicy::LruAccessed,   // gc.md wave-2 variant — weights are hot when recently loaded
-    default_ttl_secs: 0 /* no TTL expiry; budget-only */, unit: UnitMode::Children,
-    on_full: OnFullAction::Evict, .. })).await?;
-// per download: make_room → write .partial (register_entry+lock, renewed) → rename
-//               → register_and_lock(final)  (gc.md NEW atomic op) → drop partial lock
-// per use:      gc.touch(path)              (keeps gc LRU == store last_used_at)
-// resident:     gc.lock(path, ttl) on load, renew, unlock on unload  (concern 4, flagged dep)
-```
-
-**Error cases.** gc's shared taxonomy passes through: `DiskBudgetExceeded`
-(→ `model-ensure::InsufficientDiskBudget`), `EntryLocked` (evict on a resident
-weight — refused, correct), `DirNotRegistered`. In `Remote` mode:
-`LocalDaemonUnreachable` → models degrades to `Embedded`-equivalent local sizing
-or defers (never downloads unmanaged into an unbudgeted dir silently).
-
-**Version-sensitivity.** LOW — node-local (models and gc on the same box). In
-`Embedded`: none (compiled in). In `Remote`: inherits gc.md's additive-only
-command rules; models emits only `LruAccessed`/`Fifo`/`Lru` (all gc-known).
-
-### `store-access` (models ↔ store)  [models is a party — store.md AUTHORS it]
-
-**Purpose.** models' slice of the SQLite system-of-record: the `models` table
-(`ModelRow`). I note the surface + one optional additive column; store.md owns the
-schema/migration and the single-writer-mutex contract.
-
-**Models' surface (existing `Store` methods).** `get_model`, `list_models`,
-`upsert_model` (sync_registry), `set_model_downloaded(id, path, bytes)`,
-`clear_model_file(id)` (stale-record cleanup), `touch_model(id)` (advisory LRU),
-`total_weights_bytes()`. **Optional additive (flagged for store.md):**
-`content_hash: Option<String>` on `ModelRow` (= verified sha256; enables the
-deferred peer-pull addressing + cross-restart integrity) — additive, non-breaking.
-
-**Error cases.** `ModelNotFound`, `StoreError` (store.md taxonomy). Progress is
-**not** persisted (concern 2) — no high-frequency writes contend the writer mutex;
-only terminal transitions hit the store.
-
-**Version-sensitivity.** N/A (in-process; compiled-in schema, store.md's
-append-only migrations). The one additive column follows store's discipline.
-
-### `models-vfs` (models → vfs) — NEW, DEFERRED — peer-pull weight acceleration
-
-**Purpose (concern 1/6).** Before falling to an origin download, `ensure_available`
-may pull an identical weight (by content hash = verified sha256) from a warm mesh
-peer at LAN speed, as a plain vfs client — this is vfs.md's access-can-migrate
-(`Read` with `cache_local: true`) applied to weights, NOT proactive replication.
-**Deferred:** rides vfs (batch-3, one layer below) and needs operator blessing on
-weights entering the `vfs://models/` namespace at all; the wave-2 default path is
-origin download.
-
-**Struct sketch (proposal, reconciled in vfs's/a future pass).**
-```rust
-// models -> vfs (vfs.md concern 3/7 content-plane Read; models is a plain client)
-struct WeightPull { content_hash: Hash /* sha256 */, path: String /* vfs://models/<hash> */,
-                    cache_local: bool /* true — become a Cache holder */ }
-// -> streamed, chunked, integrity-checked ChunkFrames (vfs owns the wire)
-```
-
-**Error cases.** `BlobNotHeld`/`NotFound` (no peer holds it → fall through to
-origin download — the ladder degrades cleanly, never fails the ensure);
-`ChunkHashMismatch` (vfs re-requests; models never accepts a corrupt chunk);
-`SecretsUnavailable`/S3-rehydrate cases are vfs's, opaque to models. A vfs-absent
-node simply skips this leg (standalone degradation, concern 7).
-
-**Version-sensitivity.** LOW — content-addressed by frozen sha256 (a weight's hash
-is an absolute name); the pull framing is vfs's (`vfs-content`) and version-coupled
-only on its small header. Because it is deferred, no wire is committed this pass.
+- `model-ensure` (scheduler → models; models owns) — blocking
+  `ensure_available` pre-swap, async `request_download`/`download_status` (the
+  honest 202 path), and `evict`, all resolving through one singleflight job.
+  → `scaffold/contracts/model-ensure.md`
+  - Contract resolution: models' authored `ModelEnsure` trait won over
+    scheduler's simpler `ensure_downloaded`/`EnsureState` sketch (owner wins);
+    the `Peer` download source stays deferred pending `models-vfs`.
+- `gc-managed-dirs` ({models, cache, engine} → gc; gc authors the vocabulary) —
+  disk-budget enforcement for the weights dir via `GcHandle`
+  (`register_dir(LruAccessed)`, `make_room` → write → `register_and_lock`,
+  `touch` on use, `lock` while resident). → `scaffold/contracts/gc-managed-dirs.md`
+- `store-access` (store ↔ {engine, scheduler, models, cache, telemetry,
+  benchmark, api}; store authors) — models' slice of the SQLite
+  system-of-record (`ModelRow` registry methods; download progress is NOT
+  persisted, only terminal transitions). → `scaffold/contracts/store-access.md`
+  - Component-side flag still open for store: optional additive
+    `content_hash: Option<String>` column on `ModelRow` (verified sha256 —
+    enables deferred peer-pull addressing + cross-restart integrity); not yet
+    in the authored `store-access` surface.
+- `models-vfs` (models → vfs) — NEW edge surfaced by concerns 1/6, **DEFERRED,
+  not authored** as a contract file this round: peer-pull of a weight by
+  content hash from a warm mesh peer as a plain vfs client
+  (`Read { cache_local: true }`), falling through to origin download. Rides
+  vfs's `vfs-content` wire and needs operator blessing on weights entering the
+  `vfs://models/` namespace; `model-ensure.md` records the reserved `Peer`
+  source for it.

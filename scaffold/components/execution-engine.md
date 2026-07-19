@@ -426,11 +426,11 @@ additionally a *consumer* (through its hosts) of two cross-cutting APIs.
 - **mesh(DLQ)/execution-engine → ccd** via **`ccd-escalation`** — the shared
   investigation surface; queues (batch 2) proposed the union shape and
   assigned this design the `LoopDepthExceeded` arm — authored below.
-  *(scaffold/contracts/ccd-escalation.md — MISSING; my arm proposed below.)*
+  *(authored: scaffold/contracts/ccd-escalation.md.)*
 - **`vdb`** — HOST (internal-lib seam, not a contract): VDB embeds the engine
   with the `Tables` adapter, implements `HostSeam` (SQL via `vdb-db`, mesh via
-  its mesh-client, secrets via `vdb-secrets`, artifacts via `stack-vfs`/
-  `vdb-vfs`), hosts the `ee_*` schema, owns provenance-level config,
+  its mesh-client, secrets via `vdb-secrets`, artifacts via `vdb-vfs` — the
+  `stack-vfs` name is a rename-tombstone), hosts the `ee_*` schema, owns provenance-level config,
   retention, and cloud-target materialization. Co-batch ⇄: the seam trait +
   `ee_*` schemas must be reconciled mid-batch with the vdb designer.
 - **`kg`** — HOST (internal-lib seam): KG embeds a second engine instance
@@ -533,96 +533,33 @@ adapters will be held to.
 
 ---
 
-## Proposed contracts (wave 2)
+## Contracts (wave 2 — authored)
 
-wave2-plan assigns execution-engine exactly one contract pair — the shared
-**`ccd-escalation`** (mesh(DLQ)/execution-engine → ccd), of which queues
-(batch 2) proposed the union envelope and explicitly assigned this design
-the `LoopDepthExceeded` arm. Everything else execution-engine touches is an
-internal-lib seam (not a contract edge) or a consumer role in an existing
-cross-cutting API; consumer-side notes follow the arm so the per-pair round
-has both halves of every conversation. I do NOT edit `scaffold/contracts/*`.
+The per-pair contract round authored these edges; the contract files are
+authoritative (including their Reconciliation notes). The detailed proposals
+formerly in this section are superseded by the authored contracts.
 
-### `ccd-escalation` — the `LoopDepthExceeded` arm (mine; queues owns `DeadLetter`; ccd owns the receiver)
+- `ccd-escalation` — the `LoopDepthExceeded` arm (mine; queues owns `DeadLetter`; ccd owns the receiver). → `scaffold/contracts/ccd-escalation.md`
 
-**Purpose.** One investigation surface for the two guardrails-of-last-resort
-(INTENT #70/#89): queues' dead-letter exhaustion and this engine's
-loop-depth-exceeded. Accepting queues' proposed union (`EscalationRequest` /
-`EscalationKind` / `EscalationAck`) unchanged in envelope — but **enriching
-the `LoopDepthExceeded` arm**, which queues sketched thin
-(`{ engine, depth, threshold }`) as a placeholder for this pass:
+Also a party to (authored elsewhere / cross-cutting): `locks-api`, `queues-api` — see `scaffold/contracts/`.
 
-```rust
-// replaces the placeholder arm inside queues' EscalationKind union:
-LoopDepthExceeded {
-    host: Slug,                        // "vdb" | "kg" — the embedding app
-    adapter: AdapterKind,              // Tables | Graph
-    database: DbRef,                   // the provenance home to investigate
-    subject: SubjectKey,               // the row/node the loop orbits
-    trigger_id: TriggerId,
-    handler: String, handler_version: String,
-    loop_count: u32, threshold: u32,   // counts[(subject,handler)] at park time
-    chain_recent: Vec<ChainLink>,      // last K links verbatim
-    parked_invocation: Uuid,           // the invocation that was parked, not run
-    provenance_root: Uuid,             // correlation_id — walk ee_* from here
-}
-```
-
-Delivery mechanics: the engine `SendEvent`s the `EscalationRequest` (as an
-`Event`, `event_type: "ee.loop.exceeded"`) onto the mesh queue fabric
-through its host; a standing declarative trigger delivers it to ccd —
-at-least-once, durable, deduped by `escalation_id`, which the engine mints
-deterministically as `uuid_v5(correlation_id, loop_key)` so a hot loop
-yields ONE investigation. `context` (the union's open `Value`) carries the
-failure history and a pre-rendered lineage summary so the agent starts warm;
-the authoritative evidence is the `ee_*` tables, reachable via
-`provenance_root` + `database` (the agent queries through vdb/db surfaces —
-read-only investigation, no engine back-door).
-
-**Error cases.** Inherits queues' arm-level cases (`CcdUnreachable` → the
-escalation event itself dead-letters onto its queue's retention, alarmed,
-never silently lost; duplicate arrival → `escalation_id` dedup). One
-engine-specific case: `DatabaseUnavailable` at investigation time (the
-database was promoted/moved between park and investigation) — the request's
-`chain_recent` + `context` snapshot must therefore be self-sufficient for a
-first-pass diagnosis; stated as a conformance requirement on the arm, not
-left to luck.
-
-**Version-sensitivity.** MEDIUM, matching queues' assessment of the union:
-`EscalationKind` is additive-only with `#[serde(other)]` reserved;
-within the arm, every field beyond the queues-sketched three is
-`#[serde(default)]`-tolerant so a ccd built against the thin sketch still
-deserializes an enriched request. `SubjectKey`/`ChainLink` become `types`
-structs (inclusion test passed) under guardrail-4 wire discipline.
-Ownership line for the per-pair round, restated from queues and accepted:
-**queues authors `DeadLetter`, execution-engine authors `LoopDepthExceeded`,
-ccd owns the receiver + `EscalationAck`.**
-
-### Consumer-side notes (no contract authored; flags for the named owners)
-
-- **`queues-api` (owner: queues).** The engine consumes `EnsureQueue` +
-  `SendEvent` (DLQ + escalation events) through its host's mesh-client.
-  One flag: the DLQ payload embeds a full delivery snapshot (change images
-  at the configured provenance level + `TraceCtx`) — `queues-api` should
-  state a max event-payload size so a `Full`-level image can't jam the
-  fabric; the engine will truncate images to refs (`database` +
-  `change_id`) past that bound.
-- **`locks-api` (owner: locks).** Slugs `ee.<database>.<change_id>.<trigger_id>`,
-  class `Ephemeral`, threshold 1, lease = invocation timeout; already named
-  by locks.md concern 7 — confirmed verbatim, no deltas requested.
-- **`types::trigger` (owner: queues-authored, types-housed).** Consumed
-  UNCHANGED, as required. Two harmonizer flags: (1) `Trigger.queue`'s
-  `QueueName` doc-comment should bless the engine's canonical pseudo-queue
-  names (`ee.<database>.<table>`); (2) `HandlerRef::ExecFn { engine, function }`
-  matches the engine's registered-handler addressing — `function` =
-  `name@version`; confirmed workable.
-- **`HostSeam` + `ChangeAdapter` + `ee_*` schema (owners: this design +
-  vdb/kg co-batch).** Internal-lib seams, explicitly NOT contracts; recorded
-  in this file's concerns 1/2/6 and reconciled mid-batch. The single hardest
-  cross-module dependency in batch 4 (the analogue of batch 2's `put_flush`
-  seam): if VDB's write path cannot host the same-transaction `ee_changes`
-  write, the at-least-once + atomic-provenance guarantees both fall —
-  reconcile FIRST.
+Component-side notes (consumer-side flags for the named owners, not captured in
+the contract files):
+- `queues-api` (owner: queues) — the engine consumes `EnsureQueue`+`SendEvent`;
+  flag: state a max event-payload size so a `Full`-level DLQ image can't jam
+  the fabric (the engine truncates images to `database`+`change_id` refs past
+  the bound).
+- `locks-api` (owner: locks) — slugs `ee.<database>.<change_id>.<trigger_id>`,
+  class `Ephemeral`, threshold 1, lease = invocation timeout; confirmed
+  verbatim, no deltas.
+- `types::trigger` (owner: queues-authored, types-housed) — consumed UNCHANGED;
+  flags: bless the `ee.<database>.<table>` pseudo-queue names in `QueueName`'s
+  doc-comment; `HandlerRef::ExecFn { engine, function: "name@version" }`
+  confirmed workable.
+- Sequencing (`HostSeam`/`ChangeAdapter`/`ee_*` schema; internal-lib seams, NOT
+  contracts) — the hardest cross-module dependency in batch 4: if VDB's write
+  path cannot host the same-transaction `ee_changes` write, the at-least-once
+  and atomic-provenance guarantees both fall — reconcile FIRST.
 
 ## Non-obvious tests (conformance + correctness)
 
