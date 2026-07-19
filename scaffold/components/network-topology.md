@@ -7,7 +7,8 @@
 A live WebSocket surface that turns Tailscale state changes into an event feed:
 peer devices joining/leaving/going offline, and — critically — **this device's
 own loss of connection to the tailnet**. It publishes `network-events` to any
-subscriber (gateway, ccd, org). It owns topology *change detection and
+subscriber (ccd, org; mesh's own observability hub consumes it in-process
+since the gateway merge, 2026-07-18). It owns topology *change detection and
 broadcast* only; it does not query Tailscale itself (consumes `tailscale-query`)
 and is deliberately distinct from completion-router's internal routing health
 table (that is a routing decision input, this is a general topology feed).
@@ -31,7 +32,7 @@ table (that is a routing decision input, this is a general topology feed).
 
 - tailscale-query via `tailscale-status` — consumes/diffs snapshots
   (scaffold/contracts/tailscale-status.md)
-- any subscriber (gateway, ccd, org) via `network-events` — WS topology + self
+- any subscriber (ccd, org) via `network-events` — WS topology + self
   connectivity feed (scaffold/contracts/network-events.md)
 
 ## Nesting

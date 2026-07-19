@@ -19,7 +19,7 @@ slug addressing (that is service-registry).
 `reports/mesh-design-synthesis.md`.** The load-bearing points:
 
 - **`forward()`'s contract must change** from `Result<Vec<u8>>` to carry status +
-  headers + a streaming body (modeled on `bin/gateway/src/proxy.rs`) — required
+  headers + a streaming body (modeled on `bin/gateway/src/proxy.rs` — V1 code; that crate's surviving logic now folds into mesh per the 2026-07-18 gateway merge) — required
   for 404/409/502/503 and streaming. The WS relay for
   `/v1/completions/:id/stream` is a *separate* path from `forward()`.
 - **`NodeRegistry`** = discovery-refresh loop (Tailscale via `spawn_blocking`) +

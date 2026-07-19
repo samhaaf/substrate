@@ -1,7 +1,9 @@
 # Contract: service-lookup
 
 ## Parties
-mesh.service-registry  <->  any device / service (gateway, ccd, org, inference)
+mesh.service-registry  <->  any device / service (ccd, org, inference, vfs, projects)
+*(gateway removed from the party list, 2026-07-18 — gateway merged into mesh;
+the dashboard origin is mesh's own surface now)*
 
 ## What the edge carries
 `register(slug, host:port)` / `resolve(slug) -> endpoint` over a distributed,

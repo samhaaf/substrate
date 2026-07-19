@@ -3,16 +3,36 @@
 ## Charter
 
 The Svelte/Vite operator-facing dashboard (`ui/dashboard`): a pure rendering +
-light local-state layer over whatever the gateway already aggregates. It
+light local-state layer over whatever mesh's observability plane aggregates. It
 renders live disk/GPU/RAM, model/backend lifecycle, the completion queue, the
 GC tree, benchmark/kernel curves, and (new in v2) a fleet-wide node roster —
 now across potentially many machines instead of one. It owns exactly one
-external edge (`dashboard-feed`, gateway -> dashboard) and does **not** own:
-aggregation, node discovery, event fan-out, or REST proxying (all gateway's
+external edge (`dashboard-feed`, mesh -> dashboard) and does **not** own:
+aggregation, node discovery, event fan-out, or REST proxying (all mesh's
 job); WS reconnect/backoff and event-log persistence already exist
 (`stores/connection.js`) and are kept, only reshaped for the node dimension.
-It does not talk to inference, gc, or mesh directly, in any v2 shape — every
-byte it renders arrives through the gateway.
+It does not talk to inference, gc, or ccd directly, in any v2 shape — every
+byte it renders arrives through mesh, and it discovers everything via mesh.
+
+> **SUPERSEDED (2026-07-18, round-3): "served by gateway."** Everywhere this
+> file said `gateway`, read `mesh`: gateway merged into mesh, which now serves
+> the dashboard's static assets and its `GET /events` fan-out + REST surface.
+> The aggregation shapes gateway had locked (`/api/nodes`, `/api/mesh/stats`,
+> node-scoped proxy routes) carry over unchanged as mesh surfaces.
+
+> **NEW (round-3): rendering becomes schema-driven.** Per the boring-surface-
+> schema pattern (`scaffold/contracts/surface-schema.md`), every service
+> publishes a schema of its observable surface — how to render its dashboard
+> component and what calls to make against the service — in a shared schema
+> language defined in `types`. The dashboard renders every service's component
+> **from its published schema** rather than from hand-built per-service panels;
+> visual coherence by construction. Project-published dashboards (`projects`)
+> surface through the same mechanism and must be navigable from this main mesh
+> dashboard. The per-panel concerns below (store reshaping, id templating,
+> per-node grids) remain valid as the rendering substrate the schema-driven
+> layer targets, but the panel *inventory* becomes schema-supplied, not
+> hardcoded. `requirements-only` for this layer — the schema language is not
+> yet designed.
 
 ## Primary design concerns
 
@@ -73,16 +93,16 @@ different ways that each need their own answer:
 
 4. **Single-box dev / no-mesh fallback.** The overview's wiring-seam section
    commits to "a static-config fallback... retained for single-box dev so the
-   seam degrades gracefully." The dashboard needs the same story: when the
-   gateway reports exactly one node (or, degenerately, zero — mesh not wired
+   seam degrades gracefully." The dashboard needs the same story: when mesh
+   reports exactly one node (or, degenerately, zero — mesh not wired
    up yet), the per-node grid renders exactly one node-group using a `"self"`
    sentinel id, so today's single-machine dev loop keeps working with zero
    extra clicks. This mirrors, not duplicates, the seam's own fallback
    decision.
 
 5. **"No data yet" vs. "went offline" are different states on the same
-   surface.** A freshly-discovered node (mesh just found it, gateway hasn't
-   gotten a `system` event yet) and a previously-live node that
+   surface.** A freshly-discovered node (mesh just found it, but no
+   `system` event yet) and a previously-live node that
    `network-events` reports as dropped must NOT render identically — today's
    stores have no way to distinguish "never populated" from "was populated,
    now stale/offline" (`writable({...zeroes...})` looks the same either way).
@@ -95,8 +115,9 @@ different ways that each need their own answer:
 6. **The node-roster / topology strip supersedes `NetworkPanel`'s current
    hardcoded stub.** Today `networkState` is a hand-written single-entry list
    (`[{ id: 'local', ... }]`) with a comment "future: Tailscale nodes will
-   appear here." In v2 this becomes real: sourced from the gateway's
-   `/api/nodes` (per `mesh-registry-read`: NodeInfo + roles + last SystemState)
+   appear here." In v2 this becomes real: sourced from mesh's
+   `/api/nodes` (NodeInfo + roles + last SystemState; the old
+   `mesh-registry-read` hop collapsed into mesh with the gateway merge)
    polled/refreshed the same way `QueuePanel`/`GcPanel` already poll today, plus
    the same envelope stream driving per-node `status` (point 5). This is still
    ONE fleet-wide panel (not per-node) — it's the thing that tells you which
@@ -109,13 +130,13 @@ different ways that each need their own answer:
    + `/api/nodes/local/stats`, `QueuePanel` -> `/api/inference/completions`,
    `GcPanel` -> `/api/gc/dirs`/`/api/gc/entries`, `BenchmarkPanel` ->
    `/api/inference/benchmark/*`) currently hits a flat, un-scoped proxy path
-   because gateway proxies to exactly one static `inference_url`/`gc_url`.
+   because the old gateway proxied to exactly one static `inference_url`/`gc_url`.
    Note the existing precedent was inconsistent: `/api/nodes/local/stats`
    already had the node-scoped shape (`/api/nodes/<id>/...`), just hardcoded
    to the literal string `local`, while `/api/inference/*` and `/api/gc/*` did
-   not. **This is now confirmed, not just proposed** — `gateway.md`
-   (`implementation-ready`, written independently but consuming the same
-   overview) locks the exact same shape: `GET /api/nodes`, `GET
+   not. **This is now confirmed, not just proposed** — the pre-merge gateway
+   design locked the exact shape, which carries over unchanged as mesh
+   surfaces (`mesh.md` concern 5): `GET /api/nodes`, `GET
    /api/mesh/stats`, `GET /api/nodes/:id/stats`, and node-scoped proxy routes
    `/api/nodes/:id/inference/*` + `/api/nodes/:id/gc/*` ("plus default-node
    aliases" for the single-box case, matching this file's `"self"`-sentinel
@@ -125,19 +146,21 @@ different ways that each need their own answer:
 
 ## Relationships / edges
 
-- **gateway**, via `dashboard-feed` (see `scaffold/contracts/dashboard-feed.md`)
-  — the dashboard's ONLY edge. Carries the aggregated `GET /events` WS
-  fan-out (envelopes tagged with the real per-node `node_id`, confirmed by
-  `gateway.md` point 2 of its Charter), the node-scoped REST polls confirmed
+- **mesh**, via `dashboard-feed` (see `scaffold/contracts/dashboard-feed.md`)
+  — the dashboard's ONLY edge *(was gateway; merged into mesh, 2026-07-18)*.
+  Carries the aggregated `GET /events` WS
+  fan-out (envelopes tagged with the real per-node `node_id`), the node-scoped
+  REST polls confirmed
   in concern 7 above (`GET /api/nodes`, `GET /api/mesh/stats`, `GET
   /api/nodes/:id/stats`, `/api/nodes/:id/inference/*`, `/api/nodes/:id/gc/*`),
-  and static hosting. No direct edges to inference, gc, or mesh in this
-  design — deliberately, to keep gateway as the single always-on aggregation
-  point (`gateway.md`: "the always-on Pi runs gateway+mesh so the dashboard
-  stays live even when every GPU box is asleep"). `mesh.network-topology`'s
-  `network-events` reaches the dashboard only by way of gateway folding it
-  into its hub as "a concrete 'any subscriber'" (`gateway.md`'s own edge
-  list) and re-publishing it into `dashboard-feed`, never as a second direct
+  static hosting, and (round-3) every service's published **surface schema**
+  from which the dashboard renders each component
+  (`scaffold/contracts/surface-schema.md`). No direct edges to inference, gc,
+  or ccd in this design — deliberately, to keep mesh as the single always-on
+  aggregation point (the always-on Pi runs mesh so the dashboard stays live
+  even when every GPU box is asleep). `mesh.network-topology`'s
+  `network-events` reaches the dashboard only by way of mesh's fan-out hub
+  folding it in-process into `dashboard-feed`, never as a second direct
   subscription — the dashboard stays a one-edge component the way its own
   pre-existing stub already states ("Consumes `dashboard-feed` only").
 
@@ -151,8 +174,9 @@ Parent: none (top-level). Children: none.
 the per-node/fleet-wide panel split, and the offline-vs-pending state field are
 sketched concretely enough to fill against, but the exact envelope/REST
 shapes are intentionally left to the Contract Harmonizer (step 3), since
-`dashboard-feed.md` and `mesh-registry-read.md` are still schema-deferred
-stubs and this component must not invent a contract unilaterally.
+`dashboard-feed.md` and `surface-schema.md` are still schema-deferred
+stubs and this component must not invent a contract unilaterally. The round-3
+schema-driven-rendering layer is `requirements-only` (see Charter note).
 
 ## Assigned design-depth
 
@@ -165,7 +189,7 @@ reshaping of already well-structured Svelte code — five stores go from flat to
 keyed, panels get wrapped in a node loop, ids get templated — no new
 algorithms, no new protocol design) -> a mid-tier model (Sonnet-class) is
 sufficient for Fill. Only escalate if the Contract Harmonizer's final
-`dashboard-feed`/`mesh-registry-read` shapes diverge significantly from the
+`dashboard-feed`/`surface-schema` shapes diverge significantly from the
 proposal in concern 7 above (e.g. if node-scoped REST turns out to be
 WS-only with no REST fallback, the polling-panel pattern would need a
 heavier rework than sketched here).

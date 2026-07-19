@@ -13,10 +13,22 @@ It owns **no I/O, no async business logic, no service behavior, and no
 opinion about how any other crate uses these types** — it is pure vocabulary.
 Concretely it is what every `scaffold/contracts/<edge>.md` schema section will
 be expressed IN TERMS OF: it is not itself a party to a request/response edge,
-it is the shared language every edge's schema is written in. Confirmed
-**as-is** this pass — no reshape, no new modules added by this design step —
-but it is on a growth path (mesh's OQ-3 `NodeInfo`/`NodeCapabilities`
-enrichment, and whatever `db`/`ccd`/`org` end up needing to share), so this
+it is the shared language every edge's schema is written in.
+
+> **SUPERSEDED (2026-07-18, round-3): the as-is freeze.** This file previously
+> confirmed `types` "as-is this pass — no reshape, no new modules." The
+> operator removed that freeze: **`types` is now UNLOCKED — additions and
+> updates are welcome** (subject to the discipline guardrails below, which
+> stand). First planned addition: a new **surface-schema domain module** (e.g.
+> `surface.rs`) defining the "boring surface schema" language — the shared
+> types every service uses to publish a schema of its observable surface (how
+> to render its dashboard component + what calls to make against it), from
+> which the mesh dashboard renders every service's component. See
+> `scaffold/contracts/surface-schema.md`.
+
+It remains on a growth path (mesh's OQ-3 `NodeInfo`/`NodeCapabilities`
+enrichment, the surface-schema module, and whatever `db`/`ccd`/`vfs`/
+`projects`/`org` end up needing to share), so this
 file exists to record the discipline that keeps that growth from turning the
 crate into an undifferentiated dumping ground as the crate count roughly
 doubles in V2.
@@ -115,11 +127,11 @@ Top-level, no parent, no children.
 
 ## Thoroughness level
 
-`implementation-ready` — the crate already exists, is confirmed as-is, and
-needs no new code from this design pass; the design content above is a
-disciplinary charter for how it absorbs the two flagged growth points (OQ-3,
-`db-inference-init`) and general V2 growth, not a spec for new types to
-build.
+`implementation-ready` for the existing crate + disciplinary charter; the
+round-3 **surface-schema module is `requirements-only`** (named and scoped —
+render + interaction description language — but its type shapes are undesigned;
+a step-3 / Contract Harmonizer concern together with
+`scaffold/contracts/surface-schema.md`).
 
 ## Assigned design-depth
 

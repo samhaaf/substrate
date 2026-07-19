@@ -12,7 +12,7 @@ init sequence, crash recovery, pause/resume, event fan-out, prompt-hook seam)
 and the node's participation in the mesh (registering its own slug, initializing
 its database on a fresh node via `db`). It does NOT own routing/affinity across
 nodes (that is `mesh.completion-router`), aggregation/observability across the
-fleet (`gateway`), the control-plane Postgres (`db`), or agent management
+fleet (mesh's observability plane — formerly `gateway`, merged 2026-07-18), the control-plane Postgres (`db`), or agent management
 (`ccd`). The name stays `inference`, not `llm`/`gen`: the crate is deliberately
 **modality-agnostic** — future generation modalities (text-to-image,
 text-to-video) extend this same crate and its subsystems rather than spinning
@@ -43,7 +43,7 @@ separately rejected as a spoken homophone for "Jen" in a voice-operated project.
   schema at `Store::open`), flagged for the operator, not silently resolved.
 - **One event bus, fanned out per node.** `InferenceService` owns a
   `broadcast::Sender<LifecycleEvent>` (capacity 256, lossy for slow consumers)
-  that the api layer bridges to the WS surface the gateway subscribes to
+  that the api layer bridges to the WS surface mesh's observability plane (formerly gateway) subscribes to
   (`inference-events`, one subscription per node in v2, envelopes tagged with
   the node's real `node_id`).
 - **Shaped-for-maximalist-consumer.** Both `ccd` (agents' `llm-calls`) and, in
@@ -60,7 +60,7 @@ separately rejected as a spoken homophone for "Jen" in a voice-operated project.
 ## Relationships / edges
 - client / mesh.completion-router <-> inference (api) via `v1-completion-api` (see scaffold/contracts/v1-completion-api.md)
 - mesh.completion-router -> inference (api) via `node-state-poll` (see scaffold/contracts/node-state-poll.md)
-- gateway <- inference via `inference-events` (see scaffold/contracts/inference-events.md)
+- mesh <- inference via `inference-events` (was gateway; gateway merged into mesh 2026-07-18) (see scaffold/contracts/inference-events.md)
 - ccd (agents) -> inference (api) via `llm-calls` (see scaffold/contracts/llm-calls.md)
 - inference -> db via `db-inference-init` (see scaffold/contracts/db-inference-init.md)
 - inference (each service) <-> mesh.service-registry via `service-lookup` (the assembly seam; see scaffold/contracts/service-lookup.md)

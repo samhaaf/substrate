@@ -87,7 +87,7 @@ compile in directly, same as `gc`'s embedded-lib half.
   `db-control-plane` — unchanged from today.
 
 No other edges touch `db` this round. `db` does not call out to any other
-substrate component (mesh, gateway, ccd) — it is a leaf/foundation dependency,
+substrate component (mesh, ccd) — it is a leaf/foundation dependency,
 consumed but not consuming, other than its own external deps (Supabase CLI,
 Docker, Postgres).
 

@@ -1,7 +1,9 @@
 # Contract: network-events
 
 ## Parties
-mesh.network-topology  ->  any subscriber (gateway, ccd, org)
+mesh.network-topology  ->  any subscriber (ccd, org)
+*(gateway removed as a subscriber, 2026-07-18 — gateway merged into mesh; the
+observability fan-out hub now consumes topology in-process, not over this edge)*
 
 ## What the edge carries
 Live WS stream of topology changes: peer devices going on/off the Tailscale

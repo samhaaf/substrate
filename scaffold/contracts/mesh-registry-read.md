@@ -1,9 +1,9 @@
-# Contract: mesh-registry-read
+# Contract: mesh-registry-read — COLLAPSED (tombstone)
 
-## Parties
-gateway  ->  mesh (NodeRegistry / service-registry)
-
-## What the edge carries
-Gateway resolves node endpoints and fleet state via mesh instead of static config:
-`/api/nodes` (NodeInfo + roles + last SystemState), `/api/mesh/stats` (fleet
-aggregate). Part of the registry-as-seam refactor. Schema deferred.
+> **This edge no longer exists** (2026-07-18, round-3: gateway merged into
+> mesh). It was `gateway -> mesh`: gateway resolving node endpoints and fleet
+> state (`/api/nodes`, `/api/mesh/stats`) over HTTP. With gateway's
+> observability plane absorbed into mesh, this read is mesh consulting its own
+> registry in-process — internal to mesh, not a contract. The `/api/nodes` /
+> `/api/mesh/stats` surfaces live on as mesh-served endpoints consumed by the
+> dashboard via `dashboard-feed`.

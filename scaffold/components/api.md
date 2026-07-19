@@ -8,7 +8,7 @@ completions (submit/status/cancel/priority/result/stream), `/v1/collections`,
 `/v1/execution/{pause,resume}`, `/v1/system/state`, read-only `/wiki/`, and
 `/metrics` + `/health`. It is the node-side terminus of BOTH the client-facing
 `v1-completion-api` and the mesh's read-only `node-state-poll`, and it bridges
-node lifecycle events to the WS stream the gateway subscribes to
+node lifecycle events to the WS stream mesh's observability plane (formerly gateway) subscribes to
 (`inference-events`). Its boundary: it is pure HTTP/WS translation + dispatch; it
 holds NO business logic — every route dispatches into scheduler/store/telemetry/
 benchmark via `api-dispatch`.
@@ -26,10 +26,10 @@ benchmark via `api-dispatch`.
   (telemetry/store) from submit dispatch (scheduler); keep that split explicit in
   the contract.
 - **Event bridge is per-node in v2.** The api bridges the node's
-  `broadcast::Sender<LifecycleEvent>` to a WS stream the gateway subscribes to,
+  `broadcast::Sender<LifecycleEvent>` to a WS stream mesh's observability plane subscribes to,
   one subscription per node, envelopes tagged with the real `node_id`
   (`inference-events`). Lossy-on-lag semantics (256-slot broadcast) must be
-  visible to the gateway so it can resubscribe.
+  visible to mesh so it can resubscribe.
 - **`/v1/benchmark/kernel` reshapes with the kernel.** Once telemetry owns the
   multidimensional confidence-aware kernel, this handler stops recomputing its
   own 1-D `output_tokens` curve and instead serves the kernel's real surface —
@@ -38,7 +38,7 @@ benchmark via `api-dispatch`.
 ## Relationships / edges
 - client / mesh.completion-router <-> api via `v1-completion-api` (see scaffold/contracts/v1-completion-api.md)
 - mesh.completion-router -> api via `node-state-poll` (see scaffold/contracts/node-state-poll.md)
-- gateway <- api via `inference-events` (see scaffold/contracts/inference-events.md)
+- mesh <- api via `inference-events` (was gateway; gateway merged into mesh 2026-07-18) (see scaffold/contracts/inference-events.md)
 - api -> {scheduler, store, telemetry, benchmark} via `api-dispatch` (see scaffold/contracts/api-dispatch.md)
 
 ## Nesting (if applicable)

@@ -34,16 +34,17 @@ fleet (that is completion-router's `NodeRegistry`).
   fleet); singleton services register their own slug -> own endpoint. See
   mesh.md Concern 1 — this is the non-obvious call.
 - **Endpoint is `{scheme,host,port,health_path?}`, not bare host:port**, so
-  `mesh service open` yields a browsable URL and the gateway can health-check.
+  `mesh service open` yields a browsable URL and mesh's observability plane can health-check.
 
 ## Relationships / edges
 
-- any device/service (gateway, ccd, org, inference, mesh CLI) via `service-lookup`
+- any device/service (ccd, org, inference, vfs, projects, mesh CLI) via `service-lookup`
   — register/resolve; the seam (scaffold/contracts/service-lookup.md)
 - ccd via `service-registration` — first-class registrant+resolver
   (scaffold/contracts/service-registration.md)
-- gateway via `mesh-registry-read` — node/fleet resolution
-  (scaffold/contracts/mesh-registry-read.md)
+- ~~gateway via `mesh-registry-read`~~ — collapsed 2026-07-18 (gateway merged
+  into mesh; the fleet read is mesh-internal now; the contract file is a
+  tombstone) (scaffold/contracts/mesh-registry-read.md)
 - service-registry peers via `registry-replication` — anti-entropy merge
   (scaffold/contracts/registry-replication.md)
 
