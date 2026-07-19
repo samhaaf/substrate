@@ -14,7 +14,10 @@
 > design (step 2) and contract schemas + example data (step 3) are deferred and
 > not yet authorized.~~ **SUPERSEDED round-9 (2026-07-19): the SECOND DESIGN
 > WAVE is AUTHORIZED and beginning — see the round-9 lock block below for the
-> process spec.** See `~/code/harness/core-plugins/core/skills/scaffolding-pattern/`.
+> process spec. The wave's DECOMPOSE step is DONE (2026-07-19): see
+> `scaffold/wave2-plan.md`, now the authoritative module inventory /
+> contract-pair inventory / batch plan.** See
+> `~/code/harness/core-plugins/core/skills/scaffolding-pattern/`.
 
 > **ROUND-3 FEEDBACK LOCK (2026-07-18), applied on top of the component-design
 > pass (commit `6879866`):** (1) **gateway merged into mesh** — gateway ceases
@@ -234,6 +237,31 @@ Combined scope across three sources:
 > Treat CCD/Org scope as intent-capture-grade, not repo-grade.
 
 ## Component tree (nesting shown)
+
+> **SUPERSEDED AS THE MODULE INVENTORY (wave-2 decompose, 2026-07-19):
+> `scaffold/wave2-plan.md` is now the AUTHORITATIVE module inventory** — the
+> fine-grained 44-module decomposition (35 full-design + 9 layer-6 stubs,
+> down to the lib level: mesh's 8 internal libs, inference's 8 internal
+> libs, the shared execution-engine/mesh-client/tailscale-query libs, and
+> every app crate), each with a layer assignment in the L0–L6 OS layering,
+> complexity rating, and design-model tier, plus the full contract-pair
+> inventory (41 existing + 28 missing stubs identified, none authored) and
+> the 8-batch bottom-up design plan. The tree below is KEPT as the
+> round-9-era component-level picture and naming history; where the two
+> disagree, `wave2-plan.md` wins. The layer picture, in brief:
+>
+> ```
+> L0 foundation        types, tailscale-query
+> L1 mesh kernel       mesh-core, pubsub-relay, network-topology, mesh-client
+> L2 state+OS services replicated-kv, service-registry, locks, queues, cron,
+>                      supervision, completion-router, dashboard-serving, aws
+> L3 storage plane     vfs, gc, secrets
+> L4 data+execution    db, vdb (stack), execution-engine, kg, rollup
+> L5 services/apps     inference (+store, engine, scheduler, models, cache,
+>                      telemetry, benchmark, api), repo, ccd, dashboard
+> L6 org plane (STUBS) org, projects, artifacts, environments, cicd, spend,
+>                      agents, aui, openrouter-mgmt
+> ```
 
 Top-level components are what the operator reads back one at a time. Nested
 children are genuinely-hard sub-parts isolated by COMPLEXITY (scaffolding
