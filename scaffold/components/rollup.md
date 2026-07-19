@@ -1,10 +1,11 @@
 # rollup
 
-**Status:** NEW (round-6 lock, 2026-07-19). **Nesting:** top-level.
+**Status:** NEW (round-6 lock, 2026-07-19; **name LOCKED round-9,
+2026-07-19**). **Nesting:** top-level.
 **Requirements-only stub — NOT a full design.**
-**NAMING OPEN:** this file is `rollup.md` for scaffold purposes, but the crate
-name is undecided between **`rollup` / `plugins` / other** — do not treat the
-filename as a naming decision.
+**NAME LOCKED (round-9, 2026-07-19): the crate is `rollup`.** The round-6
+"naming OPEN: rollup / plugins / other" question is RESOLVED — the filename
+and the crate name now agree.
 
 ## Charter (requirements, verbatim-grade)
 
@@ -72,6 +73,6 @@ Parent: none | Children: none (this pass).
 **requirements-only** — verbatim requirements capture; no design pass yet.
 Locked round-7: the raw-vs-reference insert-type axis and the
 no-secrets-raw-in-LLM-bound-content rule (the `secrets` component was
-named `vault` when this locked). Open: the crate name
-(rollup/plugins/other), the reference/slot syntax, and the prior-art
+named `vault` when this locked). Locked round-9: the crate name is
+**`rollup`**. Open: the reference/slot syntax and the prior-art
 reconciliation.

@@ -40,17 +40,35 @@ in a context."
 - **Distribution (round-8):** managed by mesh, and **distributed across
   nodes — or replication factor ~3** ("vault is just important" — operator,
   pre-rename wording). A single-node secret store is not acceptable.
-- **Adapters (round-8):** the service owns **adapters that PUSH secrets into
-  specific environments**: **Supabase Vault**, **AWS Secrets Manager**, and
-  **GitHub Actions secrets**. (`db`'s existing Supabase-Vault module is the
-  natural seed of the Supabase adapter — see the db note below.)
+- **Adapters (round-8; per-adapter status LOCKED round-9, 2026-07-19):**
+  the service owns **adapters that PUSH secrets into specific
+  environments**: **Supabase Vault**, **AWS Secrets Manager**, and
+  **GitHub Actions secrets**. Round-9 pins each adapter's v1 status:
+  - **Supabase adapter — EXISTS: `db`'s working Supabase-Vault module IS
+    the Supabase adapter.** Not "the natural seed" — the adapter itself.
+    Leverage it, do NOT rebuild it ("we touched vault already in the db
+    crate — we can take advantage of that; that's our adapter for pushing
+    secrets into that specific database"). See the db note below.
+  - **Local-mesh-database adapter — TO BUILD:** pushing secrets into local
+    mesh databases (stack/VDB-hosted SQLite) is the adapter v1 actually
+    builds.
+  - **AWS (Secrets Manager) adapter — DESIGN ONLY, NOT built now:**
+    "we're not doing pretty much anything in AWS right now — say where the
+    adapter is going to live." v1 designs the **data contract** and pins
+    **where it lives: the `aws` crate** (the AWS virtualization layer —
+    round-9; see `components/aws.md`), whose WebSocket surface is how the
+    push will flow when it is built.
+  - (The GitHub-Actions adapter's consumer side is repo's
+    secrets-injection-on-push — see `components/repo.md`.)
 - **Interfaces (round-8):** `secrets` interfaces with **VDB, db, projects,
   environments, and repo** (repo's slice: linking secrets into GitHub
   Actions workflows — see `components/repo.md`). Anticipated interfaces,
   not yet contract edges.
-- **S3 encryption keys live here (round-8 yes-block confirmation):** the
-  client-side-encryption keys used by mesh's S3 adapter are held by the
-  `secrets` service (see the S3-adapter capability in `components/mesh.md`).
+- **S3 encryption keys live here (round-8 yes-block confirmation; owner
+  updated round-9):** the client-side-encryption keys used for the S3
+  overflow tier are held by the `secrets` service. (Round-9 supersession:
+  the S3 adapter itself now lives in the `aws` crate, not mesh — see
+  `components/aws.md` and mesh capability 9's supersession note.)
 - **Must be boring and "not choppy."**
 - **Everything else is OPEN** — storage backend, encryption at rest, human
   access paths, rotation, scoping/namespacing, and how non-agent code reads
@@ -83,6 +101,10 @@ direction recorded in `components/db.md`.
   linking secrets into GH Actions workflows (see `components/repo.md`);
   db's slice is the reconciliation note above. Edge naming deferred until
   `secrets` gets a design pass.
+- **aws** (round-9, anticipated — not a contract stub yet) — the AWS
+  Secrets Manager push flows through the `aws` crate's adapter surface
+  when built (design-only in v1; see the adapter statuses above and
+  `components/aws.md`). Edge naming deferred.
 - Consumers (ccd's agents, org's agents, stack/db handlers reaching third
   parties, cicd deploys) are anticipated but not yet edges — deferred until
   `secrets` gets a design pass.
@@ -94,8 +116,11 @@ Parent: none | Children: none (this pass).
 ## Thoroughness level
 
 **requirements-only** — locked: use-without-seeing for agents/LLMs, the
-round-7 `llm_safe` raw/ID mechanism (no secret ever reaches an LLM), and
-the round-8 name (`secrets`), distribution (across nodes / replication ~3),
+round-7 `llm_safe` raw/ID mechanism (no secret ever reaches an LLM), the
+round-8 name (`secrets`), distribution (across nodes / replication ~3),
 push adapters (Supabase Vault, AWS Secrets Manager, GitHub Actions
 secrets), and interface list (VDB, db, projects, environments, repo);
-everything else open.
+round-9 pins the adapter statuses — Supabase adapter = db's existing
+working module (leverage, don't rebuild), local-mesh-database adapter to
+build, AWS adapter design-only (data contract + it lives in the `aws`
+crate; not built now); everything else open.

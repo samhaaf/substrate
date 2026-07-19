@@ -244,8 +244,11 @@ source this round — it is more than a stub:**
 (`components/secrets.md`, RENAMED from `vault` this round) becomes the
 OWNER of secret management going forward.** `db`'s own secret handling —
 the Supabase-Vault module and the keychain-at-runtime convention — gets
-**reconciled to CONSUME `secrets`**: the existing `vault.rs` surface is the
-natural seed of `secrets`' Supabase-Vault push adapter, and the direct
+**reconciled to CONSUME `secrets`**: the existing `vault.rs` surface ~~is the
+natural seed of~~ **IS `secrets`' Supabase-Vault push adapter (UPGRADED
+round-9, 2026-07-19: "that's our adapter for pushing secrets into that
+specific database" — leverage it, do NOT rebuild it; see
+`components/secrets.md`)**, and the direct
 keychain reads become `secrets`-mediated. **A real `db`-crate update is
 operator-authorized when that design lands** ("this might be one of the
 times where we actually have to update the db crate"). Nothing in `lib/db`

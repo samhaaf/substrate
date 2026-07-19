@@ -52,10 +52,13 @@ entire mesh**. Requirements:
   shared engine's causal-chain tracking.
 - **Cross-boundary sync with AWS/S3.** KGs need eventual consistency with the
   AWS/S3 side too — use case: an external agent extracts a user's intent into a
-  KG and it shows up in the mesh. Per the same-day S3-adapter decision, this
-  flows **through mesh's S3 adapter** (mesh owns all eventual-consistency/
-  replication; KG talks to mesh, mesh distributes into S3) — see
-  `components/mesh.md`.
+  KG and it shows up in the mesh. ~~Per the same-day S3-adapter decision, this
+  flows through mesh's S3 adapter~~ — **SUPERSEDED round-9 (2026-07-19): the
+  S3/AWS adapter surface lives in the new `aws` crate** (see
+  `components/aws.md`). Mesh still owns the eventual-consistency/replication
+  plane (KG talks to mesh; mesh orchestrates the distribution), but the
+  actual S3/AWS surface it distributes through is `aws`'s (contract
+  `aws-mesh`) — see `components/mesh.md` capability 9's supersession note.
 
 - ~~**OPEN question (round-7, 2026-07-19): should KG be BUILT ON VDB?**~~ —
   **RESOLVED (round-8, 2026-07-19): YES — KG IS BUILT ON TOP OF VDB.**
@@ -99,7 +102,8 @@ structure, and graph nodes point at project files in the VFS (see
 
 - **mesh** via `kg-mesh` — registration (an instance of `service-lookup`) +
   replication: mesh owns the eventual-consistency/replication plane that
-  distributes graph state across nodes and into S3 through mesh's S3 adapter;
+  distributes graph state across nodes — and into S3 through the `aws`
+  crate's adapter surface (round-9 supersession; was "mesh's S3 adapter");
   the graph-merge consistency model is OPEN
   (scaffold/contracts/kg-mesh.md).
 - **vfs** via `kg-vfs` — node-to-file pointers + existence validation of the

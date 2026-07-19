@@ -7,10 +7,13 @@ kg  <->  mesh
 Registration + replication: KG registers its slug/endpoint in mesh's service
 registry (an instance of `service-lookup`), and rides mesh's eventual-
 consistency/replication plane to distribute graph state across nodes — and into
-AWS/S3 through **mesh's S3 adapter** (client-side encryption, cold-storage
-classes; see `components/mesh.md`), giving KGs eventual consistency with the
+AWS/S3 through **the `aws` crate's adapter surface** (round-9 supersession —
+was "mesh's S3 adapter"; mesh still orchestrates the distribution but the
+S3/AWS surface lives in `aws`; client-side encryption, cold-storage
+classes; see `components/aws.md` / `aws-mesh`), giving KGs eventual
+consistency with the
 AWS side (use case: an external agent extracts a user's intent into a KG and it
 shows up in the mesh). OPEN: the consistency model — a graph of interconnected
 nodes is "the superset" of the registry's naive timestamp-wins KV and needs its
 own merge design. Schema/example deferred. **requirements-only** (round-3
-second batch, 2026-07-18).
+second batch, 2026-07-18; S3 leg re-routed via `aws` round-9, 2026-07-19).

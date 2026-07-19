@@ -10,9 +10,11 @@
 > **Stage 1, Step 1 (DECOMPOSE) only.** This file names the components, their
 > nesting, and every contract edge between them, and designs the single wiring
 > seam. It deliberately does **not** contain full per-component designs — the
-> `components/<name>.md` files are STUBS (title + one paragraph). Full component
+> `components/<name>.md` files are STUBS (title + one paragraph). ~~Full component
 > design (step 2) and contract schemas + example data (step 3) are deferred and
-> not yet authorized. See `~/code/harness/core-plugins/core/skills/scaffolding-pattern/`.
+> not yet authorized.~~ **SUPERSEDED round-9 (2026-07-19): the SECOND DESIGN
+> WAVE is AUTHORIZED and beginning — see the round-9 lock block below for the
+> process spec.** See `~/code/harness/core-plugins/core/skills/scaffolding-pattern/`.
 
 > **ROUND-3 FEEDBACK LOCK (2026-07-18), applied on top of the component-design
 > pass (commit `6879866`):** (1) **gateway merged into mesh** — gateway ceases
@@ -67,13 +69,14 @@
 > interruptibility state; non-critical updates wait for idle; **port-handoff
 > update pattern** (new version on new port → registry flip → old port down);
 > plus a **two-way, priority-laddered graceful-restart protocol** built into
-> EVERY service from the beginning (exact ladder: latitude granted, discuss)
+> EVERY service from the beginning (exact ladder was latitude-granted —
+> **LOCKED at 4 levels round-9**)
 > and new internal **queues + dead-letter queues** (SQS-modeled; dead-letter
 > escalation → ccd investigation) — see `mesh.md` concerns 12–14. `locks`
 > gains a required catchable partition-merge error type. (B) **three new
 > requirements-only components:** **`vault`** (secrets — agents/LLMs
 > use-without-seeing; **RENAMED `secrets` round-8**), **`rollup`** (the prompt/plugin rollup system; crate
-> name OPEN: rollup/plugins/other; CCD ideally built on top of it), and
+> name was OPEN: rollup/plugins/other — **LOCKED `rollup` round-9**; CCD ideally built on top of it), and
 > **`repo`** (**fork RESOLVED** — repo IS its own crate on top of the VFS;
 > both stay boring). (C) the **stack-vs-db boundary recorded as THE
 > operator's most-nebulous OPEN question** (+ the **VDB** idea; Postgres/
@@ -152,6 +155,57 @@
 > blanket every-pull rule) — see `mesh.md` concern 14, `types.md`, and
 > the shared-libraries section.
 
+> **ROUND-9 LOCK (2026-07-19, applied on top of commit `15a85ba`):**
+> (A) **round-8 yes-block loose ends CLOSED:** the crate name is
+> **`rollup`** (naming no longer OPEN — `rollup.md`); the **restart ladder
+> is LOCKED at exactly 4 levels** (wait-for-idle / finish-and-relinquish /
+> ~10s-save-window / kill — the "latitude granted, discuss" hedge is
+> closed; `mesh.md` concern 13); the **SQLite-locally rule is LOCKED** —
+> local environments run SQLite, PERIOD; Postgres exists ONLY as a cloud
+> VDB target; **no local Postgres, native or Docker** (resolves the flagged
+> "one Postgres Docker" ambiguity — `stack.md`; the SQLite-sufficiency
+> analysis no longer gates a decision, kept as design input).
+> (B) **TRIGGERS ARE DECLARATIVE — LOCKED.** "Triggers are declarative.
+> They are not arbitrary code." A trigger is declarative data — filter
+> expression + payload-assembly template — registered as data; code lives
+> ONLY in handlers (`mesh.md` concern 14; shared-libraries section).
+> (C) **repo/cicd scope settled for v1:** repo owns **FULL GitHub Actions
+> workflow management** ("managing a GitHub Actions pipeline is just making
+> changes in a directory"); **secrets injection on push is THE required v1
+> capability**; **rollup is explicitly excluded** from GH-Actions
+> management. **cicd is repositioned LAYER-6** — a design stub (pipelines
+> running WITHIN the mesh that watch external services, verify deployments,
+> may invoke agents/CCD as steps; goal: increasingly deterministic with
+> fewer agents in the loop; grounded in the operator's live Deployment
+> Chaperone subagent) + contract stub `cicd-repo` (kick off workflows,
+> chains); **cicd-as-own-crate vs. emergent-from-repo OPEN** — see
+> `repo.md`/`cicd.md`. (D) **secrets adapter statuses pinned:** `db`'s
+> working Supabase-Vault module **IS** the Supabase adapter (leverage,
+> don't rebuild); the local-mesh-database adapter is the one to BUILD; the
+> AWS adapter is DESIGN-ONLY (data contract + where it lives — the `aws`
+> crate; not built now) — see `secrets.md`. (E) **NEW top-level crate
+> `aws` — the AWS virtualization layer** ("I definitely meant AWS crate"):
+> the aggregation point for ALL AWS adapters (S3 overflow, RDS+Lambda VDB
+> target, Secrets Manager push, SQS someday), a WebSocket interface for
+> pushing/reading/pulling against AWS as Mind OS services need; explicitly
+> NOT a boto3/Terraform replacement. **SUPERSEDES the S3-adapter-inside-
+> mesh placement** — the S3/AWS surface lives in `aws`; mesh/vfs/kg/secrets
+> consume it (supersession notes in each; new contracts `aws-mesh`,
+> `aws-vfs`) — see `aws.md`. (F) **THE SECOND DESIGN WAVE IS AUTHORIZED
+> and beginning** ("Absolutely yes. Do it layer by layer, make sure all
+> the artifacts are captured"): a fresh, super-fine-grained DECOMPOSE pass
+> (~30 modules, down to lib level, including mesh's internal libs and
+> inference's nested libs, fed the previous decompose output + everything
+> changed since; decompose identifies contract-needing pairs, does not
+> write contracts) → per-module design passes proposing neighbor contracts
+> → a per-pair contract round → harmonization; run **layer by layer, 5–8
+> agents per batch**; layer-6 items get design stubs with anticipated
+> contracts + explicit "not implementing now"; model policy: Fable only
+> where high-complexity demands (one step per Design Mesh), Opus
+> otherwise; at the end, surface ALL friction points, then another
+> clarification round (expect one more, less-transformative design pass
+> after that).
+
 ## Scope of this pass
 
 Combined scope across three sources:
@@ -216,7 +270,11 @@ mesh                          [RESHAPE + EXPAND — "the operating system"] coor
                                 compose; ~exactly-once over at-least-once). Round-8: vocabulary locked
                                 — typed EVENTS in queues; TRIGGERS (1:1 queue→handler, many per queue)
                                 filter + assemble handler payloads; HANDLERS receive assembled
-                                payloads; the event-ID semaphore is a per-trigger choice
+                                payloads; the event-ID semaphore is a per-trigger choice. Round-9:
+                                restart ladder LOCKED at 4 levels (wait-for-idle / finish-and-
+                                relinquish / ~10s-save-window / kill); triggers DECLARATIVE (data:
+                                filter + payload-assembly template — never code); the S3 adapter
+                                moves OUT to the new `aws` crate (mesh consumes it via `aws-mesh`)
   ├─ tailscale-query          [NEW] standardized, extensible Tailscale-status query surface
   ├─ network-topology         [NEW] live WS: device on/off + self-connectivity-loss events
   ├─ service-registry         [NEW] distributed, eventually-consistent slug -> host:port registry
@@ -245,7 +303,10 @@ repo                          [NEW round-6, requirements-only; fork RESOLVED] it
                                 git/GitHub repos; branches, worktrees, branches attachable to
                                 environments; "the only non-boring thing about it is that it sits on
                                 the VFS"; round-8: GitHub Actions management — managing workflows on
-                                repos + linking secrets into GH Actions workflows
+                                repos + linking secrets into GH Actions workflows; round-9: owns
+                                FULL GH-Actions workflow management in v1 (workflows are directory
+                                changes); secrets injection on push = THE required v1 capability;
+                                rollup excluded; cicd kicks off workflows through it (`cicd-repo`)
 db                            [existing, as-is; SCOPE CONFIRMED] Postgres/Supabase control-plane crate + `db` CLI;
                                 rounds 4–5: query/virtualization layer now in-scope DIRECTION
                                 (standardized query interface over SQLite-in-VFS / Supabase / RDS);
@@ -263,12 +324,22 @@ stack                         [NEW rounds 4–5, requirements-only] lightweight 
                                 analysis; round-8: LAYERING LOCKED — VDB is the daemon that
                                 tracks/executes the stack pattern, USING the db crate to run actions
                                 (db extended as needed); KG on top of VDB; VFS below (VFS < VDB < KG);
-                                the stack-vs-db open question is RESOLVED
+                                the stack-vs-db open question is RESOLVED; round-9: SQLite-locally
+                                LOCKED — local environments run SQLite, period; Postgres ONLY as a
+                                cloud VDB target; no local Postgres, native or Docker (the "one
+                                Postgres Docker" ambiguity is RESOLVED; the sufficiency analysis
+                                de-gated, kept as design input)
 environments                  [NEW rounds 4–5, requirements-only] environment = subset of a project;
                                 CICD pipeline attachable; deploy-into-environment activates it;
                                 chained blue/green deployments; bandit feature balancing (placement OPEN)
-cicd                          [NEW rounds 4–5, requirements-only] pipelines consuming environments;
-                                hierarchy vs environments OPEN (sibling-with-dependency assumed)
+cicd                          [NEW rounds 4–5; round-9: LAYER-6 design stub — NOT implementing now]
+                                pipelines running WITHIN the mesh that watch external services
+                                (App Runner, Cloudflare...), verify deployments, may invoke
+                                agents/CCD as steps; goal: increasingly deterministic, fewer agents
+                                in the loop (grounded in the Deployment Chaperone); kicks off
+                                workflows/chains through repo (`cicd-repo`); consumes environments;
+                                hierarchy vs environments OPEN (sibling-with-dependency assumed);
+                                own-crate vs emergent-from-repo OPEN
 secrets                       [NEW round-6, requirements-only; RENAMED from `vault` round-8 —
                                 Supabase Vault / AWS Secrets Manager collisions] secrets crate/service;
                                 agents/LLMs can NEVER directly read a secret but CAN use one in context
@@ -277,13 +348,23 @@ secrets                       [NEW round-6, requirements-only; RENAMED from `vau
                                 degrade to ID-plus-warning; no secret ever reaches an LLM); round-8:
                                 distributed across nodes (replication ~3); adapters push secrets into
                                 Supabase Vault, AWS Secrets Manager, GitHub Actions secrets;
-                                interfaces with VDB, db, projects, environments, repo
-rollup                        [NEW round-6, requirements-only; crate name OPEN: rollup/plugins/other]
+                                interfaces with VDB, db, projects, environments, repo; round-9:
+                                adapter statuses pinned — db's working Supabase-Vault module IS the
+                                Supabase adapter; local-mesh-database adapter to build; AWS adapter
+                                design-only (contract + home in `aws`; not built now)
+rollup                        [NEW round-6, requirements-only; crate name LOCKED `rollup` round-9]
                                 prompt/plugin rollup: fragments referencing fragments via a syntax,
                                 slots taking variables at reference time; specialized plugins generated
                                 on demand (CCD ideally built on top of it); generalization ladder
                                 string-rollup → file-rollup → directory-rollup; round-7: insert
-                                types locked (raw vs reference)
+                                types locked (raw vs reference); round-9: explicitly EXCLUDED from
+                                GH-Actions workflow management (repo manages workflow files directly)
+aws                           [NEW round-9, requirements-only] the AWS virtualization layer — the
+                                aggregation point for ALL AWS adapters (S3 overflow, RDS+Lambda VDB
+                                target, Secrets Manager push, SQS someday); WebSocket interface for
+                                pushing/reading/pulling against AWS as Mind OS services need it;
+                                explicitly NOT a boto3/Terraform replacement; supersedes the
+                                S3-adapter-inside-mesh placement (mesh/vfs/kg/secrets consume it)
 ccd                           [NEW; TOP-LEVEL CONFIRMED round-3] Cloud Code Daemon (Marshall/CCM):
                                 cloud-code manager + Claude-Code-usage-limits budget engine; rounds 4–5:
                                 owns its own usage database (sessions/tokens/limits; queried by spend);
@@ -425,10 +506,10 @@ where a caller/callee asymmetry matters.
 | `db-control-plane` | db <-> consumers (Org/game-demo) | Noun-verb DB control plane: migrations, edge functions, query, outbox, over Postgres/SQLite. |
 | `db-inference-init` | inference -> db | A new `inference` node standing up on a fresh mesh node initializes its own database through `db` rather than bootstrapping it itself. |
 | `vfs-gc` | vfs <-> gc | **NEW round-3 (requirements-only).** VFS calls the node-local GC tool to enforce that device's directory policies (max size, FIFO/LRU-ish eviction). |
-| `vfs-mesh` | vfs <-> mesh | **NEW round-3 (requirements-only).** VFS registration + node/drive topology awareness + per-node perf reporting (uptime, read/write latency). |
+| `vfs-mesh` | vfs <-> mesh | **NEW round-3 (requirements-only).** VFS registration + node/drive topology awareness + per-node perf reporting (uptime, read/write latency). *(Round-9: the S3-overflow leg re-routed to `aws-vfs`.)* |
 | `projects-vfs` | projects -> vfs | **NEW round-3 (requirements-only).** The knowledge graph points into sections of the flat VFS; project artifacts stored through it. |
 | `projects-mesh` | projects <-> mesh | **NEW round-3 (requirements-only).** Registry push (dashboards + source) + surfacing project dashboards on the mesh dashboard via surface schemas. |
-| `kg-mesh` | kg <-> mesh | **NEW round-3 second batch (requirements-only).** KG registration + graph replication across nodes and into S3 through mesh's adapter; graph-merge consistency model OPEN ("the superset" of the registry's LWW KV). |
+| `kg-mesh` | kg <-> mesh | **NEW round-3 second batch (requirements-only).** KG registration + graph replication across nodes — and into S3 through the `aws` crate's adapter surface (round-9 supersession; was mesh's own adapter); graph-merge consistency model OPEN ("the superset" of the registry's LWW KV). |
 | `kg-vfs` | kg -> vfs | **NEW round-3 second batch (requirements-only).** KG nodes point at VFS files; existence validation of the pointed-at file. |
 | `stack-vfs` | stack -> vfs | **NEW rounds 4–5 (requirements-only).** The single SQLite file each stack daemon wraps is stored in / accessed through the VFS. |
 | `stack-mesh` | stack <-> mesh | **NEW rounds 4–5 (requirements-only).** Registration via the local mesh daemon (:3649, single-port locality) + distributed-handler coordination via mesh's `locks` lib. |
@@ -436,6 +517,9 @@ where a caller/callee asymmetry matters.
 | `rollup-ccd` | ccd -> rollup | **NEW round-6 (requirements-only).** CCD consumes rollup for its plugin/prompt assembly — fragments + slots rolled up into specialized plugins for specialized agents, generated on demand. |
 | `repo-vfs` | repo -> vfs | **NEW round-6 (requirements-only).** Repo sits on top of the VFS: repo state materialized through VFS storage; push/sync between VFS trees and git/GitHub repos. |
 | `repo-environments` | repo <-> environments | **NEW round-6 (requirements-only).** Branches/worktrees attachable to environments; deploy-into-environment activates the pipeline (the environments-branches relationship is flagged "strange" for public-website deployments). |
+| `cicd-repo` | cicd -> repo | **NEW round-9 (requirements-only, LAYER-6 — cicd not implemented in v1).** cicd kicks off GH Actions workflows and sets up workflow chains through repo (repo owns the full GH-Actions surface in v1); collapses into repo-internal structure if cicd emerges from repo (OPEN). |
+| `aws-mesh` | aws <-> mesh | **NEW round-9 (requirements-only).** aws registration/resolution + mesh's replication plane distributing into S3/AWS through aws's adapter surface (supersedes mesh's internal S3 adapter); KG's cross-boundary sync rides this leg; someday the SQS deployment path. |
+| `aws-vfs` | aws <-> vfs | **NEW round-9 (requirements-only).** The S3 overflow tier data path: VFS overflow reaches S3 (cold-storage classes, client-side encryption; keys in `secrets`) through aws's WebSocket adapter surface. |
 
 **Collapsed edge:** `mesh-registry-read` (was gateway -> mesh) no longer exists —
 with gateway absorbed, that read is mesh consulting its own registry in-process;
@@ -504,7 +588,7 @@ the seam implies reworking every currently-static endpoint config to resolve via
 `service-lookup`: the absorbed observability plane's `inference_url`/`gc_url`
 (now mesh-internal config), the mesh's node list,
 CCD's endpoints, Org's service map, and the new
-`vfs`/`kg`/`projects`/`stack`/`secrets`/`repo` services. The
+`vfs`/`kg`/`projects`/`stack`/`secrets`/`repo`/`aws` services. The
 mesh-design-synthesis
 already anticipated the observability-plane change (OQ-style, written pre-merge
 against gateway). This is a cross-cutting refactor
@@ -579,12 +663,25 @@ operator-locked shared lib.)
     the event-ID semaphore** (per-trigger choice — supersedes round-7's
     blanket rule; the `locks`+queues composition stands). See
     `components/mesh.md` concern 14.
+  - **TRIGGERS ARE DECLARATIVE — LOCKED (round-9, 2026-07-19).** Direct
+    operator answer: "Triggers are declarative. They are not arbitrary
+    code." A trigger is **declarative DATA** — a **filter expression** plus
+    a **payload-assembly template** — **registered as data**, never as
+    code; **executable code lives ONLY in handlers**. This binds the shared
+    engine's trigger surface on BOTH adapters (stack-tables and kg-nodes)
+    exactly as it binds mesh's queues: however powerful the trigger
+    mechanism is, its power is declarative (filtering + assembly, including
+    declarative rollup references) — see `components/mesh.md` concern 14.
 
 ## Future / placeholder concepts (named only — NO component files)
 
 Operator-named coming-later scope, recorded as one-liners so nothing squats on
 the names. These are layer-six territory alongside `org` and CCD's strategic
-layer; none is decomposed, designed, or given a `components/` file this pass:
+layer; none is decomposed, designed, or given a `components/` file this pass
+(**exception, round-9: `cicd` is also layer-six/future but KEEPS its
+`components/cicd.md` design stub** — layer-6 items get design stubs with
+anticipated contracts and an explicit "not implementing now" note, per the
+second-design-wave process spec; see the tree entry and `cicd.md`):
 
 - **`agents`** — a future generalization layered ON TOP of CCD for non-Claude-
   Code agent types (which CAN choose models and may use local inference); CCD
@@ -663,22 +760,27 @@ layer; none is decomposed, designed, or given a `components/` file this pass:
   daemon. Still open nearby: the Postgres source / Docker tension and the
   SQLite-sufficiency gate (next bullet). Full supersession note in
   `stack.md`; see also `db.md`.
-- **`stack` SQLite→Postgres upgrade (rounds 4–5; PARTIALLY RESOLVED
-  round-6; GATED round-7):** the migration *mechanics* are confirmed
-  (copy/verify/switch under a lock; let running edge functions finish, swap
-  underneath, write back, resume). Still OPEN: where Postgres comes from —
-  the operator's "one Postgres Docker machine" line sits **unreconciled
-  against the hard no-Docker rule** — and his own counter-question "why ever
-  upgrade past SQLite if the full stack works on SQLite." **Round-7: the
-  operator will not decide the local-Postgres question until a REQUIRED
-  daemon-level SQLite-sufficiency gap analysis** shows whether SQLite + the
-  stack daemon + mesh (cron, pub/sub) functionally covers everything
-  Postgres would provide (pg_cron → mesh cron; LISTEN/NOTIFY → mesh pub/sub;
-  procedural triggers → daemon-level Deno/SQL handlers; etc.); AUI is
-  delivering a first-pass analysis conversationally, but the definitive
-  version belongs in stack/VDB's full component design. See `stack.md`.
+- ~~**`stack` SQLite→Postgres upgrade (rounds 4–5; PARTIALLY RESOLVED
+  round-6; GATED round-7)**~~ — **RESOLVED round-9 (2026-07-19): the
+  SQLite-locally rule is LOCKED.** Local environments run SQLite, period;
+  Postgres exists ONLY as a cloud VDB target (Supabase / AWS RDS+Lambda);
+  **no local Postgres, native or Docker** — the "one Postgres Docker
+  machine" float is dead, reconciled in favor of the hard no-Docker rule
+  and the operator's own routing rule (local → SQLite, cloud → promote).
+  The migration *mechanics* remain confirmed (copy/verify/switch under a
+  lock; let running edge functions finish, swap underneath, write back,
+  resume) — an upgrade is now always a local→cloud promotion. The round-7
+  REQUIRED SQLite-sufficiency analysis **no longer gates a decision** but
+  is KEPT as a required design input for stack/VDB's design pass (with
+  SQLite the only local engine, the daemon-level Postgres-equivalents —
+  pg_cron → mesh cron; LISTEN/NOTIFY → mesh pub/sub; procedural triggers →
+  Deno/SQL handlers — are load-bearing). See `stack.md`.
 - **`environments` vs `cicd` hierarchy (NEW rounds 4–5):** sibling vs. child
-  OPEN; sibling-with-dependency is the working assumption. ~~And bandit-based
+  OPEN; sibling-with-dependency is the working assumption. **Round-9 adds a
+  second cicd OPEN: whether cicd stays its own crate or EMERGES from repo**
+  (cicd is now a layer-6 design stub; repo owns the v1 GH-Actions surface;
+  `cicd-repo` collapses into repo-internal structure if it emerges) — see
+  `cicd.md`/`repo.md`. ~~And bandit-based
   feature load-balancing placement~~ — **RESOLVED round-6: bandits are NOT a
   mesh concern; they are complex in-app behavior** inside a public-facing
   website deployed via projects/environments. Standing note recorded:
@@ -698,12 +800,14 @@ layer; none is decomposed, designed, or given a `components/` file this pass:
   rolling updates ("each individual service only gets restarted if it needs
   to get restarted"); commit-as-release-set was proposed and NOT adopted.
   Round-6 supplies the per-service mechanics: port-handoff updates + the
-  two-way graceful-restart protocol (`mesh.md` concerns 12–13). Still OPEN:
-  the concrete update protocol between nodes running mixed versions, and the
-  exact restart-priority ladder ("latitude granted, discuss"). See `mesh.md`
-  concerns 6, 12–13.
-- **`rollup` naming + syntax (NEW round-6; insert types LOCKED round-7):**
-  the crate name is OPEN (rollup / plugins / other), as is the
+  two-way graceful-restart protocol (`mesh.md` concerns 12–13). **Round-9
+  closes the ladder: LOCKED at exactly 4 levels** (wait-for-idle /
+  finish-and-relinquish / ~10s-save-window / kill — the "latitude granted,
+  discuss" hedge is gone). Still OPEN: the concrete update protocol between
+  nodes running mixed versions. See `mesh.md` concerns 6, 12–13.
+- **`rollup` naming + syntax (NEW round-6; insert types LOCKED round-7;
+  NAME LOCKED round-9):** ~~the crate name is OPEN (rollup / plugins /
+  other)~~ — **the crate name is `rollup` (round-9)**. Still OPEN: the
   fragment-reference/slot syntax; the operator has built ~two prior versions
   in other projects — a prior-art scan is underway separately and should
   seed the design pass. Round-7 locks the **raw-vs-reference insert-type

@@ -31,14 +31,18 @@ components (notably `projects`) build on. Requirements:
 - **RAID-inspired features** — per-file replication factor; a multi-drive node
   (e.g. a Raspberry Pi with two external drives) configurable as a RAID-like
   warm/cold-storage node.
-- ~~**S3 overflow tier**~~ — **SUPERSEDED (2026-07-18, round-3 second batch):
-  the S3 adapter moves INSIDE `mesh`.** The round-3 capture placed the S3
+- ~~**S3 overflow tier**~~ — **SUPERSEDED TWICE — current owner (round-9,
+  2026-07-19): the `aws` crate.** History: the round-3 capture placed the S3
   adapter here (overflow tier when the personal mesh runs out of space, S3
-  cold-storage classes, client-side encryption before upload). Since mesh owns
-  ALL eventual-consistency/replication, the adapter now lives in mesh: VFS (and
-  KG) talk to mesh, and **mesh distributes into S3 through its adapter**. The
-  requirements themselves stand unchanged — only the owner moved. See
-  `components/mesh.md`.
+  cold-storage classes, client-side encryption before upload); the round-3
+  second batch moved it INSIDE `mesh` (mesh owns all eventual-consistency/
+  replication). **Round-9 corrects the owner again: the S3/AWS adapter
+  surface lives in the new `aws` crate** — the AWS virtualization layer —
+  and mesh/vfs/kg/secrets CONSUME it. The requirements themselves stand
+  unchanged through both moves — only the owner moved. Mesh still
+  orchestrates replication/overflow placement; the actual S3 surface is
+  `aws`'s. See `components/aws.md` / `components/mesh.md` and contract
+  `aws-vfs`.
 
 ## Relationships / edges (stubs only)
 
@@ -46,9 +50,13 @@ components (notably `projects`) build on. Requirements:
   tool to enforce directory policies on that device
   (scaffold/contracts/vfs-gc.md).
 - **mesh** via `vfs-mesh` — registration and topology awareness: VFS registers
-  in the service registry and learns which nodes/drives exist from mesh; the
-  S3 overflow tier is reached through mesh's S3 adapter (round-3 second batch)
+  in the service registry and learns which nodes/drives exist from mesh
+  (round-9: the S3-overflow leg no longer rides this edge — see `aws-vfs`)
   (scaffold/contracts/vfs-mesh.md).
+- **aws** via `aws-vfs` — **NEW round-9 (requirements-only).** The S3
+  overflow tier: VFS reaches S3 (cold-storage classes, client-side
+  encryption with keys held by `secrets`) through the `aws` crate's adapter
+  surface (scaffold/contracts/aws-vfs.md).
 - **kg** via `kg-vfs` — KG nodes point at files in this flat store; VFS is the
   target of KG's pointed-at-file existence validation
   (scaffold/contracts/kg-vfs.md).

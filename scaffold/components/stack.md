@@ -1,8 +1,9 @@
 # stack
 
 **Status:** NEW (rounds 4–5 lock, 2026-07-18; round-7 update, 2026-07-19;
-**round-8 lock, 2026-07-19 — the stack-vs-db boundary is RESOLVED**).
-**Nesting:** top-level.
+**round-8 lock, 2026-07-19 — the stack-vs-db boundary is RESOLVED**;
+**round-9 lock, 2026-07-19 — SQLite-locally RESOLVES the Postgres/Docker
+ambiguity**). **Nesting:** top-level.
 **Stub-plus — requirements captured from the operator; NOT a full design.**
 
 ## Charter (requirements, operator's words where quoted)
@@ -52,9 +53,11 @@ Requirements:
   against the old DB, swap the database underneath, write results back,
   resume triggering**. Databases get treated like services under mesh's
   restart/upgrade protocol (via db-as-daemon or the VDB idea — see the
-  stack-vs-db section below). Still open, and still constrained by the
-  no-Docker rule: where that Postgres comes from (see the Postgres-ambiguity
-  section below).
+  stack-vs-db section below). **Where that Postgres comes from is RESOLVED
+  round-9 (2026-07-19): there is NO local Postgres, native or Docker —
+  the upgrade target is always a CLOUD VDB target (Supabase or AWS
+  RDS+Lambda)**; upgrading past SQLite means promoting to the cloud (see
+  the resolved Postgres-ambiguity section below).
 - **Provenance is FIRST-ORDER (round-6 cross-cutting principle; SCOPED
   round-7).** Every handler touch of data is traced from the very
   beginning — healthcare-data-engineer-grade provenance; see `overview.md`'s
@@ -141,37 +144,49 @@ the daemon tracking/executing the stack pattern, `db` is the crate it uses
 to run actions (extended as needed), KG builds on top of VDB, VFS sits
 below (VFS < VDB < KG).
 
-## Postgres ambiguity (round-6 — flagged, UNRECONCILED)
+## Postgres ambiguity (round-6 flagged — RESOLVED round-9, 2026-07-19)
 
-In response to the native-vs-cloud Postgres question, the operator floated:
+> **RESOLVED (round-9, 2026-07-19): the SQLite-locally rule is LOCKED.
+> Local environments run SQLite, PERIOD. Postgres exists ONLY as a cloud
+> VDB target (Supabase / AWS RDS+Lambda). There is NO local Postgres —
+> not native, not Docker.** This resolves the flagged "one Postgres
+> Docker" tension below in favor of the hard no-Docker rule and the
+> operator's own round-8 yes-block routing rule ("local environment →
+> SQLite, cloud → promote"). The "one Postgres Docker machine" float is
+> DEAD — kept below only as history.
+
+History (round-6 capture — superseded by the resolution above): in response
+to the native-vs-cloud Postgres question, the operator floated:
 "I think that's the line — it standardizes Postgres and we can just have one
 Postgres Docker machine, multiple databases in the same Postgres Docker. The
 only downside is on a small device like a Raspberry Pi I'd rather be running
-SQLite or even directly installing Postgres. So I'm not sure." **"One
-Postgres Docker" sits in direct tension with the emphatic HARD no-Docker
-rule above — flagged, not reconciled; needs explicit operator
-reconciliation before any design leans on it.** Related, the operator's own
-counter-question: "it's worth talking about why we would ever want to
-[upgrade SQLite → Postgres] if we're able to get our full stack working on
-top of SQLite."
+SQLite or even directly installing Postgres. So I'm not sure." "One
+Postgres Docker" sat in direct tension with the emphatic HARD no-Docker
+rule above — flagged unreconciled rounds 6–8, reconciled round-9 as above.
+Related, the operator's own counter-question: "it's worth talking about why
+we would ever want to [upgrade SQLite → Postgres] if we're able to get our
+full stack working on top of SQLite" — answered by the same lock: locally
+we never do; going past SQLite means promoting to a cloud target.
 
-## REQUIRED design analysis: SQLite sufficiency (round-7, 2026-07-19 — GATES the local-Postgres decision)
+## REQUIRED design analysis: SQLite sufficiency (round-7; DE-GATED round-9)
 
-The operator will NOT decide the local-Postgres question until a
-**daemon-level gap analysis** shows whether **SQLite + the stack daemon +
-mesh (cron, pub/sub)** functionally covers everything Postgres would
-provide. Operator, verbatim: "I still can't answer until we talk about why
-we might never need Postgres — specifically if we can do everything in
-SQLite. What could we do at the daemon level that would give us everything
-we need functionally for our working stack pattern? Like pg_cron — we can
-create a cron handler inside of mesh that operates on the database; triggers
-on insert, update, delete..."
+Round-7 recorded this analysis as GATING the local-Postgres decision.
+**Round-9's SQLite-locally lock makes the decision without it** (no local
+Postgres, ever), so the analysis **no longer gates a decision** — but it is
+KEPT as a required design input for the stack/VDB design pass, because with
+SQLite locked as the only local engine, the daemon-level equivalents are
+now load-bearing: the local stack MUST cover functionally what Postgres
+would have provided. Operator, verbatim (round-7): "I still can't answer
+until we talk about why we might never need Postgres — specifically if we
+can do everything in SQLite. What could we do at the daemon level that
+would give us everything we need functionally for our working stack
+pattern? Like pg_cron — we can create a cron handler inside of mesh that
+operates on the database; triggers on insert, update, delete..."
 
 The analysis: enumerate what Postgres provides, and show which daemon-level
 equivalent covers each — e.g. **pg_cron → mesh cron; LISTEN/NOTIFY → mesh
-pub/sub; procedural triggers → daemon-level Deno/SQL handlers**; etc. This
-is recorded as a **REQUIRED design analysis gating that decision**. AUI is
-delivering a first-pass analysis conversationally, but the definitive
+pub/sub; procedural triggers → daemon-level Deno/SQL handlers**; etc. AUI
+delivered a first-pass analysis conversationally; the definitive
 version belongs in stack/VDB's full component design.
 
 ## Relationships / edges (stubs only)
@@ -207,8 +222,10 @@ open question) — **VDB is the daemon tracking/executing the stack pattern,
 using `db` to run actions against specific databases (db extended as
 needed); KG builds on top of VDB; VFS sits below VDB (VFS < VDB < KG)**;
 both round-7 attached questions (stack-baked-into-VDB, KG-on-VDB) closed
-with it. Still open: the **Postgres source / Docker tension**
-(unreconciled), and whether SQLite→Postgres upgrade is even needed — still
-**gated on the REQUIRED SQLite-sufficiency analysis** (section above); the
-migration *mechanics* themselves are confirmed (copy/verify/switch,
-let-edge-functions-finish).
+with it. **RESOLVED round-9:** the Postgres source / Docker tension —
+**SQLite-locally LOCKED: local environments run SQLite, period; Postgres
+only as a cloud VDB target; no local Postgres, native or Docker.** The
+SQLite-sufficiency analysis no longer gates a decision but is kept as a
+required design input (section above); the migration *mechanics* remain
+confirmed (copy/verify/switch, let-edge-functions-finish — now always a
+local→cloud promotion).

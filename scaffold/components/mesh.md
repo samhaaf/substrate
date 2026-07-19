@@ -25,7 +25,7 @@ service-registry, completion-router}.
 > non-critical updates, port-handoff update pattern);
 > (2) the **two-way graceful-restart protocol** locked in shape — priority-
 > laddered, built into EVERY service from the beginning (concern 13; the exact
-> ladder is "latitude granted, discuss");
+> ladder was "latitude granted, discuss" — **LOCKED at 4 levels round-9**);
 > (3) new internal capability: **queues + dead-letter queues, SQS-modeled**
 > (concern 14; dead-letter escalation hooks into ccd investigation);
 > (4) `locks` gains a **required catchable error type** for lock-threshold-
@@ -49,6 +49,19 @@ service-registry, completion-router}.
 > choice** (supersedes round-7's blanket every-pull rule).
 > (2) the `vault` registrant is renamed **`secrets`** (`vault-mesh` →
 > `secrets-mesh`; see `components/secrets.md`).
+
+> **ROUND-9 LOCK (2026-07-19, applied on top of commit `15a85ba`):**
+> (1) **restart ladder LOCKED at exactly 4 levels** (concern 13): wait-for-
+> idle / finish-and-relinquish / ~10s-save-window / kill — the round-6
+> "latitude granted, discuss" hedge is CLOSED;
+> (2) **triggers are DECLARATIVE — LOCKED** (concern 14): a trigger is
+> declarative data (filter expression + payload-assembly template),
+> registered as data, never arbitrary code; code lives ONLY in handlers;
+> (3) **the S3 adapter moves OUT of mesh into the new `aws` crate**
+> (supersedes the round-3-second-batch/rounds-4–5 S3-adapter-inside-mesh
+> framing): the S3/AWS surface lives in `aws` — the AWS virtualization
+> layer — and mesh (like vfs/kg/secrets) CONSUMES it; see
+> `components/aws.md` and contract `aws-mesh`.
 
 ## Charter
 
@@ -81,15 +94,20 @@ URL — and, new in the round-3 lock:
    browser WebSocket clients; the dashboard renders every service's component
    from that service's published **surface schema** (see the boring-surface-schema
    section below and `scaffold/contracts/surface-schema.md`).
-9. **The S3 adapter** (round-3 second batch, 2026-07-18 — moved here from
-   `vfs`, superseding the S3-as-VFS-feature framing): since mesh owns ALL
-   eventual-consistency/replication in the system, the AWS/S3 adapter lives in
-   mesh — the overflow tier when the personal mesh runs out of space, using S3
-   cold-storage classes, with **client-side encryption before upload** (not
-   merely encrypted-at-rest). `vfs` and `kg` talk to mesh; **mesh distributes
-   into S3 through this adapter** — including KG's cross-boundary sync (a KG
-   written on the AWS side by an external agent becomes eventually consistent
-   with the mesh; see `components/kg.md`). requirements-only.
+9. ~~**The S3 adapter**~~ — **SUPERSEDED round-9 (2026-07-19): the S3/AWS
+   adapter surface moves to the new `aws` crate** (see `components/aws.md`).
+   History: round-3 second batch moved the S3 adapter here from `vfs`
+   (superseding the S3-as-VFS-feature framing) because mesh owns ALL
+   eventual-consistency/replication. Round-9 corrects the owner again —
+   the operator "definitely meant AWS crate": ALL AWS adapters (S3 overflow
+   included) aggregate in `aws`, the AWS virtualization layer. The
+   *requirements themselves stand unchanged* — overflow tier when the
+   personal mesh runs out of space, S3 cold-storage classes, **client-side
+   encryption before upload** (keys held by `secrets`) — only the owner
+   moved. Mesh still owns the eventual-consistency/replication PLANE and
+   still orchestrates distribution into S3 — but it does so **through the
+   `aws` crate's adapter surface** (contract `aws-mesh`), as do vfs, kg,
+   and secrets for their AWS needs. requirements-only.
 
 And, new in the rounds-4–5 lock (2026-07-18):
 
@@ -101,9 +119,11 @@ And, new in the rounds-4–5 lock (2026-07-18):
     `types` (see `components/types.md`); mesh does the relaying. See concern 7.
 11. **Internal utility LIBS** — the service registry's replicated KV store,
     the new `locks` (distributed semaphores, concern 10) and `cron` (scheduled
-    tasks, concern 11) libs, and the S3 adapter are **internal libraries of
+    tasks, concern 11) libs are **internal libraries of
     mesh**, layered with the same boring-layers discipline — never standalone
-    crates/services (see the ANSWERED layering note below).
+    crates/services (see the ANSWERED layering note below). *(The S3 adapter
+    was on this list rounds 4–5 → round-8; round-9 moves it to the `aws`
+    crate — see capability 9.)*
 12. **Fixed port `3649` + stickiness + zombie-killing** — locked; see
     concern 8.
 13. **Single-port locality + two addressing classes** — every service talks
@@ -147,9 +167,11 @@ discipline as the rest of the repo — "Let's do the same discipline inside of
 mesh. Keep it layered — boring layers on top of boring layers" (operator). The
 hard constraints, verbatim-grade: "any of the utilities offered by mesh are
 just inside of mesh. They can be libs, they don't even have to be top-level
-crates" — so the service registry, the replicated KV store, `locks`, `cron`,
-and the S3 adapter are **internal LIBS of mesh, never standalone
-crates/services**. Design latitude is granted on whether the replicated-state
+crates" — so the service registry, the replicated KV store, `locks`, and
+`cron` are **internal LIBS of mesh, never standalone
+crates/services** (the S3 adapter was on this list until round-9 moved the
+S3/AWS surface to the `aws` crate — see capability 9). Design latitude is
+granted on whether the replicated-state
 primitives share one implementation or several ("If it makes sense to do them
 separately, do them separately; if it makes sense to do them the same, do them
 the same. Just make sure it's boring and it's all buried inside of mesh").
@@ -174,8 +196,9 @@ children is exactly the open internal-layering question in the Charter.)
   `proxy`, `config`, `lib`. These are **not independently apps**, so they are
   libraries nested under the mesh app, not their own crates. **Rounds 4–5:**
   the internal utilities join this tree as internal libs — the replicated KV
-  store, `locks` (concern 10), `cron` (concern 11), the S3 adapter, and the
-  pub/sub relay (concern 7) — layered boringly, never standalone
+  store, `locks` (concern 10), `cron` (concern 11), and the
+  pub/sub relay (concern 7) (the S3 adapter left this list round-9 for the
+  `aws` crate) — layered boringly, never standalone
   crates/services (per the ANSWERED layering note in the Charter; they *may*
   be workspace lib crates if convenient, but are only ever consumed through
   mesh).
@@ -421,33 +444,35 @@ times across rounds is now resolved yes. Requirements:
 
 Requirements-only; no design yet.
 
-### 13. Two-way graceful-restart protocol (round-6; shape LOCKED, ladder = latitude granted)
+### 13. Two-way graceful-restart protocol (round-6 shape LOCKED; ladder LOCKED round-9)
 
 A **two-way protocol built into EVERY service from the beginning**: mesh
 signals a restart need with a priority, and the service participates in
-deciding when it yields. The priority ladder, requirements-grade:
+deciding when it yields. **The priority ladder is LOCKED (round-9,
+2026-07-19) at exactly these FOUR levels** — the round-6 "latitude granted,
+discuss" hedge is closed; this is the ladder:
 
-- **low** — mesh just waits for idle;
-- **higher** — "finish what you're doing, then relinquish" (the service
-  decides when its current work completes);
-- **critical** — "I'm interrupting regardless — you have ~10 seconds to
-  save";
-- **beyond that** — kill outright, no warning.
+1. **wait-for-idle** — mesh just waits for idle;
+2. **finish-and-relinquish** — "finish what you're doing, then relinquish"
+   (the service decides when its current work completes);
+3. **~10-second save window** — "I'm interrupting regardless — you have ~10
+   seconds to save";
+4. **kill** — kill outright, no warning.
 
-**Compatibility-driven restarts are HIGH priority.** The exact ladder is
-delegated — operator, verbatim: "whether we do priority levels on the restart
-is up to you — something to discuss there" — **latitude granted, discuss with
-the operator before locking the levels**. The two-way, service-participates
-shape is LOCKED. Requirements-only.
+**Compatibility-driven restarts are HIGH priority.** The two-way,
+service-participates shape was LOCKED round-6; the four-level ladder is
+LOCKED round-9. Requirements-only (the wire shape of the protocol is still
+undesigned).
 
-### 14. Internal capability: queues + dead-letter queues (round-6, requirements-only; queue-pull semantics round-7; vocabulary LOCKED round-8)
+### 14. Internal capability: queues + dead-letter queues (round-6, requirements-only; queue-pull semantics round-7; vocabulary LOCKED round-8; declarative triggers LOCKED round-9)
 
 **SQS-modeled queues** as an internal mesh capability (same internal-lib
 discipline as `locks` and `cron` — never a standalone crate/service).
 Operator, verbatim: "Model it after SQS in Amazon, so someday you can deploy
 Mind OS directly into your Amazon account and there's a native system to take
 advantage of" — i.e. the queue semantics must be deployable someday straight
-onto real SQS via mesh's AWS adapter. **Dead-letter queues included**, with a
+onto real SQS through the `aws` crate (an anticipated someday-SQS adapter in
+the AWS virtualization layer — round-9; see `components/aws.md`). **Dead-letter queues included**, with a
 **dead-letter escalation hook into a ccd agent investigation** (confirmed as
 a good guardrail — the same escalation pattern as the shared execution
 engine's loop-depth hook; see `overview.md`'s shared-libraries section).
@@ -488,6 +513,16 @@ wording anywhere in the scaffold:
   event-ID semaphore is a per-trigger (per-handler) choice** — each
   trigger declares whether pulling through it requires acquiring the
   event-ID semaphore.
+
+**TRIGGERS ARE DECLARATIVE — LOCKED (round-9, 2026-07-19).** Operator,
+direct answer: "Triggers are declarative. They are not arbitrary code."
+A trigger is **declarative DATA** — a **filter expression** plus a
+**payload-assembly template** — **registered as data**, never as code.
+Filtering and assembly are expressed in the trigger's declarative language
+(assembly may still call rollup for injection — a declarative reference,
+not code); **executable code lives ONLY in handlers**. This closes any
+reading of round-8's "the trigger is actually a really powerful mechanism"
+as license for trigger-side code.
 
 Requirements-only.
 
@@ -541,11 +576,15 @@ Edges match the contract graph in `overview.md`. Grouped by which child owns the
   contract file is a tombstone (scaffold/contracts/mesh-registry-read.md)
 - service-registry (peer instances) via `registry-replication` — anti-entropy
   merge (scaffold/contracts/registry-replication.md)
-- vfs via `vfs-mesh` — VFS registration + topology awareness; S3 overflow now
-  flows through mesh's own S3 adapter (scaffold/contracts/vfs-mesh.md)
-- kg via `kg-mesh` — KG registration + graph replication across nodes and into
-  S3 through mesh's adapter; graph consistency model OPEN
+- vfs via `vfs-mesh` — VFS registration + topology awareness (round-9: S3
+  overflow reaches AWS through the `aws` crate, no longer a mesh-internal
+  adapter) (scaffold/contracts/vfs-mesh.md)
+- kg via `kg-mesh` — KG registration + graph replication across nodes; the
+  S3 leg rides the `aws` crate round-9; graph consistency model OPEN
   (scaffold/contracts/kg-mesh.md)
+- aws via `aws-mesh` — **NEW round-9 (requirements-only).** aws registers
+  like any service; mesh's replication plane reaches S3/AWS through aws's
+  adapter surface (scaffold/contracts/aws-mesh.md)
 - projects via `projects-mesh` — project registry push + published-dashboard
   surfacing (scaffold/contracts/projects-mesh.md)
 - secrets via `secrets-mesh` — **NEW round-6 (requirements-only); RENAMED
@@ -615,12 +654,17 @@ explicitly flagged OPEN.
 
 Round-6 additions (concerns 12–14: supervision + port-handoff, the
 graceful-restart protocol, queues + dead-letter queues; plus `locks`'
-partition-merge error type) are likewise **requirements-only**, with the
-restart-priority ladder explicitly "latitude granted, discuss." The round-7
+partition-merge error type) are likewise **requirements-only** (round-9
+closes the restart-priority-ladder "latitude granted, discuss" hedge — the
+ladder is LOCKED at four levels; concern 13). The round-7
 queue-pull semantics (semaphore-keyed-by-event-ID pulls, `locks` + queues
 composing; concern 14) are also requirements-only, as is the round-8
 queues/events/triggers/handlers vocabulary (typed events, filtering +
-payload-assembling triggers, per-trigger semaphore choice; concern 14).
+payload-assembling triggers, per-trigger semaphore choice; concern 14) and
+the round-9 declarative-triggers lock (triggers are data — filter +
+payload-assembly template — never code; concern 14). Round-9 also moves the
+S3 adapter out of mesh into the `aws` crate (capability 9's supersession
+note; contract `aws-mesh`).
 
 ## Assigned design-depth
 
