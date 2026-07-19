@@ -24,6 +24,20 @@ verbatim-grade from the operator:
   The same referencing/slotting mechanism generalizes from composing strings
   to composing files to composing whole directories (a plugin being the
   directory-rollup case).
+- **Insert types LOCKED (round-7, 2026-07-19, from the operator's prior
+  professional work):** the engine supports multiple reference formats —
+  **`raw`** (inline the full content) and **`reference`** (a handle/pointer
+  by ID or name, lazily loadable by the agent later; e.g. a skill file
+  pointing at another skill file without inlining it, so the agent can load
+  it if wanted). This extends the found harness prior art — which currently
+  has `{{prompt:...}}` / `{{slot:...}}` / `{{file:...}}` /
+  `{{prompt-file:...}}` markers — with an explicit **raw-vs-reference
+  axis**.
+- **Vault safety rule (round-7):** rollup must NEVER resolve a vault raw
+  reference inside LLM-bound content — under vault's `llm_safe` mechanism,
+  a raw secret request in LLM-bound content fails or degrades to injecting
+  the ID plus a warning. The invariant: no secret ever reaches an LLM. See
+  `components/vault.md`.
 - **Prior art (do not design from scratch blindly):** the operator has built
   roughly **two prior versions** of this in other projects — "You should scan
   some of my other projects — it could be in harness already." A prior-art
@@ -37,6 +51,11 @@ verbatim-grade from the operator:
 - **projects** — the round-6 .mind workspace-schema migration brings the
   rollup engine into projects ("tasks are rolled up" — see
   `components/projects.md`). Edge naming deferred.
+- **vault** (round-7 relationship note) — vault values are addressable from
+  rollup content in raw and ID forms, but rollup must never resolve a vault
+  raw reference inside LLM-bound content (vault's `llm_safe` mechanism
+  governs; see `components/vault.md`). Edge naming deferred until either
+  side gets a design pass.
 
 ## Nesting
 
@@ -45,5 +64,7 @@ Parent: none | Children: none (this pass).
 ## Thoroughness level
 
 **requirements-only** — verbatim requirements capture; no design pass yet.
-Open: the crate name (rollup/plugins/other), the reference/slot syntax, and
-the prior-art reconciliation.
+Locked round-7: the raw-vs-reference insert-type axis and the
+no-vault-raw-in-LLM-bound-content rule. Open: the crate name
+(rollup/plugins/other), the reference/slot syntax, and the prior-art
+reconciliation.

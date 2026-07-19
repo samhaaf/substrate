@@ -15,6 +15,14 @@ components (notably `projects`) build on. Requirements:
   VFS" — **OPEN question: rolled-in vs. called-as-tool.** See `gc.md`.
 - **Self-tracked performance** — VFS tracks its own performance like inference
   does: uptime, per-node read/write latency.
+- **Provenance: a LIGHTER design requirement here (round-7 scoping,
+  2026-07-19).** The FIRST-ORDER provenance principle (`overview.md`) is
+  configured per-project/per-database with **VDB as its primary home**;
+  VFS-level provenance is explicitly de-emphasized — operator: "Also a VFS
+  thing, but I typically don't care about provenance in the file system —
+  usually only in the database and the stack pattern." VFS still carries
+  provenance as a design requirement, just a lighter one than
+  stack/VDB/db's.
 - **RAID-inspired features** — per-file replication factor; a multi-drive node
   (e.g. a Raspberry Pi with two external drives) configurable as a RAID-like
   warm/cold-storage node.

@@ -31,6 +31,13 @@ service-registry, completion-router}.
 > (4) `locks` gains a **required catchable error type** for lock-threshold-
 > exceeded-on-partition-merge, handled per-application (concern 10).
 
+> **ROUND-7 LOCK (2026-07-19, applied on top of commit `e70eded`):**
+> **queue-pull semantics** — pulling from ANY queue requires acquiring a
+> semaphore keyed by the event ID (`locks` + queues compose), approximating
+> exactly-once over at-least-once delivery; duplicate-handling stays a
+> per-case seam; a dead-letter queue is just a queue; "the entire contract
+> of the system is basically built off the queueing mechanism" (concern 14).
+
 ## Charter
 
 `mesh` is Substrate's **operating system** — the network / coordination plane
@@ -421,7 +428,7 @@ is up to you — something to discuss there" — **latitude granted, discuss wit
 the operator before locking the levels**. The two-way, service-participates
 shape is LOCKED. Requirements-only.
 
-### 14. Internal capability: queues + dead-letter queues (round-6, requirements-only)
+### 14. Internal capability: queues + dead-letter queues (round-6, requirements-only; queue-pull semantics round-7)
 
 **SQS-modeled queues** as an internal mesh capability (same internal-lib
 discipline as `locks` and `cron` — never a standalone crate/service).
@@ -432,6 +439,19 @@ onto real SQS via mesh's AWS adapter. **Dead-letter queues included**, with a
 **dead-letter escalation hook into a ccd agent investigation** (confirmed as
 a good guardrail — the same escalation pattern as the shared execution
 engine's loop-depth hook; see `overview.md`'s shared-libraries section).
+
+**Queue-pull semantics (round-7, 2026-07-19):**
+
+- **Pulling an item from ANY queue requires acquiring a semaphore keyed by
+  the event ID** — the `locks` lib (concern 10) and the queues lib COMPOSE.
+  This approximates **exactly-once on top of at-least-once delivery**;
+  **duplicate-handling remains a per-case seam** ("with a seam for
+  [duplicate handling] on a per-case basis").
+- **A dead-letter queue is just a queue** — no special mechanism.
+- Operator's framing, verbatim: "the entire contract of the system is
+  basically built off the queueing mechanism" — the system's whole contract
+  fabric rides this, with the more-than-once edge handled per-case.
+
 Requirements-only.
 
 ### CLI surface (new operator requirement)
@@ -556,7 +576,9 @@ explicitly flagged OPEN.
 Round-6 additions (concerns 12–14: supervision + port-handoff, the
 graceful-restart protocol, queues + dead-letter queues; plus `locks`'
 partition-merge error type) are likewise **requirements-only**, with the
-restart-priority ladder explicitly "latitude granted, discuss."
+restart-priority ladder explicitly "latitude granted, discuss." The round-7
+queue-pull semantics (semaphore-keyed-by-event-ID pulls, `locks` + queues
+composing; concern 14) are also requirements-only.
 
 ## Assigned design-depth
 

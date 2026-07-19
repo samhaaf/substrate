@@ -1,6 +1,7 @@
 # stack
 
-**Status:** NEW (rounds 4–5 lock, 2026-07-18). **Nesting:** top-level.
+**Status:** NEW (rounds 4–5 lock, 2026-07-18; round-7 update, 2026-07-19).
+**Nesting:** top-level.
 **Stub-plus — requirements captured from the operator; NOT a full design.**
 
 ## Charter (requirements, operator's words where quoted)
@@ -53,10 +54,16 @@ Requirements:
   stack-vs-db section below). Still open, and still constrained by the
   no-Docker rule: where that Postgres comes from (see the Postgres-ambiguity
   section below).
-- **Provenance is FIRST-ORDER (round-6 cross-cutting principle).** Every
-  handler touch of data is traced from the very beginning —
-  healthcare-data-engineer-grade provenance; see `overview.md`'s standing
-  principle and the shared execution engine's causal-chain tracking.
+- **Provenance is FIRST-ORDER (round-6 cross-cutting principle; SCOPED
+  round-7).** Every handler touch of data is traced from the very
+  beginning — healthcare-data-engineer-grade provenance; see `overview.md`'s
+  standing principle and the shared execution engine's causal-chain
+  tracking. **Round-7 scoping: provenance is configured
+  per-project/per-database, and VDB is its primary home** ("probably a VDB
+  thing. Also a VFS thing, but I typically don't care about provenance in
+  the file system — usually only in the database and the stack pattern");
+  VFS carries only a lighter provenance design requirement (see
+  `components/vfs.md`).
 - **Relationship to `db` (working framing — now explicitly the operator's
   most-nebulous OPEN question; see the section below):** `db` = the
   control-plane / virtualization / query interface over databases; `stack` =
@@ -83,15 +90,35 @@ Options on the table:
 2. **Keep db boring** as a utility used within a bigger
    eventual-consistency system in the mesh.
 
-**VDB (operator-coined, same round — attached to this open question, not a
-resolution of it):** a **virtualized-database SERVICE** that uses `db` under
-the hood, treating **databases like services under the same mesh
-restart/upgrade protocol** (`mesh.md` concerns 12–13). The confirmed
-migration mechanics fold in here: **copy/verify/switch under a lock**, and
-during a critical upgrade **let running edge functions finish against the
-old DB, swap the database underneath, write results back, resume
-triggering**. VDB is an idea on the table; the boundary question above stays
-OPEN.
+**VDB (operator-coined round-6 — ELEVATED round-7, 2026-07-19):** originally
+a **virtualized-database SERVICE** idea that uses `db` under the hood,
+treating **databases like services under the same mesh restart/upgrade
+protocol** (`mesh.md` concerns 12–13). The confirmed migration mechanics fold
+in here: **copy/verify/switch under a lock**, and during a critical upgrade
+**let running edge functions finish against the old DB, swap the database
+underneath, write results back, resume triggering**. **Round-7: VDB is now
+the working name for the deploy-anywhere IMPLEMENTATION of the stack
+pattern** — one abstract runtime with **three adapter targets**: **local**
+(the SQLite stack daemon), **Supabase**, and **AWS (RDS + Lambda)**.
+Operator, verbatim:
+
+> "Ideally VDB perfectly implements our stack, and maps onto Supabase, maps
+> onto AWS via RDS + Lambda, or maps onto local with a stack [daemon]. Worth
+> talking about: how do we have our stack baked into VDB? And are there
+> reusable components for the knowledge graph — is the knowledge graph just
+> a special version of VDB, living as a distributed service via the mesh?
+> Should the knowledge graph be built on top of VDB? I actually think that's
+> a worthwhile question."
+
+Two OPEN questions attached, verbatim-grade: (a) **how the stack pattern
+gets "baked into" VDB**, and (b) **whether KG should be BUILT ON VDB** ("is
+the knowledge graph just a special version of VDB, living as a distributed
+service via the mesh? I actually think that's a worthwhile question") — see
+`components/kg.md`. `db`'s existing Capabilities-gated driver architecture
+(supabase-cloud / supabase-local / sqlite) is the natural seed of VDB's
+adapter matrix — see `components/db.md`. The stack-vs-db boundary question
+above stays OPEN; VDB's elevation names the implementation vehicle, it does
+not resolve the boundary.
 
 ## Postgres ambiguity (round-6 — flagged, UNRECONCILED)
 
@@ -106,6 +133,25 @@ reconciliation before any design leans on it.** Related, the operator's own
 counter-question: "it's worth talking about why we would ever want to
 [upgrade SQLite → Postgres] if we're able to get our full stack working on
 top of SQLite."
+
+## REQUIRED design analysis: SQLite sufficiency (round-7, 2026-07-19 — GATES the local-Postgres decision)
+
+The operator will NOT decide the local-Postgres question until a
+**daemon-level gap analysis** shows whether **SQLite + the stack daemon +
+mesh (cron, pub/sub)** functionally covers everything Postgres would
+provide. Operator, verbatim: "I still can't answer until we talk about why
+we might never need Postgres — specifically if we can do everything in
+SQLite. What could we do at the daemon level that would give us everything
+we need functionally for our working stack pattern? Like pg_cron — we can
+create a cron handler inside of mesh that operates on the database; triggers
+on insert, update, delete..."
+
+The analysis: enumerate what Postgres provides, and show which daemon-level
+equivalent covers each — e.g. **pg_cron → mesh cron; LISTEN/NOTIFY → mesh
+pub/sub; procedural triggers → daemon-level Deno/SQL handlers**; etc. This
+is recorded as a **REQUIRED design analysis gating that decision**. AUI is
+delivering a first-pass analysis conversationally, but the definitive
+version belongs in stack/VDB's full component design.
 
 ## Relationships / edges (stubs only)
 
@@ -129,8 +175,11 @@ Parent: none | Children: none (this pass).
 ## Thoroughness level
 
 **requirements-only** — verbatim requirements capture; no design pass yet.
-Open (round-6 revision): the **stack-vs-db boundary** (the operator's
-most-nebulous open question — VDB idea attached), the **Postgres source /
-Docker tension** (unreconciled), and whether SQLite→Postgres upgrade is even
-needed ("why ever upgrade past SQLite"); the migration *mechanics* themselves
-are now confirmed (copy/verify/switch, let-edge-functions-finish).
+Open (round-7 revision): the **stack-vs-db boundary** (the operator's
+most-nebulous open question — **VDB now elevated to the deploy-anywhere
+implementation vehicle**, with its two attached open questions:
+stack-baked-into-VDB, KG-on-VDB), the **Postgres source / Docker tension**
+(unreconciled), and whether SQLite→Postgres upgrade is even needed — now
+explicitly **gated on the REQUIRED SQLite-sufficiency analysis** (section
+above); the migration *mechanics* themselves are confirmed
+(copy/verify/switch, let-edge-functions-finish).

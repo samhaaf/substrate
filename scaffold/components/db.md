@@ -167,9 +167,24 @@ bigger eventual-consistency system in the mesh. The operator also coined
 treated like services under mesh's restart/upgrade protocol, with the
 confirmed copy/verify/switch + let-edge-functions-finish migration mechanics.
 Recorded faithfully as OPEN with the VDB idea attached; nothing resolved
-here. **Provenance note (round-6 cross-cutting):** whatever shape wins,
-provenance is FIRST-ORDER — every handler touch of data traced from the very
-beginning (see `overview.md`'s standing principle).
+here.
+
+**Round-7 (2026-07-19): VDB ELEVATED.** VDB is now the working name for the
+**deploy-anywhere implementation of the stack pattern** — one abstract
+runtime with **three adapter targets: local (the SQLite stack daemon),
+Supabase, and AWS (RDS + Lambda)**. `db`'s existing **Capabilities-gated
+driver architecture** (`supabase-cloud` / `supabase-local` / `sqlite`,
+selected through the single `Driver` trait + per-driver `Capabilities`
+flags) is **the natural seed of VDB's adapter matrix** — the same
+incapable-driver-degrades-early seam, grown into deploy-target adapters.
+Open questions attached (verbatim in `components/stack.md`): how the stack
+pattern gets "baked into" VDB, and whether KG should be BUILT ON VDB (see
+`components/kg.md`). The stack-vs-db boundary itself remains OPEN.
+**Provenance note (round-6 cross-cutting; SCOPED round-7):** whatever shape
+wins, provenance is FIRST-ORDER — every handler touch of data traced from
+the very beginning (see `overview.md`'s standing principle) — and it is
+**configured per-project/per-database, with VDB as its primary home**
+(round-7 scoping; VFS carries only a lighter requirement).
 
 **Flagged implication (not resolved here): the NO-DOCKER rule.** Rounds 4–5
 locked a hard rule — no Docker locally, ever; containers only in the AWS

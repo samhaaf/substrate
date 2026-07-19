@@ -85,6 +85,35 @@
 > (F) **pairwise data contracts affirmed verbatim as the operating model**
 > (see the note at the contract graph).
 
+> **ROUND-7 LOCK (2026-07-19, applied on top of commit `e70eded`):**
+> (A) **VDB ELEVATED** — VDB is now the working name for the
+> **deploy-anywhere implementation of the stack pattern**: one abstract
+> runtime with three adapter targets — **local (the SQLite stack daemon),
+> Supabase, and AWS (RDS + Lambda)**; `db`'s Capabilities-gated driver
+> architecture is the natural seed of the adapter matrix. Two attached OPEN
+> questions: how the stack pattern gets "baked into" VDB, and **whether KG
+> should be BUILT ON VDB** — see `stack.md`/`db.md`/`kg.md`. (B) the
+> local-Postgres decision is now **GATED on a REQUIRED SQLite-sufficiency
+> analysis** (daemon-level gap analysis: does SQLite + stack daemon + mesh
+> cron/pub-sub cover everything Postgres provides — pg_cron → mesh cron,
+> LISTEN/NOTIFY → mesh pub/sub, procedural triggers → Deno/SQL handlers;
+> definitive version belongs in stack/VDB's full design) — see `stack.md`.
+> (C) **rollup insert types LOCKED** — `raw` (inline) vs `reference`
+> (handle/pointer by ID or name, lazily loadable), extending the harness
+> prior art's prompt/slot/file/prompt-file markers — see `rollup.md`.
+> (D) **vault LLM-safety mechanism LOCKED** — raw + ID addressing;
+> LLM-feeding services default `llm_safe=true`; raw requests fail or degrade
+> to ID-plus-warning; **no secret ever reaches an LLM**; rollup must never
+> resolve a vault raw reference in LLM-bound content — see
+> `vault.md`/`rollup.md`. (E) **queue-pull semantics** — pulls acquire a
+> semaphore keyed by the event ID (`locks` + queues compose; ~exactly-once
+> over at-least-once; duplicate-handling a per-case seam); a dead-letter
+> queue is just a queue; "the entire contract of the system is basically
+> built off the queueing mechanism" — see `mesh.md` concern 14.
+> (F) **provenance SCOPED** — configured per-project/per-database; **VDB is
+> its primary home**; VFS carries only a lighter requirement (see the
+> standing principles below and `stack.md`/`vfs.md`).
+
 ## Scope of this pass
 
 Combined scope across three sources:
@@ -144,7 +173,9 @@ mesh                          [RESHAPE + EXPAND — "the operating system"] coor
                                 relay), never standalone; sticky (system-level resurrection); zombie-
                                 killing; single-port locality; two addressing classes. Round-6: starts/
                                 supervises local services (port-handoff updates); two-way graceful-
-                                restart protocol; queues + dead-letter queues (SQS-modeled)
+                                restart protocol; queues + dead-letter queues (SQS-modeled). Round-7:
+                                queue pulls acquire a semaphore keyed by event ID (locks + queues
+                                compose; ~exactly-once over at-least-once)
   ├─ tailscale-query          [NEW] standardized, extensible Tailscale-status query surface
   ├─ network-topology         [NEW] live WS: device on/off + self-connectivity-loss events
   ├─ service-registry         [NEW] distributed, eventually-consistent slug -> host:port registry
@@ -169,11 +200,16 @@ repo                          [NEW round-6, requirements-only; fork RESOLVED] it
                                 the VFS"
 db                            [existing, as-is; SCOPE CONFIRMED] Postgres/Supabase control-plane crate + `db` CLI;
                                 rounds 4–5: query/virtualization layer now in-scope DIRECTION
-                                (standardized query interface over SQLite-in-VFS / Supabase / RDS)
+                                (standardized query interface over SQLite-in-VFS / Supabase / RDS);
+                                round-7: its Capabilities-gated drivers are the seed of VDB's
+                                adapter matrix
 stack                         [NEW rounds 4–5, requirements-only] lightweight database-with-handlers
                                 runtime: daemon around a single SQLite-file-in-the-VFS, SQL + Deno/TS
                                 handlers on row/table changes; NO DOCKER locally (hard rule);
-                                SQLite→Postgres auto-upgrade mechanism OPEN
+                                round-7: VDB elevated to the deploy-anywhere stack-pattern
+                                implementation (local SQLite daemon / Supabase / AWS RDS+Lambda);
+                                local-Postgres decision GATED on a required SQLite-sufficiency
+                                analysis
 environments                  [NEW rounds 4–5, requirements-only] environment = subset of a project;
                                 CICD pipeline attachable; deploy-into-environment activates it;
                                 chained blue/green deployments; bandit feature balancing (placement OPEN)
@@ -181,12 +217,15 @@ cicd                          [NEW rounds 4–5, requirements-only] pipelines co
                                 hierarchy vs environments OPEN (sibling-with-dependency assumed)
 vault                         [NEW round-6, requirements-only] secrets crate; agents/LLMs can NEVER
                                 directly read a secret but CAN use one in context (use-without-seeing,
-                                enforced at the access-pattern level); everything else open
+                                enforced at the access-pattern level); round-7: llm_safe mechanism
+                                locked (raw/ID addressing; raw requests fail or degrade to
+                                ID-plus-warning; no secret ever reaches an LLM)
 rollup                        [NEW round-6, requirements-only; crate name OPEN: rollup/plugins/other]
                                 prompt/plugin rollup: fragments referencing fragments via a syntax,
                                 slots taking variables at reference time; specialized plugins generated
                                 on demand (CCD ideally built on top of it); generalization ladder
-                                string-rollup → file-rollup → directory-rollup
+                                string-rollup → file-rollup → directory-rollup; round-7: insert
+                                types locked (raw vs reference)
 ccd                           [NEW; TOP-LEVEL CONFIRMED round-3] Cloud Code Daemon (Marshall/CCM):
                                 cloud-code manager + Claude-Code-usage-limits budget engine; rounds 4–5:
                                 owns its own usage database (sessions/tokens/limits; queried by spend);
@@ -425,6 +464,13 @@ to flag for the operator, not to specify in this pass.
   engine's causal-chain tracking (below), `kg.md` (graph-data provenance via
   the shared engine), and `stack.md` (handler-touch traces); every future
   design pass must treat provenance as a first-order requirement.
+  **SCOPED round-7 (2026-07-19): provenance is configured
+  per-project/per-database, and VDB is its primary home** — operator:
+  "probably a VDB thing. Also a VFS thing, but I typically don't care about
+  provenance in the file system — usually only in the database and the
+  stack pattern." VFS-level provenance is a **lighter** design requirement
+  (see `vfs.md`); the full-strength principle lives in the
+  database/stack-pattern plane (`stack.md`/`db.md`).
 - **Pairwise data contracts are the operating model** (round-6 affirmation —
   see the note at the top of the contract graph): contract changes trigger
   design sessions analyzing ripple effects; this is how all future updates
@@ -525,19 +571,33 @@ layer; none is decomposed, designed, or given a `components/` file this pass:
   (which really does deploy edge functions to Supabase today). Options on
   the table: fold stack into db (and run the KG through db — pushing db
   hard) vs. keep db boring as a utility under a bigger eventual-consistency
-  system in the mesh. The operator also coined **VDB** — a
+  system in the mesh. The operator coined **VDB** — round-6 a
   virtualized-database service using `db` under the hood, databases treated
   like services under mesh's restart/upgrade protocol, with the confirmed
-  copy/verify/switch + let-edge-functions-finish migration mechanics.
-  Recorded faithfully as OPEN with VDB attached, not resolved. Full verbatim
-  in `stack.md`; see also `db.md`.
+  copy/verify/switch + let-edge-functions-finish migration mechanics —
+  **and round-7 ELEVATED it to the working name for the deploy-anywhere
+  implementation of the stack pattern** (one abstract runtime; local
+  SQLite-stack-daemon / Supabase / AWS RDS+Lambda adapters; `db`'s
+  Capabilities-gated drivers as the seed). Attached OPEN questions
+  (round-7): how the stack pattern gets "baked into" VDB, and **whether KG
+  should be BUILT ON VDB** ("is the knowledge graph just a special version
+  of VDB, living as a distributed service via the mesh? I actually think
+  that's a worthwhile question" — see `kg.md`). The boundary itself remains
+  OPEN. Full verbatim in `stack.md`; see also `db.md`.
 - **`stack` SQLite→Postgres upgrade (rounds 4–5; PARTIALLY RESOLVED
-  round-6):** the migration *mechanics* are confirmed (copy/verify/switch
-  under a lock; let running edge functions finish, swap underneath, write
-  back, resume). Still OPEN: where Postgres comes from — the operator's "one
-  Postgres Docker machine" line sits **unreconciled against the hard
-  no-Docker rule** — and his own counter-question "why ever upgrade past
-  SQLite if the full stack works on SQLite." See `stack.md`.
+  round-6; GATED round-7):** the migration *mechanics* are confirmed
+  (copy/verify/switch under a lock; let running edge functions finish, swap
+  underneath, write back, resume). Still OPEN: where Postgres comes from —
+  the operator's "one Postgres Docker machine" line sits **unreconciled
+  against the hard no-Docker rule** — and his own counter-question "why ever
+  upgrade past SQLite if the full stack works on SQLite." **Round-7: the
+  operator will not decide the local-Postgres question until a REQUIRED
+  daemon-level SQLite-sufficiency gap analysis** shows whether SQLite + the
+  stack daemon + mesh (cron, pub/sub) functionally covers everything
+  Postgres would provide (pg_cron → mesh cron; LISTEN/NOTIFY → mesh pub/sub;
+  procedural triggers → daemon-level Deno/SQL handlers; etc.); AUI is
+  delivering a first-pass analysis conversationally, but the definitive
+  version belongs in stack/VDB's full component design. See `stack.md`.
 - **`environments` vs `cicd` hierarchy (NEW rounds 4–5):** sibling vs. child
   OPEN; sibling-with-dependency is the working assumption. ~~And bandit-based
   feature load-balancing placement~~ — **RESOLVED round-6: bandits are NOT a
@@ -563,11 +623,14 @@ layer; none is decomposed, designed, or given a `components/` file this pass:
   the concrete update protocol between nodes running mixed versions, and the
   exact restart-priority ladder ("latitude granted, discuss"). See `mesh.md`
   concerns 6, 12–13.
-- **`rollup` naming + syntax (NEW round-6):** the crate name is OPEN
-  (rollup / plugins / other), as are the fragment-reference/slot syntax; the
-  operator has built ~two prior versions in other projects — a prior-art
-  scan is underway separately and should seed the design pass. See
-  `components/rollup.md`.
+- **`rollup` naming + syntax (NEW round-6; insert types LOCKED round-7):**
+  the crate name is OPEN (rollup / plugins / other), as is the
+  fragment-reference/slot syntax; the operator has built ~two prior versions
+  in other projects — a prior-art scan is underway separately and should
+  seed the design pass. Round-7 locks the **raw-vs-reference insert-type
+  axis** (extending the prior art's prompt/slot/file/prompt-file markers)
+  and the **no-vault-raw-in-LLM-bound-content rule**. See
+  `components/rollup.md` / `components/vault.md`.
 - **GC rolled into VFS vs. called-as-tool (NEW round-3):** GC is now the
   per-node tool VFS calls; "might need to get rolled up into the VFS." Open —
   see `gc.md` / `vfs.md`.

@@ -55,6 +55,16 @@ entire mesh**. Requirements:
   replication; KG talks to mesh, mesh distributes into S3) — see
   `components/mesh.md`.
 
+- **OPEN question (round-7, 2026-07-19): should KG be BUILT ON VDB?** With
+  VDB elevated to the deploy-anywhere implementation of the stack pattern
+  (one abstract runtime; local-SQLite-daemon / Supabase / AWS RDS+Lambda
+  adapters — see `components/stack.md` and `components/db.md`), the operator
+  explicitly wants this explored — verbatim: "are there reusable components
+  for the knowledge graph — is the knowledge graph just a special version of
+  VDB, living as a distributed service via the mesh? Should the knowledge
+  graph be built on top of VDB? I actually think that's a worthwhile
+  question." Recorded as an open design question, NOT a decision.
+
 **Consumer note:** `projects` straddles KG + VFS — the graph encodes project
 structure, and graph nodes point at project files in the VFS (see
 `components/projects.md`).
@@ -85,4 +95,4 @@ Parent: none | Children: none (this pass).
 
 **requirements-only** — verbatim requirements capture; no design pass yet. The
 distributed-consistency model for interconnected graph state is the flagged
-open question.
+open question, joined round-7 by the KG-on-VDB question (see the Charter).
