@@ -6,13 +6,27 @@ now explicitly **"the operating system"** of Substrate. Absorbs `gateway`
 **Nesting:** top-level parent of {tailscale-query, network-topology,
 service-registry, completion-router}.
 
+> **ROUNDS 4–5 LOCK (2026-07-18, applied on top of commit `5dcadc1`):**
+> (1) standard **WebSocket pub/sub protocol** confirmed (concern 7);
+> (2) the internal-layering question is **ANSWERED** — mesh decomposes into
+> internal LIBS with the same boring-layers discipline; utilities (service
+> registry, replicated KV, `locks`, `cron`, the S3 adapter) are never
+> standalone crates/services (see Charter);
+> (3) **port LOCKED: `3649`** — supersedes `:8419` everywhere (concern 8);
+> (4) stickiness (system-level resurrection), rigorous zombie-killing, and
+> single-port locality locked (concerns 8–9);
+> (5) two addressing classes designed in (concern 9);
+> (6) new internal libs **`locks`** (concern 10 — partition semantics OPEN)
+> and **`cron`** (concern 11).
+
 ## Charter
 
 `mesh` is Substrate's **operating system** — the network / coordination plane
 every other service uses to find and reach every other service, the transparent
 front door to the inference fleet, and (since the gateway merge) the browser-
 facing observability origin. It is a real app in two forms sharing one crate
-tree: a **daemon** (`bin/mesh serve`, bound at `:8419`) that runs on every device
+tree: a **daemon** (`bin/mesh serve`, bound at **`:3649`** — LOCKED rounds 4–5,
+superseding the `:8419` used earlier in this file; see concern 8) that runs on every device
 in the tailnet, and a **CLI** (`mesh service ...`, `mesh net ...`) for operator
 ergonomics. The daemon owns these capabilities: (1) transparent completion routing
 across the inference fleet with model-affinity balancing (the original
@@ -46,6 +60,24 @@ URL — and, new in the round-3 lock:
    written on the AWS side by an external agent becomes eventually consistent
    with the mesh; see `components/kg.md`). requirements-only.
 
+And, new in the rounds-4–5 lock (2026-07-18):
+
+10. **A standard WebSocket pub/sub protocol** — "We do have a standard
+    WebSocket communication protocol, and we have a Pub/Sub system to actually
+    communicate via WebSocket, and the mesh network relays it where it needs to
+    go. We just have certain structs that the publishers and subscribers
+    expect" (operator, verbatim). Typed envelope/message structs live in
+    `types` (see `components/types.md`); mesh does the relaying. See concern 7.
+11. **Internal utility LIBS** — the service registry's replicated KV store,
+    the new `locks` (distributed semaphores, concern 10) and `cron` (scheduled
+    tasks, concern 11) libs, and the S3 adapter are **internal libraries of
+    mesh**, layered with the same boring-layers discipline — never standalone
+    crates/services (see the ANSWERED layering note below).
+12. **Fixed port `3649` + stickiness + zombie-killing** — locked; see
+    concern 8.
+13. **Single-port locality + two addressing classes** — every service talks
+    ONLY to its local mesh daemon on `:3649`; see concern 9.
+
 > **SUPERSEDED (2026-07-18): the mesh/gateway sibling split.** This file
 > previously drew a hard boundary: "It does not own the aggregation/
 > observability plane — that is `gateway`, which is a *consumer* of mesh, not
@@ -66,13 +98,20 @@ index). It does not own service business
 logic; the registry stores only addressing, versions, requirements, and boot
 order — never application data (that is `db`).
 
-**OPEN (recorded, not decided): internal layering.** The round-3 scope expansion
-is acknowledged as large — mesh now spans routing, discovery, registry,
-topology, version/dependency/boot-order tracking, and the dashboard/observability
-origin. The operator has been asked whether mesh should decompose internally
-into layered libs (e.g. a coordination core vs. an OS/version layer vs. the
-observability/dashboard surface). Recorded as an open question; do not design
-the layering yet.
+**ANSWERED (rounds 4–5, 2026-07-18; supersedes the OPEN internal-layering
+note that stood here):** mesh DOES decompose internally with the same layering
+discipline as the rest of the repo — "Let's do the same discipline inside of
+mesh. Keep it layered — boring layers on top of boring layers" (operator). The
+hard constraints, verbatim-grade: "any of the utilities offered by mesh are
+just inside of mesh. They can be libs, they don't even have to be top-level
+crates" — so the service registry, the replicated KV store, `locks`, `cron`,
+and the S3 adapter are **internal LIBS of mesh, never standalone
+crates/services**. Design latitude is granted on whether the replicated-state
+primitives share one implementation or several ("If it makes sense to do them
+separately, do them separately; if it makes sense to do them the same, do them
+the same. Just make sure it's boring and it's all buried inside of mesh").
+The exact layer boundaries remain the designer's to draw within these
+constraints.
 
 ## Primary design concerns
 
@@ -90,7 +129,13 @@ children is exactly the open internal-layering question in the Charter.)
 - `lib/mesh` — the daemon's library: modules `router` (completion-router),
   `topology` (network-topology), `registry` (service-registry server side),
   `proxy`, `config`, `lib`. These are **not independently apps**, so they are
-  libraries nested under the mesh app, not their own crates.
+  libraries nested under the mesh app, not their own crates. **Rounds 4–5:**
+  the internal utilities join this tree as internal libs — the replicated KV
+  store, `locks` (concern 10), `cron` (concern 11), the S3 adapter, and the
+  pub/sub relay (concern 7) — layered boringly, never standalone
+  crates/services (per the ANSWERED layering note in the Charter; they *may*
+  be workspace lib crates if convenient, but are only ever consumed through
+  mesh).
 - `lib/tailscale` (**new crate**, `substrate-tailscale`) — the one child promoted
   to its own crate. The operator asked for it verbatim ("a crate just to query
   Tailscale … a separate surface worth capturing and standardizing," extensible
@@ -134,7 +179,7 @@ children is exactly the open internal-layering question in the Charter.)
 - **Fleet vs singleton addressing (non-obvious, important).** The inference
   *fleet* is NOT slug-registered per node — a `resolve("inference")` can't return
   "one of N interchangeable boxes." Instead the **mesh registers the `inference`
-  slug pointing at its own `:8419`**, because the mesh *is* the fleet's
+  slug pointing at its own `:3649`** (port locked rounds 4–5), because the mesh *is* the fleet's
   transparent front door (it load-balances internally via the router's
   `NodeRegistry`, which discovers nodes by Tailscale tag). Singleton services
   (`db`, `ccd`, `vfs`, `kg`, `projects`, `org`) each register their own slug ->
@@ -225,8 +270,85 @@ version-relationships/dependencies BETWEEN services — "when a service is updat
 it looks at what versions of other services it depends on — we just track the
 requirements and the boot order" — and (c) the boot order derived from those
 requirements. Scope note: mesh *tracks and answers*; it is not a package manager
-or installer this pass. Requirements-only; no design yet. This is the biggest
-driver of the open internal-layering question in the Charter.
+or installer this pass. Requirements-only; no design yet. (The internal-layering
+question this used to drive is now ANSWERED — internal libs, boring layers; see
+the Charter. The versioning *approach* is also now constrained: pairwise
+service dependencies with minimal-restart rolling updates is the operator's
+preference — commit-as-release-set was proposed and NOT adopted; the concrete
+update protocol between nodes running mixed versions is OPEN. See
+`overview.md`.)
+
+### 7. Standard WebSocket pub/sub protocol (LOCKED rounds 4–5, requirements-only)
+
+One standard WS communication protocol, pub/sub-shaped, relayed by mesh:
+publishers and subscribers share typed structs ("we just have certain structs
+that the publishers and subscribers expect"), and mesh relays messages where
+they need to go — across services and across nodes. The envelope / pub-sub
+struct domain is a planned `types` module (see `components/types.md`); the
+existing WS surfaces (`network-events`, `dashboard-feed`, per-node event
+streams) are expected to converge onto this protocol at harmonization time.
+Requirements-only; wire shape undesigned.
+
+### 8. Port 3649, stickiness, and rigorous zombie-killing (LOCKED rounds 4–5)
+
+- **Port LOCKED: `3649`** (supersedes `:8419` throughout this scaffold).
+  Verified free on the operator's fleet; IANA's obscure "nmmp" registration
+  for 3649 is dead and ignored. (1649 was the other candidate — "1649 is a
+  better number" — but was at risk of being already utilized; 3649 won.) On
+  restart, **mesh kills whatever process squats on its port**.
+- **Stickiness:** a system-level process (launchd/systemd-grade supervision)
+  resurrects the mesh daemon whenever it dies — "I want this to be really
+  sticky." Mesh must always come back without operator action.
+- **Rigorous zombie-killing:** when a service restarts and re-registers on a
+  new port, the old still-running copy must be **discovered and killed** —
+  "I don't want multiple copies of the same app running. We need a discovery
+  mechanism to kill services which are no longer supposed to be running." No
+  duplicate app copies, ever. Interacts with the registry's lease model
+  (concern 1) but is a distinct requirement: leases expire *entries*; this
+  kills *processes*.
+
+### 9. Single-port locality + two addressing classes (LOCKED rounds 4–5)
+
+- **Single-port locality:** every service talks ONLY to its local mesh daemon
+  on `:3649` — "Each service connects to each other service through the one
+  port. They are not even aware that there are other services running on other
+  ports... you just communicate with the mesh process. That's it." All
+  inter-service and inter-node communication funnels through the local daemon;
+  mesh does all relaying. Services are unaware of other services' ports.
+- **Two addressing classes designed in:** (a) *virtualized* — "I want to talk
+  to service X and I don't care which node" (talk to your local daemon, which
+  maintains consistency across the network); (b) *pinned* — "I want to talk to
+  service X on node N." Both are first-class; the operator flags there may be
+  more axes. Requirements-only; the address syntax/API is undesigned.
+
+### 10. Internal lib: `locks` (LOCKED rounds 4–5; partition semantics OPEN)
+
+Distributed **semaphores as a first-order mesh library** (an internal lib, not
+a crate/service), riding the replicated KV store:
+
+- **Acquisition semantics:** knowledge of a semaphore acquisition must
+  distribute to **all reachable nodes BEFORE the client is confirmed as
+  holding the lock**.
+- **Offline nodes** sync bidirectionally on reconnect.
+- **Partition-twin problem:** if two partitioned subsets each create a
+  same-named semaphore, identity is **slug + UUID** — the same slug in two
+  partitions is two different UUIDs; re-acquiring a slug mints a new UUID (so
+  non-identity is explicit); possibly one node owns each UUID.
+- **OPEN — needs real care:** the full partition/merge semantics. Operator:
+  "There's definitely a design question there — it has to generalize to be
+  reliable in an infinite set of circumstances." Do not treat the slug+UUID
+  sketch as the finished design.
+
+Consumers already known: the shared handler/execution engine's distributed
+trigger execution (kg + stack) coordinates via `locks` — see `overview.md`'s
+shared-libraries section and `components/kg.md`.
+
+### 11. Internal lib: `cron` (LOCKED rounds 4–5, requirements-only)
+
+Scheduled tasks as an internal mesh lib, in two flavors matching the
+addressing classes: **"run on node N"** and **"run anywhere"** ("Tasks that
+need to be run on specific nodes; tasks that just need to be run somewhere.
+Cron should be something available to mesh"). Requirements-only.
 
 ### CLI surface (new operator requirement)
 
@@ -249,7 +371,7 @@ mesh net watch                        # tail the network-events WS
   `xdg-open` / the `open` crate). The operator "never has to memorize which port a
   service runs behind."
 - **Resolution path:** the CLI is a short-lived process that queries the **local**
-  mesh daemon's registry over HTTP (`localhost:8419`), which is the
+  mesh daemon's registry over HTTP (`localhost:3649` — port locked rounds 4–5), which is the
   eventually-consistent merge of the whole tailnet. Requires a local mesh daemon
   (or a reachable peer) — an explicit precondition, surfaced as a clean error, not
   a silent hang. This reuses `service-lookup` (the CLI is just another party); no
@@ -336,7 +458,13 @@ but the replication wire format, exact LWW merge/GC parameters, and the
 Round-3 additions differ again: the absorbed observability/dashboard plane
 (concern 5) inherits gateway's **implementation-ready** design content, but the
 OS layer (concern 6: versions, requirements, boot order) and the surface-schema
-rendering are **requirements-only**, pending the internal-layering answer.
+rendering are **requirements-only**. (The internal-layering question that was
+pending here is now ANSWERED — see Charter.)
+
+Rounds-4–5 additions (concerns 7–11: pub/sub protocol, port/stickiness/
+zombie-killing, single-port locality + addressing classes, `locks`, `cron`)
+are **requirements-only** across the board, with `locks`' partition semantics
+explicitly flagged OPEN.
 
 ## Assigned design-depth
 

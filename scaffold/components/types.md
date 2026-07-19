@@ -25,10 +25,17 @@ it is the shared language every edge's schema is written in.
 > to render its dashboard component + what calls to make against it), from
 > which the mesh dashboard renders every service's component. See
 > `scaffold/contracts/surface-schema.md`.
+> **Second planned addition (rounds 4–5 lock, 2026-07-18): a WS envelope /
+> pub-sub struct domain module** (e.g. `pubsub.rs`) — the typed structs
+> publishers and subscribers share under mesh's now-confirmed standard
+> WebSocket pub/sub protocol ("we just have certain structs that the
+> publishers and subscribers expect"; mesh relays them where they need to
+> go). See `components/mesh.md` concern 7. Requirements-only; shapes
+> undesigned (a Contract Harmonizer concern, like surface-schema).
 
 It remains on a growth path (mesh's OQ-3 `NodeInfo`/`NodeCapabilities`
-enrichment, the surface-schema module, and whatever `db`/`ccd`/`vfs`/
-`projects`/`org` end up needing to share), so this
+enrichment, the surface-schema module, the WS pub/sub envelope module, and
+whatever `db`/`ccd`/`vfs`/`projects`/`stack`/`org` end up needing to share), so this
 file exists to record the discipline that keeps that growth from turning the
 crate into an undifferentiated dumping ground as the crate count roughly
 doubles in V2.
@@ -131,7 +138,9 @@ Top-level, no parent, no children.
 round-3 **surface-schema module is `requirements-only`** (named and scoped —
 render + interaction description language — but its type shapes are undesigned;
 a step-3 / Contract Harmonizer concern together with
-`scaffold/contracts/surface-schema.md`).
+`scaffold/contracts/surface-schema.md`). The rounds-4–5 **WS pub/sub envelope
+module is likewise `requirements-only`** (see the planned-additions note in
+the Charter).
 
 ## Assigned design-depth
 

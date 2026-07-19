@@ -1,5 +1,12 @@
 # Substrate V2 — Scaffold Overview (Decompose pass)
 
+> **THE SYSTEM IS "MIND OS" (locked 2026-07-18).** The system being designed
+> here is **Mind OS** — "what this is becoming is an operating system of my
+> mind, so we should call it Mind OS — that's the name." **"Substrate" remains
+> the repo/folder/GitHub name until version one publishes**, at which point it
+> is published as Mind OS. (Mycelium rejected; ripple-derived names rejected —
+> see the reserved-term note in the future section.)
+
 > **Stage 1, Step 1 (DECOMPOSE) only.** This file names the components, their
 > nesting, and every contract edge between them, and designs the single wiring
 > seam. It deliberately does **not** contain full per-component designs — the
@@ -32,6 +39,27 @@
 > (C) **the S3 adapter moves INSIDE mesh** — supersedes the round-3
 > S3-as-VFS-feature framing; mesh owns all eventual-consistency/replication, so
 > vfs and kg reach S3 through mesh's adapter.
+
+> **ROUNDS 4–5 LOCK (2026-07-18, applied on top of commit `5dcadc1`):**
+> (A) **mesh internals locked** — standard WS pub/sub protocol; internal
+> utility LIBS (service registry, replicated KV, `locks`, `cron`, S3 adapter —
+> never standalone crates/services); **port LOCKED `3649`** (supersedes
+> `:8419`); stickiness via system-level resurrection; rigorous zombie-killing;
+> single-port locality; two addressing classes ("any node running X" vs "X on
+> node N") — see `components/mesh.md` concerns 7–11 (`locks` partition
+> semantics OPEN). (B) new build-now component **`stack`** (the lightweight
+> database-with-handlers runtime; **HARD RULE: NO DOCKER locally, ever** —
+> containers only in AWS via an AWS adapter; Deno confirmed as the TS-handler
+> runtime). (C) `db`'s query/virtualization layer upgraded to **in-scope
+> direction**. (D) KG gains the trigger/handler paradigm via **ONE shared
+> handler/execution engine** with stack (see the shared-libraries section —
+> the word "ripples" is RESERVED and must NOT name this engine). (E) new
+> requirements-only components **`environments`** and **`cicd`**. (F) new open
+> fork: **`repo` crate vs git-in-the-VFS**. (G) CCD owns its own usage
+> database; **`finance` renamed `spend`** (spend queries ccd, pull-shaped).
+> (H) **the system is Mind OS** (see the note at the top). (I) versioning:
+> pairwise service dependencies + minimal-restart rolling updates preferred;
+> commit-as-release-set NOT adopted; mixed-version update protocol OPEN.
 
 ## Scope of this pass
 
@@ -70,6 +98,7 @@ principle: decompose by design-difficulty, not line count; thin binary glue
 ```
 types                         [existing, UNLOCKED] shared contract-types foundation (zero-dep);
                                 as-is freeze removed round-3; gains the surface-schema domain module
+                                + the WS pub/sub envelope module (rounds 4–5)
 inference                     [existing, RESHAPE; name locked as "inference"]  per-machine LLM runtime
   ├─ store                    [existing] SQLite system-of-record (per node)
   ├─ engine                   [existing] llama-server process + InferenceBackend seam
@@ -84,9 +113,12 @@ gc                            [existing, RESHAPE round-3] per-node storage-enfor
                                 open: rolled into vfs vs. called-as-tool)
 mesh                          [RESHAPE + EXPAND — "the operating system"] coordination plane; absorbs
                                 gateway (dashboard hosting + event fan-out + rollups); adds service-
-                                version/requirements/boot-order tracking (internal layering OPEN) and
-                                the S3 adapter (cold-storage overflow, client-side encryption — round-3
-                                second batch, moved from vfs)
+                                version/requirements/boot-order tracking and the S3 adapter (cold-
+                                storage overflow, client-side encryption — round-3 second batch, moved
+                                from vfs). Rounds 4–5: port LOCKED :3649; internal layering ANSWERED —
+                                internal utility LIBS (replicated KV, locks, cron, S3 adapter, pub/sub
+                                relay), never standalone; sticky (system-level resurrection); zombie-
+                                killing; single-port locality; two addressing classes
   ├─ tailscale-query          [NEW] standardized, extensible Tailscale-status query surface
   ├─ network-topology         [NEW] live WS: device on/off + self-connectivity-loss events
   ├─ service-registry         [NEW] distributed, eventually-consistent slug -> host:port registry
@@ -102,9 +134,22 @@ kg                            [NEW round-3 second batch, requirements-only] dist
 projects                      [NEW round-3, requirements-only] graphical FS / knowledge graph straddling
                                 kg + vfs (graph encodes project structure; nodes point at vfs files);
                                 centralized push registry for dashboards + source; app-building layer
-db                            [existing, as-is; SCOPE CONFIRMED] Postgres/Supabase control-plane crate + `db` CLI
+db                            [existing, as-is; SCOPE CONFIRMED] Postgres/Supabase control-plane crate + `db` CLI;
+                                rounds 4–5: query/virtualization layer now in-scope DIRECTION
+                                (standardized query interface over SQLite-in-VFS / Supabase / RDS)
+stack                         [NEW rounds 4–5, requirements-only] lightweight database-with-handlers
+                                runtime: daemon around a single SQLite-file-in-the-VFS, SQL + Deno/TS
+                                handlers on row/table changes; NO DOCKER locally (hard rule);
+                                SQLite→Postgres auto-upgrade mechanism OPEN
+environments                  [NEW rounds 4–5, requirements-only] environment = subset of a project;
+                                CICD pipeline attachable; deploy-into-environment activates it;
+                                chained blue/green deployments; bandit feature balancing (placement OPEN)
+cicd                          [NEW rounds 4–5, requirements-only] pipelines consuming environments;
+                                hierarchy vs environments OPEN (sibling-with-dependency assumed)
 ccd                           [NEW; TOP-LEVEL CONFIRMED round-3] Cloud Code Daemon (Marshall/CCM):
-                                cloud-code manager + Claude-Code-usage-limits budget engine
+                                cloud-code manager + Claude-Code-usage-limits budget engine; rounds 4–5:
+                                owns its own usage database (sessions/tokens/limits; queried by spend);
+                                threads linkable to projects + optionally environments
 org                           [NEW, PLACEHOLDER — NOT DECOMPOSED THIS PASS]  agentic-orgs framework
                                 imports: inference, ccd, db
 ```
@@ -154,9 +199,14 @@ org                           [NEW, PLACEHOLDER — NOT DECOMPOSED THIS PASS]  a
   operations — see `db-control-plane` / `org.md`), and `inference` will depend
   on `db` to initialize its own database when standing up on a new mesh node
   rather than bootstrapping that itself (new edge `db-inference-init`, see
-  `db.md`). `db`'s longer-term aspirational direction (schema-once/deploy-
-  anywhere data-model layer, field-change triggers, eventual ORM/query
-  virtualization) is noted in `db.md` as future-only, not scoped this pass.
+  `db.md`). `db`'s longer-term direction (schema-once/deploy-anywhere
+  data-model layer, field-change triggers, ORM/query virtualization) was
+  noted in `db.md` as future-only — **partially SUPERSEDED rounds 4–5: the
+  query/virtualization layer is now an in-scope DIRECTION** (standardized
+  query interface over SQLite-in-VFS / Supabase / RDS backends), though its
+  design pass is still not authorized. Working framing vs. the new `stack`:
+  `db` = control-plane/virtualization/query interface; `stack` = the runtime
+  hosting a database. See `db.md` / `stack.md`.
 - **`mesh` absorbs the expanded scope as four children.** The Tailscale-query
   surface EARNED its own (nested) component: the operator explicitly wants it
   "standardized" and "extensible" ("add new tools as we go"), and it is consumed
@@ -195,7 +245,9 @@ autonomous organizations, where agents, ripples, and AI pipelines take
 advantage of all the tools in the rest of the repo to run organizations
 autonomously," and its explicit minimum import list is locked as `inference`,
 `ccd`, and `db` — see `components/org.md`. Nothing else about Org changes; it
-remains un-decomposed.
+remains un-decomposed. ("Ripples" in that quote is the operator's RESERVED
+future concept — see the reserved-term note in the future section — not the
+v1 handler/execution engine.)
 
 ## Contract graph (every edge)
 
@@ -225,6 +277,8 @@ where a caller/callee asymmetry matters.
 | `projects-mesh` | projects <-> mesh | **NEW round-3 (requirements-only).** Registry push (dashboards + source) + surfacing project dashboards on the mesh dashboard via surface schemas. |
 | `kg-mesh` | kg <-> mesh | **NEW round-3 second batch (requirements-only).** KG registration + graph replication across nodes and into S3 through mesh's adapter; graph-merge consistency model OPEN ("the superset" of the registry's LWW KV). |
 | `kg-vfs` | kg -> vfs | **NEW round-3 second batch (requirements-only).** KG nodes point at VFS files; existence validation of the pointed-at file. |
+| `stack-vfs` | stack -> vfs | **NEW rounds 4–5 (requirements-only).** The single SQLite file each stack daemon wraps is stored in / accessed through the VFS. |
+| `stack-mesh` | stack <-> mesh | **NEW rounds 4–5 (requirements-only).** Registration via the local mesh daemon (:3649, single-port locality) + distributed-handler coordination via mesh's `locks` lib. |
 
 **Collapsed edge:** `mesh-registry-read` (was gateway -> mesh) no longer exists —
 with gateway absorbed, that read is mesh consulting its own registry in-process;
@@ -275,6 +329,12 @@ resolution through the one seam. A
 static-config fallback is retained for single-box dev so the seam degrades
 gracefully.
 
+**Rounds 4–5 strengthen the seam:** with single-port locality locked, every
+service registers/resolves against its **local mesh daemon on `:3649`** and is
+unaware of any other service's port — mesh does all relaying (see
+`components/mesh.md` concerns 8–9). The seam's mechanics are unchanged; its
+exclusivity is now an operator-locked rule rather than a design preference.
+
 Everything else connects only through the named contracts above; the intra-process
 composition roots that already exist (`InferenceService::start`, `MeshProxy::start`,
 `GcService`, the observability-plane `serve()` mesh absorbed from gateway)
@@ -286,11 +346,41 @@ registry.
 the seam implies reworking every currently-static endpoint config to resolve via
 `service-lookup`: the absorbed observability plane's `inference_url`/`gc_url`
 (now mesh-internal config), the mesh's node list,
-CCD's endpoints, Org's service map, and the new `vfs`/`kg`/`projects` services. The
+CCD's endpoints, Org's service map, and the new `vfs`/`kg`/`projects`/`stack`
+services. The
 mesh-design-synthesis
 already anticipated the observability-plane change (OQ-style, written pre-merge
 against gateway). This is a cross-cutting refactor
 to flag for the operator, not to specify in this pass.
+
+## Shared libraries (NEW section, rounds 4–5)
+
+Cross-component libraries that are consumed as Cargo dependencies, not
+contract edges. (The earlier per-file candidates — `substrate-mesh-client`,
+`substrate-api-client`, `substrate-tailscale` — stay documented where they
+were flagged, in `mesh.md`/`ccd.md`; this section exists for the first
+operator-locked shared lib.)
+
+- **The handler/execution engine (name TBD — LOCKED rounds 4–5).** ONE shared
+  library implementing the trigger/handler paradigm, with **adapters** for
+  `stack`-tables and `kg`-nodes — "I have the required engine in each
+  location and adapters to deploy this thing in that location." The
+  kg/stack <-> engine relationship is an **internal library dependency, NOT a
+  contract edge** (no `contracts/` stub). Distributed trigger execution
+  coordinates via mesh's internal `locks` lib. **Guardrails are designed-in
+  from day one:**
+  - **causal chain tracking** per handler invocation (what change caused
+    what);
+  - **LOOP detection with a loop-depth threshold** — not a naive
+    cascade-depth cutoff: "It's hard to set an arbitrary [cascade] depth
+    [with tons of services cascading into each other]. It has to track loops
+    — we need a loop depth [for updates recurring on the same table]";
+  - **an escalation hook** — exceeding the loop-depth threshold triggers an
+    **agent investigation via `ccd`** ("at a certain loop depth, that can
+    trigger a handler for a Claude Code invocation to look at it and be
+    like: what happened?").
+  - **Naming guardrail:** this engine and its propagation must NOT be called
+    "ripples" anywhere — that word is RESERVED (see the future section).
 
 ## Future / placeholder concepts (named only — NO component files)
 
@@ -309,9 +399,26 @@ layer; none is decomposed, designed, or given a `components/` file this pass:
   deterministic." `projects` depends on it (see `components/projects.md`).
 - **OpenRouter-management** — a service managing OpenRouter API keys: per-key
   creation with per-key budgets, dashboard-managed.
-- **finance** — cost tracking, per-project (eventually attaching to `projects`'
-  per-project metadata).
+- **`spend`** (RENAMED from `finance`, rounds 4–5) — cost tracking,
+  per-project (eventually attaching to `projects`' per-project metadata).
+  Pull-shaped: **spend QUERIES its spend sources** — CCD's own usage database
+  (sessions/tokens/limits; see `components/ccd.md`) first among them — rather
+  than sources pushing to spend.
 - **AUI / interfaces** — a voice interface over the whole mesh.
+- **`repo`** (OPEN FORK, rounds 4–5 — recorded in the open questions below) —
+  a crate managing push/sync between the VFS and git/GitHub repos, OR git
+  semantics built into the VFS itself. Named here so nothing squats on the
+  name; not decided.
+- **`ripples` — RESERVED TERM, out of v1 scope, do not design or discuss in
+  v1.** The word "ripples" belongs to a future KG micro-agent system: LLM
+  micro-agents that respond to other micro-agents, rippling through a
+  knowledge graph — a single LLM completion that can pull context from
+  surrounding KG nodes and call tools including other ripples; one schema per
+  graph type; "the LLM-and-knowledge-graph equivalent of the backend web
+  stack." Operator: "I'm not ready to discuss it yet in the context of this
+  project. It's not version one." **The word must NOT be used for the shared
+  handler/execution engine or any other propagation mechanism** (see the
+  shared-libraries section).
 
 ## Carry-forward open questions for later steps
 
@@ -320,9 +427,34 @@ layer; none is decomposed, designed, or given a `components/` file this pass:
   it's the shared-types reconciliation with the pre-existing `types` crate.
 - ~~CCD siting~~: RESOLVED (component-design pass) — CCD lives inside the
   Substrate workspace as a first-class member; see `ccd.md`.
-- **Mesh internal layering (NEW round-3):** mesh's OS-scope expansion is
-  acknowledged as large; the operator has been asked whether mesh should
-  decompose internally into layered libs. Open — see `mesh.md`.
+- ~~Mesh internal layering~~: **RESOLVED (rounds 4–5)** — yes, mesh decomposes
+  internally into layered libs ("boring layers on top of boring layers");
+  utilities (service registry, replicated KV, `locks`, `cron`, S3 adapter)
+  are internal libs of mesh, never standalone crates/services. See `mesh.md`.
+- **`locks` partition semantics (NEW rounds 4–5, needs real care):** the
+  slug+UUID identity sketch handles partition twins, but the full
+  partition/merge semantics are OPEN — "it has to generalize to be reliable
+  in an infinite set of circumstances." See `mesh.md` concern 10.
+- **`stack` SQLite→Postgres auto-upgrade mechanism (NEW rounds 4–5):** OPEN,
+  constrained by the no-Docker rule (native local Postgres process vs. cloud
+  target, undecided). See `stack.md`.
+- **`environments` vs `cicd` hierarchy (NEW rounds 4–5):** sibling vs. child
+  OPEN; sibling-with-dependency is the working assumption. And bandit-based
+  feature load-balancing placement (inside environments vs. interacting with
+  mesh routing) is OPEN. See `environments.md` / `cicd.md`.
+- **`repo` crate vs git-in-the-VFS (NEW OPEN FORK, rounds 4–5):** either a
+  `repo` crate managing push/sync between the VFS and git/GitHub repos, or
+  git semantics built into the VFS itself — which then means branches inside
+  the VFS, branches attachable to environments, and worktree support ("I like
+  worktrees. I like workspaces"). Not decided. **Prior art:** the operator's
+  `.mind` workspace schema already links worktrees + Claude Code threads —
+  reuse it when this is designed.
+- **Versioning / update protocol (rounds 4–5):** the APPROACH is decided —
+  pairwise service dependencies with minimal-restart rolling updates ("each
+  individual service only gets restarted if it needs to get restarted");
+  commit-as-release-set was proposed and NOT adopted. The concrete update
+  protocol between nodes running mixed versions is OPEN. See `mesh.md`
+  concern 6.
 - **GC rolled into VFS vs. called-as-tool (NEW round-3):** GC is now the
   per-node tool VFS calls; "might need to get rolled up into the VFS." Open —
   see `gc.md` / `vfs.md`.

@@ -127,18 +127,37 @@ design assigns; this file's contribution is just making sure they know `db`
 is a normal library dependency, not a network call, which should keep their
 fill effort low regardless of model tier.
 
-## Aspirational / future direction (NOT scoped this pass — note only)
+## Query / virtualization layer — now IN-SCOPE DIRECTION (rounds 4–5 lock)
 
-The operator's longer-term vision for `db` is a database-agnostic
-schema/data-model layer: define the schema once and deploy it interchangeably
-to SQLite, a self-managed Postgres, or Supabase; add trigger-based backend
-logic that fires on field changes (in the spirit of Supabase edge functions,
-but backend-agnostic); and possibly an ORM / query-virtualization layer on
-top of that eventually. In the operator's own words: "I don't know what the
-full future of `db` is, but it's bright — we're building it one layer at a
-time as we need it." Nothing here is authorized or scheduled for
-implementation now. It is recorded purely as direction-of-travel context: the
-existing `Driver` trait + `Capabilities` flags (already handling three
-backends today) is the natural seed this future layer would grow from, which
-is one more reason to leave `db`'s current architecture alone rather than
-rework it preemptively.
+> **SUPERSEDED (2026-07-18, rounds 4–5): the "aspirational only" framing.**
+> This section previously recorded the query-virtualization layer as
+> future-only direction-of-travel, explicitly not scoped. The operator has
+> upgraded it to an **in-scope direction** (upgrading the earlier "might be
+> too much" aside):
+> "Actually being able to query through the db crate and get a standardized
+> interface to the different databases — SQLite files stored in the VFS, or
+> Supabase projects, or Dockers or RDS instances. A virtualization layer on
+> top of our databases makes sense, so all we have to do is make a decision
+> like: oh, this only needs to be run in an SQLite."
+
+In-scope direction (not yet designed): a **standardized query interface over
+heterogeneous backends** — SQLite-files-in-the-VFS, Supabase projects, RDS
+instances — so choosing a backend becomes a capability decision, not an API
+change. The existing `Driver` trait + `Capabilities` flags (already handling
+three backends) is the natural seed this layer grows from. Still true: "we're
+building it one layer at a time as we need it" — direction is locked, the
+design pass is not authorized here.
+
+**Relationship to the new `stack` component (working framing, rounds 4–5):**
+`db` = the control-plane / virtualization / query interface over databases;
+`stack` = the runtime that *hosts* a database (the daemon around a
+SQLite-file-in-the-VFS with SQL + Deno/TS handlers). See
+`components/stack.md`.
+
+**Flagged implication (not resolved here): the NO-DOCKER rule.** Rounds 4–5
+locked a hard rule — no Docker locally, ever; containers only in the AWS
+environment via an AWS adapter (see `components/stack.md`). `db`'s Charter
+above still says it "wraps ... Docker" via the `supabase-local` driver — that
+local-Docker path is now in tension with the rule and presumably deprecates
+toward `stack`/native/cloud backends. Flagged for the operator/harmonizer,
+not silently rewritten.

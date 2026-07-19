@@ -28,6 +28,20 @@ entire mesh**. Requirements:
   - **`.mind`-style axiomatic breakdowns**.
 - **Nodes can point to files in the VFS**, with **existence validation** of the
   pointed-at file (`kg-vfs`).
+- **Trigger/handler paradigm via a SHARED execution engine (rounds 4–5 lock,
+  2026-07-18).** KG must support the same database-centric trigger/handler
+  paradigm as `stack`: "I do want the knowledge graph to be able to process
+  triggers and handlers. If we're going to have knowledge graph as a key
+  function of our mesh, we need to support that paradigm, because that's how
+  I program. We need an execution engine on top of knowledge graph — and it's
+  very similar to the same execution engine that we need in our database."
+  This is **ONE shared handler/execution-engine library** (name TBD) with
+  adapters for kg-nodes and stack-tables — an internal library dependency,
+  NOT a contract edge (see `overview.md`'s shared-libraries section for the
+  engine's guardrails: causal chain tracking, loop detection with a
+  loop-depth threshold, escalation hook). **Distributed trigger execution
+  coordinates via mesh's `locks` lib** (so a trigger fires once across the
+  mesh, not once per node) — see `components/mesh.md` concern 10.
 - **Cross-boundary sync with AWS/S3.** KGs need eventual consistency with the
   AWS/S3 side too — use case: an external agent extracts a user's intent into a
   KG and it shows up in the mesh. Per the same-day S3-adapter decision, this
@@ -52,6 +66,10 @@ structure, and graph nodes point at project files in the VFS (see
   and points nodes at VFS files; edge naming deferred to a later pass (today it
   is captured in `components/projects.md`'s requirements, not a separate
   contract stub).
+- **shared handler/execution engine** (rounds 4–5) — an internal library
+  dependency (kg-nodes adapter), deliberately NOT a contract stub; its
+  distributed coordination rides mesh's `locks` (see `overview.md`
+  shared-libraries section).
 
 ## Nesting
 

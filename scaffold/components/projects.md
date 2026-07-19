@@ -20,8 +20,8 @@ Requirements:
   dashboard** — via projects' own surface schema (the boring-surface-schema
   pattern; see `scaffold/contracts/surface-schema.md`): a project publishes its
   dashboard's render/interaction schema and the mesh dashboard mounts it.
-- **Per-project metadata and finances** eventually attach here (see the finance
-  placeholder in `overview.md`'s future section).
+- **Per-project metadata and finances** eventually attach here (see the `spend`
+  placeholder — renamed from finance, rounds 4–5 — in `overview.md`'s future section).
 
 **Future note — `artifacts` (layer-six placeholder, no component file).**
 Operator, verbatim-grade: "once we migrate to projects, no more files —

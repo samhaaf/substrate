@@ -29,7 +29,15 @@ agent subprocesses — spawn, track, signal, stream output, reap (`agent-managem
 live agent by handle and read its status/output; and (3) the **usage-limits
 budget engine** — metering every agent's Claude Code usage against the
 weekly/session/per-model limit surfaces and scheduling/throttling agent work by
-declared strategy + caller priority.
+declared strategy + caller priority; and — **LOCKED rounds 4–5 (2026-07-18)** —
+(4) **its own usage database**: CCD tracks sessions, tokens, and limits in a
+database it owns ("the cloud code daemon should have its own database where
+it's tracking all that stuff"). The `spend` component (the renamed `finance`
+placeholder — see `overview.md`) **queries CCD** (and other spend sources) for
+this data; CCD does not push to spend. Also locked: **threads must be linkable
+to projects, and optionally to environments within projects** (see
+`components/environments.md`) — the usage database's thread records carry
+those links.
 
 > **SUPERSEDED (2026-07-18): "routes agents' LLM calls to the local inference
 > fleet."** The previously-flagged BIG open question (route agents' LLM calls
@@ -132,6 +140,11 @@ clumping into mesh or inference:
 - **surface-schema** (see scaffold/contracts/surface-schema.md) — like every
   service, CCD publishes its observable-surface schema (budget state, agent
   roster, limit meters) for the mesh dashboard to render.
+- **spend** (future placeholder, renamed from `finance` — rounds 4–5) — spend
+  QUERIES CCD's usage database (sessions, tokens, limits) as one of its spend
+  sources; pull-shaped, inbound-to-CCD only. No contract stub yet (spend is
+  still a placeholder with no component file); recorded here so CCD's usage
+  database is designed queryable-from-outside from the start.
 
 ## Nesting (if applicable)
 
@@ -144,6 +157,9 @@ app, make it a library to use within a crate"):
 - `registry` — the handle namespace + live-agent state; the addressable surface.
 - `budget` — the usage-limits/priority strategy engine (was `router`, the
   LLM-routing shim — reshaped by the round-3 NO on local-inference routing).
+  Rounds 4–5: also owns (or sits atop) the **CCD usage database** — sessions,
+  tokens, limits; queryable by `spend`; thread records linkable to projects
+  and optionally environments.
 - `control` — the HTTP/WS control API implementing `agent-management` + the
   `org-on-ccd` consumption surface, and the `ccd-events` emitter.
 - `mesh_client` — thin register/resolve wrapper over `service-lookup` (see

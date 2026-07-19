@@ -31,7 +31,7 @@ slug addressing (that is service-registry).
   `NodeEndpoint`.
 - **Pinning** (`X-Substrate-Node` / `?node=`) resolved above the balancer; mesh
   strips `?node=` before forwarding to preserve byte-transparency.
-- **The mesh registers the `inference` slug -> its own `:8419`** in
+- **The mesh registers the `inference` slug -> its own `:3649`** (port LOCKED rounds 4–5; was `:8419`) in
   service-registry, so consumers resolve `inference` and reach this front door.
 
 ## Relationships / edges

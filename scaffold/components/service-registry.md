@@ -30,7 +30,7 @@ fleet (that is completion-router's `NodeRegistry`).
   recommended seed/anchor but not required (peer-to-peer convergence must hold
   without it).
 - **Fleet vs singleton addressing:** the mesh registers the `inference` slug ->
-  its own `:8419` front door (it internally load-balances the tag-discovered
+  its own `:3649` front door (port LOCKED rounds 4–5; was `:8419`) (it internally load-balances the tag-discovered
   fleet); singleton services register their own slug -> own endpoint. See
   mesh.md Concern 1 — this is the non-obvious call.
 - **Endpoint is `{scheme,host,port,health_path?}`, not bare host:port**, so
