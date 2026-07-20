@@ -385,12 +385,14 @@ share.
 - **Resource limits:** Deno child spawned with a V8 heap cap
   (`--v8-flags=--max-old-space-size`, default 512MB, per-database config);
   breach kills the process (supervised restart), outcome `Failed`.
-- **No network by default — DECIDED, flag carried:** `egress: []` is the
-  default; any network use is a per-handler, per-host declarative allowlist,
-  executed host-side (concern 3). This is stricter than Supabase edge
-  functions (which get open egress) and is the intended difference — flagged
-  prominently for the operator (Friction #6) because it constrains the
-  familiar workflow.
+- **No network by default — OPERATOR-BLESSED (friction-round 2, INTENT
+  #125):** `egress: []` is the default; any network use is a per-handler,
+  per-host declarative allowlist, executed host-side (concern 3). This is
+  stricter than Supabase edge functions (which get open egress) and is the
+  intended difference. The operator blessed it explicitly — "Fascinating
+  idea. I like it. I'm OK with that" — including the weaker cloud caveat
+  (concern 8: on cloud targets the allowlist degrades to
+  declared-and-audited, not physically enforced). No longer an open flag.
 - **No secrets in handler space, ever:** `SecretRef` resolution is host-side
   egress injection only; the invariant is structural (nothing to leak from a
   process that never held it), aligned with secrets.md's use-without-seeing
@@ -413,8 +415,9 @@ port intact: the host-side egress proxy and the no-net sandbox (a Supabase
 edge function has open egress by platform design) — on cloud targets the
 egress allowlist degrades from *enforced* to *declared-and-audited* (egress
 still logged to `ee_touches` by the generated shim, not physically blocked).
-This weakening is stated here, owned jointly with the vdb designer, and
-flagged to the operator (Friction #3) rather than discovered in production.
+This weakening is stated here, owned jointly with the vdb designer, and was
+flagged to the operator (Friction #3) rather than discovered in production —
+**blessed at friction-round 2 (INTENT #125), asymmetry included.**
 
 ## Relationships / edges
 
@@ -493,14 +496,17 @@ use-without-seeing secret injection), the `TraceCtx`/`CausalChain` structure
 with the `(subject, handler)` loop metric and park+escalate semantics, the
 deterministic-delivery idempotency contract with engine-local + `locks`
 dedup tiers, the in-band `ee_*` provenance schema, and the retry→DLQ→ccd
-flow are all decided and specified. **approach-sketched** in three spots:
+flow are all decided and specified — the no-net-by-default sandbox posture
+now operator-blessed (friction-round 2, INTENT #125).
+**approach-sketched** in three spots:
 (a) the `HostSeam` trait's exact method set (co-batch reconciliation with
 vdb/kg — mid-batch draft-sharing per the ⇄ marking); (b) the cloud-target
 generated-artifact shims (jointly owned with vdb, conformance-suite-bound);
 (c) constants (loop threshold default, K, timeouts, heap cap) — fill-time
-tuning, defaults proposed. Two decisions are explicitly held for the
-operator, not silently made: no-net-by-default strictness, and
-park-vs-park-and-disable (see Friction).
+tuning, defaults proposed. One decision remains explicitly held for the
+operator: park-vs-park-and-disable (see Friction). The other —
+no-net-by-default strictness — was BLESSED at friction-round 2 (INTENT
+#125), cloud caveat included.
 
 ## Assigned design-depth
 
@@ -633,22 +639,24 @@ the contract files):
    pseudo-queue name and keeps the real binding in the extension struct.
    Workable but slightly awkward — types/queues harmonizer should bless or
    improve it.
-3. **Cloud targets weaken two guardrails.** On Supabase/RDS, the no-net
-   sandbox and host-side egress proxy degrade to declared-and-audited (open
-   platform egress); traced/idempotent/loop-bounded port intact via the
-   generated shims + conformance suite, but the sandbox does not. Stated
-   honestly; operator should bless the asymmetry.
+3. **Cloud targets weaken two guardrails — BLESSED (friction-round 2,
+   INTENT #125).** On Supabase/RDS, the no-net sandbox and host-side egress
+   proxy degrade to declared-and-audited (open platform egress);
+   traced/idempotent/loop-bounded port intact via the generated shims +
+   conformance suite, but the sandbox does not. The operator blessed the
+   asymmetry along with no-net-by-default itself (#5 below).
 4. **Two handler vocabularies exist during transition.** `lib/db`'s working
    `Contract`/outbox/edge machinery keeps serving db's own surface (incl.
    `ValidatorSync`, which the engine defers in v1); `HandlerDef` is its
    designed successor shape. Reconciliation direction: db's edge/outbox
    path becomes VDB's Supabase materialization substrate — needs the
    db-designer's confirmation this batch.
-5. **No-net-by-default is stricter than the operator's Supabase habit.**
-   Third-party calls require a per-handler host allowlist and flow through
-   the host proxy (which is also how secrets stay unseen and egress gets
-   provenance). Deliberate, defensible, and a real workflow change — needs
-   an explicit operator yes.
+5. **No-net-by-default is stricter than the operator's Supabase habit —
+   BLESSED (friction-round 2, INTENT #125).** Third-party calls require a
+   per-handler host allowlist and flow through the host proxy (which is
+   also how secrets stay unseen and egress gets provenance). The explicit
+   operator yes arrived: "Fascinating idea. I like it. I'm OK with that."
+   No longer open.
 6. **Loop-park disposition.** Default `Park` (skip the Nth+1 invocation,
    escalate); `ParkAndDisable` (circuit-break the trigger) is opt-in.
    Threshold default 3. All three choices are taste — flagged.

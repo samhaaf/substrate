@@ -8,9 +8,11 @@ execution plane. **Locked layering honored throughout: VFS < VDB < KG**
 (INTENT #96). **Consumes:** vdb (graph databases), vfs (file-pointer
 validation), mesh (registration / `kg/` keyspace / locks / cron / pubsub via
 `mesh-client`), and the shared `execution-engine` lib (kg-nodes adapter,
-compiled in). **Consumed by:** projects (L6, `projects-kg`), org (future),
+compiled in). **Consumed by:** projects (L6, `projects-kg`), org (RESOLVED
+home of its self-restructuring graph — friction-round 2, INTENT #121),
 any service that creates or reads graphs (`kg-api`, NEW — see Proposed
-contracts). Grounded in INTENT #50/#62/#85/#92/#93/#96/#97, the batch-1/2/3
+contracts) — with the stated posture "assume that every service will be
+using the knowledge graph" (INTENT #121). Grounded in INTENT #50/#62/#85/#92/#93/#96/#97, the batch-1/2/3
 designs (types provenance/event vocabulary, replicated-kv's Version
 discipline + guarantees table, locks' mint-and-merge divergence pattern,
 queues' shared trigger data model, vfs's NodeAnchored files + `Exists`
@@ -19,7 +21,7 @@ requirement stubs of the co-batched `stack.md`(vdb)/`db.md`.
 
 ## Charter
 
-`kg` is **the Knowledge Graph service of Mind OS**: a mesh-wide, globally
+`kg` is **the Knowledge Graph service of Substrate**: a mesh-wide, globally
 registered collection of **graphs** — schema-locked, template-typed,
 provenance-traced, trigger-bearing — each stored as **its own VDB-managed
 database** and each linked to a project + environment that routes its
@@ -41,6 +43,15 @@ kg-nodes adapter, with healthcare-grade provenance on every handler touch
 **cross-boundary eventual consistency with AWS-resident graph replicas**
 (the Broomstick intent-extraction use case, INTENT #50).
 
+**Charter addition (friction-round 2, INTENT #121):** kg explicitly exposes,
+to any consuming service, the ability to **add new node types, schemas, and
+version control** over them — and the design posture is to **"assume that
+every service will be using the knowledge graph."** KG is not a specialist
+tool a few services opt into; it is a universal plane. The first confirmed
+beneficiary is `org`, whose self-restructuring org-graph is now RESOLVED to
+live on KG (db keeps only flat relational metadata — see the boundary note
+below and org.md).
+
 **Boundary — what `kg` does NOT own.** It does not own *database
 mechanics* — a graph's tables live in a VDB-managed database; VDB tracks
 the database, `db` runs the actions, VFS hosts the SQLite file (locked
@@ -59,9 +70,12 @@ consumes `types::trigger` UNCHANGED (queues' locked shared data model) and
 the shared execution-engine lib; kg contributes only the kg-nodes subject
 binding and the host process. It does not own project structure — `projects`
 (L6) builds its graphical file system AS a kg graph; kg is the substrate,
-projects is the consumer. It is not the `org` metacognitive graph's owner
-either — org may run its graph THROUGH kg (preferred, future) or through db
-directly (its stub's current wording); that fork is org's, not kg's.
+projects is the consumer. The `org` metacognitive graph's home is
+**RESOLVED (friction-round 2, INTENT #121): org's self-restructuring graph
+lives ON kg** — "Org's self-restructuring knowledge graph definitely
+belongs in the KG service"; `db` serves org only for flat relational
+metadata. kg is the substrate there too; the org-graph's *semantics* remain
+org's.
 
 ## Primary design concerns
 
@@ -182,6 +196,17 @@ pub struct GraphConfig {
     pub shipped_triggers: Vec<Trigger>,  // OPTIONAL declarative trigger data (types::trigger, unchanged)
 }
 ```
+
+> **Possible extraction: `onion` (friction-round 2, INTENT #122 — recorded,
+> NOT designed).** kg's templating / schema-inheritance machinery (this
+> concern) is a candidate for extraction into a standalone crate named
+> **`onion`** — a schema-**delta** layering language over templates (add
+> attributes to nodes/edges, new node types, new edge types; deltas FLATTEN
+> into the template when it is updated to include them; residual misaligned
+> fields stay as deltas on top), applicable beyond graphs (YAML, JSON
+> schema). See `components/onion.md` for the requirements stub. **A
+> dedicated discussion round on KG templating is REQUIRED before any design
+> here changes** — the template model below stands as-is until then.
 
 `PropSchema` is a **deliberately boring subset of JSON Schema** — types
 (string/number/bool/timestamp/enum/array/object), `required`, `enum` values,

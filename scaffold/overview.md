@@ -1,18 +1,20 @@
-# Mind OS — Scaffold Overview (wave-2 close-out)
+# Substrate — Scaffold Overview (wave-2 close-out)
 
-> **THE SYSTEM IS "MIND OS" (locked 2026-07-18).** "What this is becoming is
-> an operating system of my mind, so we should call it Mind OS — that's the
-> name." **"Substrate" remains the repo/folder/GitHub name until version one
-> publishes.** (Mycelium rejected; ripple-derived names rejected — "ripples"
-> is a RESERVED term, see the placeholder section.)
+> **THE SYSTEM IS "SUBSTRATE" — RESOLVED, full circle (friction-round 2,
+> 2026-07-20, INTENT #120).** "Substrate is a good name." The repo keeps its
+> name at v1; system name and repo name are now the same. This supersedes
+> both the "Mind OS at v1" lock (2026-07-18) and the friction-round-1 naming
+> pin (INTENT #117, Mesh OS / Broomstick OS candidates).
 >
-> **NAMING PIN (friction-round 1, 2026-07-19, INTENT #117): "Mind OS" is
-> already taken by an existing service.** Candidates: **Mesh OS**
-> (transcription-soundness unverified) and **Broomstick OS** ("probably
-> unique" — and used naturally by the operator moments later: "org is going
-> to take full advantage of the entire Broomstick OS"). **Pinned, NOT
-> decided** — the scaffold keeps "Mind OS" as the working name until the
-> operator decides; the repo stays `substrate` regardless.
+> **Naming history, for the record:** the system was first locked as
+> **Mind OS** ("an operating system of my mind"), but that name is taken by
+> an existing company the operator finds cheesy; **Broomstick OS** was
+> pinned as a candidate but is "corny — it's the name of my business";
+> **Mesh OS** "doesn't say what it is." **Substrate** — the name the repo
+> carried all along — is restored as THE name. (Mycelium and ripple-derived
+> names were rejected earlier; "ripples" is a RESERVED term, see the
+> placeholder section.) Stale "Mind OS" mentions surviving in component
+> files read as "Substrate."
 
 ## Wave 2 — COMPLETE (status block)
 
@@ -28,7 +30,9 @@ in the harness workspace, `substrate-v2/reports/wave2-friction-points.md`).
 
 What exists at close-out:
 
-- **47 component files** in `scaffold/components/` — 44 live modules across
+- **47 component files** in `scaffold/components/` (48 as of friction-round
+  2 — `onion.md` added as a requirements-only candidate stub, INTENT #122) —
+  44 live modules across
   the 7-layer OS stack (L0–L6) plus 3 history/tombstone files (`mesh.md`, the
   round-9 pre-split mesh design record; `gateway.md`, tombstone — gateway
   merged into mesh 2026-07-18; `stack.md`, superseded requirements history —
@@ -55,7 +59,7 @@ What exists at close-out:
   authoritative (including their Reconciliation notes). Detail lives there,
   not here.
 
-**Governing precedence:** INTENT items (#1–#118, harness workspace) win over
+**Governing precedence:** INTENT items (#1–#127, harness workspace) win over
 scaffold text; contract files win over component-file proposals;
 `wave2-plan.md` remains the module-inventory record of the decompose step.
 
@@ -106,7 +110,8 @@ verbatim rationale live in the named files):
   deleted. Mesh may use db via direct CLI execution for its own database (no
   daemon, no mesh dependency). → `components/db.md` concern 1,
   `contracts/vdb-db.md`, `contracts/db-control-plane.md`.
-- **Naming — PINNED, undecided** (INTENT #117): see the header note.
+- **Naming — PINNED, undecided** (INTENT #117): SUPERSEDED at friction-round
+  2 (INTENT #120) — the name is **Substrate**; see the header note.
 - **App-dev framework — noted, future scope** (INTENT #118): see the
   placeholder section.
 - Still genuinely open after this round: FIFO queues (no operator ask),
@@ -115,6 +120,61 @@ verbatim rationale live in the named files):
   #109 — direction rich, design pending), and the remaining wave-2 friction
   items awaiting later clarification rounds (per INTENT #111, the loop
   continues, curated by the friction report).
+
+## Friction-round 2 — operator answers folded in (2026-07-20, INTENT #119–#127)
+
+The second clarification round. Dispositions (detail and verbatim rationale
+live in the named files):
+
+- **Naming — RESOLVED: Substrate** (INTENT #120): see the header note. Full
+  circle; the Mesh OS / Broomstick OS pin and the "Mind OS at v1" lock are
+  both superseded.
+- **Restart-signal semantics — deferred to a PHILOSOPHY** (INTENT #119): the
+  per-app idle/critical question (including benchmark-as-Idle) is not ruled
+  on here; a restart-interrupt-signal philosophy will be developed via the
+  critic pattern (Opus proposes, Fable critiques, Opus synthesizes) in a
+  dedicated harness plugin for working on substrate. Benchmark-as-Idle
+  stands **applied provisionally, pending that philosophy**. →
+  `components/supervision.md` concern 3, `components/inference.md` concern 4.
+- **Org's graph home — RESOLVED: KG** (INTENT #121): "Org's
+  self-restructuring knowledge graph definitely belongs in the KG service";
+  `db` keeps only flat relational metadata. KG's charter explicitly gains:
+  services can add new node types, schemas, version control — and "assume
+  that every service will be using the knowledge graph." →
+  `components/kg.md` charter, `components/org.md` design note + OQ 1.
+- **NEW candidate crate: `onion` — schema-delta layering** (INTENT #122): a
+  delta language over schema templates, flatten-on-template-update,
+  residual deltas; applicable beyond KG (YAML, JSON schema). Captured as a
+  requirements-only stub; **a dedicated KG-templating discussion round is
+  REQUIRED before any design.** → `components/onion.md`,
+  `components/kg.md` concern 3 note, and the tree below (candidate,
+  placement undecided).
+- **Coordinators — elevated to a first-order concept** (INTENT #123):
+  dedicated discussion required; recorded, not designed. →
+  `components/projects.md` design note + open questions, and the open
+  questions below.
+- **Process law for the next scaffolding run** (INTENT #124): boring
+  decisions only; see standing principle 11.
+- **Handlers no-net-by-default — BLESSED** (INTENT #125): "Fascinating
+  idea. I like it. I'm OK with that" — including the weaker
+  declared-not-enforced cloud caveat. → `components/execution-engine.md`
+  concern 7 + Friction #3/#5.
+- **Third-party tools + browser-as-a-tool** (INTENT #126): a future `tools`
+  concept; browser explicitly a third-party tool, NOT a first-order crate;
+  KG around tool uses and feedback; the don't-reinvent principle joins the
+  standing principles (principle 12). → placeholder section.
+- **THE ENDGAME: topological owners** (INTENT #127): recorded
+  verbatim-grade, deliberately NOT designed. → `components/org.md` and the
+  placeholder section.
+- Newly open (recorded, awaiting their own rounds): the restart-signal
+  philosophy (INTENT #119, critic-pattern plugin); the KG-templating /
+  `onion` discussion round (INTENT #122); the coordinators discussion
+  (INTENT #123) — coordinator-per-workspace, workspaces possibly pulled out
+  on top of VDB, coordinator-as-a-service, coordinator compaction ("compact
+  the thread and basically lose nothing"), and the
+  git+projects+environments+coordinators elegance problem ("a bunch of
+  disparate things" that must be made elegant together); and the owners
+  open questions (INTENT #127, listed in the placeholder section).
 
 ## The OS layering — final component tree
 
@@ -142,6 +202,10 @@ L5 services/apps   inference (app) ── store engine scheduler models cache
 L6 org plane       org  projects  artifacts  environments  cicd
    (STUB track)    spend  agents  aui  openrouter-mgmt
                    (design notes + anticipated contracts; "not implementing now")
+
+candidate          onion (schema-delta layering — INTENT #122; existence and
+   (undecided)     placement both undecided; requirements-only stub; a
+                   dedicated KG-templating discussion round required first)
 ```
 
 Notable placements (full reasoning in `wave2-plan.md` §1): `aws` sits at L2
@@ -260,7 +324,7 @@ URL. Records ride `replicated-kv` (leases + heartbeats + LWW tombstones), so
 ## Standing cross-cutting principles
 
 1. **INTENT wins.** Where scaffold text conflicts with the INTENT ledger
-   (#1–#118), INTENT governs.
+   (#1–#127), INTENT governs.
 2. **Provenance is first-order** — healthcare-grade traces on every handler
    touch; scoped per-project/per-database; VDB is its primary home; VFS
    carries a lighter requirement.
@@ -293,7 +357,19 @@ URL. Records ride `replicated-kv` (leases + heartbeats + LWW tombstones), so
    please-update warning to the sender.
 10. **Naming guardrails:** the module is `vdb`, "stack" is the pattern;
     "ripples" is RESERVED and names nothing in v1; `inference` will not be
-    renamed.
+    renamed; the system is **Substrate** (INTENT #120).
+11. **Process law — boring decisions only (friction-round 2, INTENT #124):**
+    in the next scaffolding run, agents capture all open questions and make
+    BORING decisions only. "I want them to make boring decisions, and if a
+    decision is not boring, then we need to talk about it and figure out
+    which path is the most boring" — non-boring decisions escalate to the
+    operator, never get assumed.
+12. **Don't reinvent — leverage third-party tools (friction-round 2, INTENT
+    #126):** "we're building what's strictly necessary for our mind temple,
+    plus ways to enable agents to be leveraged further — take advantage of
+    third-party tools, we don't want to reinvent everybody else's work."
+    Concretely: the browser is a third-party tool under the future `tools`
+    concept, NOT a first-order crate (see the placeholder section).
 
 ## L6 / placeholder section
 
@@ -313,6 +389,47 @@ word must not name the execution-engine or any propagation mechanism.
 need a whole system built around designing applications built on top of our
 mesh OS" — an application-development framework for the OS; not designed, not
 scheduled.
+
+**`tools` — third-party agent-tool integration (INTENT #126, future scope,
+noted only):** agents need tools, and GitHub hosts whole repos of agent
+tools (e.g. agent browsers). The **browser is explicitly a third-party tool
+under this general `tools` concept, NOT a first-order crate** — so versions
+can be swapped without re-engineering. Wanted alongside it: a KG around tool
+uses and feedback on tools. Governed by standing principle 12
+(don't-reinvent). Not designed, not scheduled.
+
+**Coordinators — a first-order concept, dedicated discussion required
+(INTENT #123, recorded not designed):** the operator's verbatim-grade
+sketch: coordinators attach to workspaces; workspaces often attach to
+worktrees; workspaces could be pulled out as their own thing built on top of
+VDB; **one coordinator per workspace**. "I really only like to talk to
+coordinators — I don't like talking to individual agents at all." AUI
+threads = a coordinator with a workspace attached. Coordinators live inside
+a project on a branch; the workspace merges into other branches with it.
+**Coordinator compaction:** "I should be able to compact the thread and
+basically lose nothing." Coordinator-as-a-SERVICE is worth considering. The
+git+projects+environments+coordinators interplay is currently "a bunch of
+disparate things" that must be made elegant together. → `projects.md`.
+
+**THE ENDGAME — topological OWNERS (INTENT #127, recorded verbatim-grade,
+deliberately NOT designed):** "That is it, dude. That is what we're going
+for." An **owner** is a coordinator-like daemon with NO human in the loop,
+idle unless woken, owning a thing (an app, a project, a component). Flow: a
+user's coordinator sends feedback to an owner → the owner examines its
+thing, responds with a proposal + new data contract → the requester
+(human-in-the-loop via their coordinator) approves → the owner dispatches
+subagents as a coordinator would → reports completion + new contract +
+version info. "All of our boring services will be very easy to update."
+Name: **owner** (over manager/lead) — "it owns a thing; once we build a
+thing, we put an owner in charge of it, and that's how we improve the thing
+in the future." Owners arrange **hierarchically over the topological map**
+of projects/sub-projects/components — THE primitive for building autonomous
+organizations. The operator's own open questions: org or projects? KG
+relationship — how much graph feeds an owner on wake? Is an owner exactly a
+coordinator without a human (leaning YES — owners wake to a perfectly
+organized workspace)? How to keep the topological map linearly separable —
+add coordinators, establish relationships, sometimes merge them? →
+`org.md`.
 
 ## History
 

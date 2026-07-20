@@ -177,7 +177,34 @@ the mapping onto substrate's layers, faithfully:
   (`NodeAnchored` worktrees) + `repo-environments` (branch→environment
   attachment). Projects does not re-own worktrees; it references a project's
   repo workspace the way it references the thread. NOTE: wave2-plan §3 lists **no
-  `projects-repo` pair** — see open question #6.
+  `projects-repo` pair** — see open question #7.
+
+### 5b. Coordinators — a FIRST-ORDER concept (friction-round 2, INTENT #123; recorded, NOT designed)
+
+Friction-round 2 elevated **coordinators** from an implementation detail of
+the `.mind` migration (§5) to a first-order concept **requiring a dedicated
+discussion round** before any design. The operator's sketch, verbatim-grade:
+
+- **Coordinators attach to workspaces; one coordinator per workspace.**
+  Workspaces often attach to worktrees (branches with their own directory).
+- **Workspaces could be pulled out** as their own thing, **built on top of
+  VDB**.
+- "I really only like to talk to coordinators — I don't like talking to
+  individual agents at all." AUI threads = a coordinator with a workspace
+  attached.
+- Coordinators live inside a project on a branch; **the workspace merges
+  into other branches with it**.
+- **Coordinator compaction:** "I should be able to compact the thread and
+  basically lose nothing" — compact anytime, lose nothing.
+- **Coordinator-as-a-SERVICE** is worth considering.
+- The **git + projects + environments + coordinators** interplay is
+  currently "a bunch of disparate things" that must be made elegant
+  together — this elegance problem is itself part of the discussion's
+  charter.
+
+Nothing here is designed; this note exists so the coordinators discussion
+starts from the operator's own framing. (INTENT #127's **owners** are
+defined in terms of coordinators — see org.md and overview.md.)
 
 ### 6. `artifacts` dependency (INTENT #51)
 
@@ -295,7 +322,14 @@ built.
    cheap-local-enumeration property, but not locked.
 5. **The topological-map UI** (INTENT #43) — a real design problem (schema-driven
    graph rendering feeding the mesh dashboard) parked with the rest of the stub.
-6. **Missing `projects-repo` pair** — the `.mind` workspace schema projects
+6. **Coordinators (INTENT #123) — dedicated discussion required.** A
+   first-order concept, not a migration detail: coordinator-per-workspace,
+   workspaces possibly pulled out on top of VDB, coordinator-as-a-service,
+   coordinator compaction (compact anytime, lose nothing), and the
+   git+projects+environments+coordinators elegance problem (see §5b). This
+   supersedes the assumption that §5's coordinator-protocol migration fully
+   covers the concept.
+7. **Missing `projects-repo` pair** — the `.mind` workspace schema projects
    migrates binds a git worktree (INTENT #67); repo owns the worktree half
    (repo.md concern 2 reuses the same schema). But wave2-plan §3 names no
    `projects-repo` contract, only `ccd-projects` (thread) and

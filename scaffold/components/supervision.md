@@ -121,6 +121,19 @@ A generic "service" here is anything that speaks the protocol — this is exactl
 what lets **VDB later present a database as a supervised service** (INTENT #86,
 concern 10): a database in a critical write is a `CriticalSection`.
 
+> **Per-app semantics deferred to a PHILOSOPHY (friction-round 2, INTENT
+> #119).** *What* each service reports as `Idle` vs `CriticalSection` — the
+> per-app idle/critical semantics question, including inference's
+> benchmark-as-Idle item — is NOT ruled on in the scaffold. "The four restart
+> levels should be done on an app-by-app basis. We should focus on a
+> philosophy about restart interrupt signals" — that philosophy will be
+> developed in a **dedicated harness plugin** (for working on substrate) via
+> the **critic pattern: Opus proposes, Fable critiques, Opus synthesizes.**
+> Until it lands, per-app mappings in the component files (notably
+> inference.md concern 4's benchmark-as-Idle) stand **applied provisionally,
+> pending the restart philosophy.** The four-level ladder itself remains
+> LOCKED; only the per-app signal semantics are philosophy-governed.
+
 ### 4. The LOCKED 4-level restart ladder — the daemon-side state machine
 
 The two-way `restart-protocol` (INTENT #77, ladder LOCKED round-9 at exactly four

@@ -22,7 +22,7 @@ projects."* Possible convergence with the existing prototype
 
 ## Charter
 
-`org` is Mind OS's **autonomous-organizations foundation**: the layer where the
+`org` is Substrate's **autonomous-organizations foundation**: the layer where the
 user stands up organizations that run themselves — *"this is where the user
 creates the foundation for autonomous organizations, where agents […] and AI
 pipelines take advantage of all the tools in the rest of the repo to run
@@ -74,16 +74,50 @@ any of them.
   things like that. That's all database operations."* INTENT #19 framed this as
   a direct `db` dependency; wave-2 has since introduced the **VFS < VDB < KG**
   stack (INTENT #96) and a dedicated `kg` service that IS the mesh-wide,
-  schema-locked, provenance-traced knowledge-graph plane (kg.md already lists
-  *"consumed by: org (future)"*). Honest reconciliation (flagged as an open
-  question below): org's *org-graph* is most naturally a **`kg` graph**, while
-  plain relational/metadata needs go to **`db`**. Both edges are anticipated;
-  the split is not decided this pass.
+  schema-locked, provenance-traced knowledge-graph plane. **RESOLVED
+  (friction-round 2, INTENT #121): "Org's self-restructuring knowledge graph
+  definitely belongs in the KG service."** The org-graph lives ON `kg`;
+  `db` serves org only for flat relational metadata. In support, KG's
+  charter explicitly gains (INTENT #121): services can add new node types,
+  schemas, and version control — and the design posture is "assume that
+  every service will be using the knowledge graph."
 
 - **Provenance is first-order here too.** Because org negotiates and
   restructures autonomously, every decision, pipeline crystallization, and
   org-graph mutation should ride the causal chain (INTENT #85/#92) — org
   inherits provenance from the planes it composes rather than inventing its own.
+
+## THE ENDGAME — topological OWNERS (friction-round 2, INTENT #127; recorded verbatim-grade, deliberately NOT designed)
+
+"That is it, dude. That is what we're going for." The operator named the
+endgame org (or projects — see the open question) is building toward:
+
+- **An owner is a coordinator-like daemon with NO human in the loop, idle
+  unless woken, owning a thing** — an app, a project, a component.
+- **The flow:** a user's coordinator sends feedback to an owner → the owner
+  examines its thing, responds with a **proposal + new data contract** →
+  the requester (human-in-the-loop via their own coordinator) **approves** →
+  the owner **dispatches subagents as a coordinator would** → reports
+  **completion + new contract + version info**. "All of our boring services
+  will be very easy to update."
+- **The name is `owner`** (preferred over manager/lead): "it owns a thing;
+  once we build a thing, we put an owner in charge of it, and that's how we
+  improve the thing in the future."
+- **Owners arrange HIERARCHICALLY over the topological map** of
+  projects / sub-projects / components — THE primitive for building
+  autonomous organizations (agents communicating, accessing specialized
+  knowledge, pushing back, keeping contract alignment).
+- **The operator's own open questions, verbatim-grade:** does this live in
+  `org` or in `projects`? What is the KG relationship — how much graph
+  feeds an owner on wake? Is an owner exactly a coordinator without a human
+  (leaning YES — owners wake to a perfectly organized workspace)? How to
+  keep the topological map linearly separable — add coordinators, establish
+  relationships, sometimes merge them?
+
+Nothing here is designed. This section exists so the owner concept shapes
+future discussion rounds, not so anyone builds it from this text. (See also
+overview.md's placeholder section and INTENT #123's coordinators concept —
+an owner is defined *in terms of* a coordinator.)
 
 ## Import surface (updated honestly against the L4/L5 designs)
 
@@ -99,7 +133,7 @@ libs.
 | `ccd` | `org-on-ccd` | inter-agent process/agent-management substrate (PRIMARY) |
 | `inference` | `v1-completion-api` | LLM completions for agents/pipelines |
 | `db` | `db-control-plane` | plain relational/metadata store |
-| `kg` (realistic) | `kg-api` | the self-restructuring org-graph (see reconciliation note) |
+| `kg` (RESOLVED — INTENT #121) | `kg-api` | the self-restructuring org-graph lives ON kg; db keeps only flat metadata |
 | `rollup` (realistic) | via `ccd` (`rollup-ccd`) | specialized per-agent plugin assembly — mediated by CCD |
 | `projects` (realistic) | `org-projects` (anticipated) | "per-application" ≈ per-project scoping |
 | `spend` (realistic, later) | via `projects` finances / `spend-ccd` chain | cost-awareness for budget-honoring autonomous work — see note |
@@ -142,11 +176,12 @@ the start.*
   database in it", INTENT #19). *Purpose:* org's relational/metadata state and,
   per INTENT #19's original framing, the database operations behind its
   self-restructuring. *Rough shape:* org as a noun-verb control-plane consumer
-  of `db` (migrations / query / edge functions), mesh-mediated. See the kg
-  reconciliation — the *graph-shaped* portion likely migrates to `kg-api`.
+  of `db` (migrations / query / edge functions), mesh-mediated. Per the
+  RESOLVED kg reconciliation (INTENT #121), the *graph-shaped* portion lives
+  on `kg-api`; this edge carries flat metadata only.
 
-- **`kg-api`** (org → kg; NEW anticipated, per kg.md "consumed by: org
-  (future)"). *Purpose:* org's org-graph as a first-class, schema-locked,
+- **`kg-api`** (org → kg; anticipated — now the RESOLVED home of the
+  org-graph, INTENT #121). *Purpose:* org's org-graph as a first-class, schema-locked,
   provenance-traced knowledge graph — the true home of the metacognitive
   add/restructure-nodes behavior. *Rough shape:* org creates/reads/mutates a
   registered graph via kg's graph API; schema-locking pushes validation
@@ -177,12 +212,10 @@ the start.*
 
 ## Open questions
 
-1. **db vs. kg for the org-graph.** INTENT #19 says the self-restructuring
-   graph is `db` operations; wave-2's `kg` (on `vdb` on `db`) is the purpose-
-   built graph plane and already anticipates org as a consumer. Which owns the
-   org-graph — `kg` for graph structure with `db` for flat metadata, or `db`
-   alone as originally stated? Needs the operator, given INTENT #96 postdates
-   #19.
+1. **db vs. kg for the org-graph — RESOLVED (friction-round 2, INTENT
+   #121).** "Org's self-restructuring knowledge graph definitely belongs in
+   the KG service" — `kg` owns the org-graph; `db` keeps only flat
+   relational metadata. No longer open.
 2. **rollup: direct vs. CCD-mediated.** Owning-agent plugins are rollup
    consumers, but rollup.md makes `rollup-ccd` the primary path. Does org ever
    call rollup directly, or always request agents+plugins through CCD?

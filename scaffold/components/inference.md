@@ -168,8 +168,16 @@ ladder rung *does* in terms of the real subsystems. The vocabulary is
 > window an update wants. An interrupted sweep loses only its in-flight samples
 > (cheap, re-planned next idle window); nothing is corrupted. Inference
 > explicitly delegated the transition function to `scheduler`; the table below
-> is updated to the scheduler's version. Pending operator confirmation
-> (friction report).
+> is updated to the scheduler's version.
+>
+> **Friction-round 2 disposition (INTENT #119): applied provisionally,
+> pending the restart philosophy.** The operator did NOT rule on
+> idle-vs-critical here — per-app restart-signal semantics (this
+> benchmark-as-Idle row included) are deferred to a restart-interrupt-signal
+> PHILOSOPHY, to be developed in a dedicated harness plugin via the critic
+> pattern (Opus proposes, Fable critiques, Opus synthesizes). The mapping
+> below stands until that philosophy lands, and yields to it. See
+> supervision.md concern 3.
 
 | Reported state | When | Why |
 |---|---|---|
@@ -440,7 +448,7 @@ formerly in this section are superseded by the authored contracts.
 
 - `db-inference-init` (inference → db) — fresh-node control-plane bootstrap with graceful standalone degradation. → `scaffold/contracts/db-inference-init.md`
 - `service-lookup` (inference → mesh.service-registry) — per-node `NodeScoped` registration under the `inference` slug (the adopted concern-5 resolution). → `scaffold/contracts/service-lookup.md`
-- `restart-protocol` (mesh ↔ inference) — participation: the concern-4 interruptibility mapping AS SUPERSEDED at harmonization (benchmark sweeps report `Idle`, not `CriticalSection` — scheduler.md concern 3; only model swap / KV save-restore are critical). → `scaffold/contracts/restart-protocol.md`
+- `restart-protocol` (mesh ↔ inference) — participation: the concern-4 interruptibility mapping AS SUPERSEDED at harmonization (benchmark sweeps report `Idle`, not `CriticalSection` — scheduler.md concern 3; only model swap / KV save-restore are critical). Applied provisionally, pending the restart philosophy (friction-round 2, INTENT #119 — see concern 4). → `scaffold/contracts/restart-protocol.md`
 
 Also a party to (authored elsewhere / cross-cutting): `inference-events`, `llm-calls`, `node-state-poll`, `v1-completion-api` — see `scaffold/contracts/`.
 
