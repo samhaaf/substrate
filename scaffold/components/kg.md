@@ -197,16 +197,20 @@ pub struct GraphConfig {
 }
 ```
 
-> **Possible extraction: `onion` (friction-round 2, INTENT #122 — recorded,
+> **Possible extraction: `schema` (friction-round 2 INTENT #122; renamed
+> from `onion` and upgraded at friction-round 3, INTENT #131 — recorded,
 > NOT designed).** kg's templating / schema-inheritance machinery (this
-> concern) is a candidate for extraction into a standalone crate named
-> **`onion`** — a schema-**delta** layering language over templates (add
-> attributes to nodes/edges, new node types, new edge types; deltas FLATTEN
-> into the template when it is updated to include them; residual misaligned
-> fields stay as deltas on top), applicable beyond graphs (YAML, JSON
-> schema). See `components/onion.md` for the requirements stub. **A
-> dedicated discussion round on KG templating is REQUIRED before any design
-> here changes** — the template model below stands as-is until then.
+> concern) is a candidate for extraction into the standalone
+> schema-management crate **`schema`** ("one boring tool for schema
+> management, used within all the other services") — versions + layering
+> with **NESTED inheritance to arbitrary depth**: a schema inherits from
+> another schema and applies migrations, to arbitrary depth (superseding the
+> earlier single-layer template+delta wording; deltas FLATTEN into the
+> parent when it is updated to include them; residual misaligned fields stay
+> as a layer on top), applicable beyond graphs (YAML, JSON schema). See
+> `components/schema.md` for the requirements stub. **A dedicated discussion
+> round on KG templating is REQUIRED before any design here changes** — the
+> template model below stands as-is until then.
 
 `PropSchema` is a **deliberately boring subset of JSON Schema** — types
 (string/number/bool/timestamp/enum/array/object), `required`, `enum` values,
@@ -310,6 +314,23 @@ these tables for ad-hoc analysis, and indexes on
 boring-fast at personal scale.
 
 ### 4. The distributed-consistency model — THE standing open, decided for v1
+
+> **⚠ HARD-CONSTRAINT FLAG (friction-round 3, 2026-07-20, INTENT #135) —
+> distributed-everywhere; the "home node" premise REJECTED as stated; NEEDS
+> REVISITING.** The operator, verbatim: "This is a distributed graph — it
+> needs to be accessible from every mesh node. KG by default should be
+> distributed across all nodes. If the graph is basically metadata pointing
+> at locations in the VFS, it doesn't take much memory. It's so important to
+> all our applications that keeping it distributed might have to be a hard
+> constraint. But maybe I'm misunderstanding the question — come back to
+> this." Consequence: this concern's **home-node + offline refuse/branch
+> model (Rule 3 and the `OfflineWrites` dial below) NEEDS REVISITING**
+> against distributed-everywhere-as-a-hard-constraint. Deliberately NOT
+> redesigned here — the wave-2 model below is retained intact as the
+> discussion input. This is a **REQUIRED KG discussion item**, to be taken
+> up alongside the KG-templating / `schema` round (INTENT #122/#131). Note:
+> INTENT #121 (org's graph lives ON kg; "assume that every service will be
+> using the knowledge graph") is unchanged by this flag.
 
 The operator's framing: KV can be naive timestamp-wins; a graph of
 interconnected nodes is "the superset basically." The v1 model decided here
@@ -487,7 +508,7 @@ index-regeneration trigger); handlers are Deno/TS or SQL code (Deno is the
 confirmed runtime), registered/hosted per the execution-engine's design —
 kg is a host process, the engine owns invocation, causal-chain tracking,
 loop detection (loop-depth on same-element recurrence, NOT naive cascade
-depth), and the ccd escalation hook (`ccd-escalation`'s
+depth), and the cc escalation hook (`cc-escalation`'s
 `LoopDepthExceeded` arm — execution-engine authors it; kg is the host that
 fires it).
 
@@ -603,7 +624,7 @@ via `mesh-client`):
   project-structure graph; kg's side is fully expressed by `kg-api` + a
   `project-tree@1` template projects will define; kg-side sketch noted in
   `kg-api` below so batch 7 has a concrete substrate half.
-- **ccd** via `ccd-escalation` — kg is a *host* party: the
+- **cc** via `cc-escalation` — kg is a *host* party: the
   execution-engine's `LoopDepthExceeded` arm fires from inside kg's
   process; execution-engine authors the arm (queues.md already carries the
   union shape), kg adds no schema.
@@ -699,10 +720,10 @@ formerly in this section are superseded by the authored contracts.
 - `kg-mesh` (kg ↔ mesh) — registration + graph replication (S3 leg rides aws). → `scaffold/contracts/kg-mesh.md`
 - `kg-api` (any service ↔ kg) — the consumer surface (added by the contract round as a deviation-by-addition). → `scaffold/contracts/kg-api.md`
 
-Also a party to (authored elsewhere / cross-cutting): `ccd-escalation`, `kv-replication`, `projects-kg`, `service-lookup`, `vdb-vfs`, `vfs-content` — see `scaffold/contracts/`.
+Also a party to (authored elsewhere / cross-cutting): `cc-escalation`, `kv-replication`, `projects-kg`, `service-lookup`, `vdb-vfs`, `vfs-content` — see `scaffold/contracts/`.
 
 Component-side notes:
-- `ccd-escalation` participation: kg hosts the engine's `LoopDepthExceeded` arm
+- `cc-escalation` participation: kg hosts the engine's `LoopDepthExceeded` arm
   (execution-engine authors it); kg contributes `context` enrichment only —
   graph_id, element ids, the causal chain slice from `kg_provenance` (not
   captured in the contract file).

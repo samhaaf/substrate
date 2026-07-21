@@ -194,9 +194,9 @@ Non-errors by design: `SendEvent` to a queue with no matching triggers succeeds
   queues' proposal above.** The one-model-two-bindings requirement (queues +
   execution-engine share the identical `FilterExpr`/`AssemblyTemplate`) is what
   forces the shared `types` home — it is exactly the ≥2-crate case.
-- **`ccd-escalation` and `rollup-mesh` are NOT authored here** — queues proposed
+- **`cc-escalation` and `rollup-mesh` are NOT authored here** — queues proposed
   only its half of each (the DLQ escalation arm and the assembly-time rollup
-  consumer flag). Those are separate contract pairs (`ccd-escalation`,
+  consumer flag). Those are separate contract pairs (`cc-escalation`,
   `rollup-mesh`) outside this cluster; recorded as cross-references only.
 - **Queue-ownership fork — LOCKED (friction-round 1, 2026-07-19, INTENT #112).**
   The provisional assumption this schema was written against is now confirmed:

@@ -5,7 +5,7 @@ Any service ↔ `kg`. The **consumer surface** of the Knowledge Graph service,
 spoken over the local mesh daemon `:3649` (`AnyNode { slug: "kg" }` — the local
 leg relays to the graph's home transparently; callers never know which node).
 Modeled **surface-schema-style: one shared document, every consumer a party**
-(projects, org-future, ccd-driven agents, dashboard). Authored from `kg.md`
+(projects, org-future, cc-driven agents, dashboard). Authored from `kg.md`
 concerns 3/4/6/7/10 and its `kg-api` proposal.
 
 **NEW pair — not named in the wave2-plan §3 inventory.** kg.md surfaces it
@@ -115,7 +115,7 @@ redefinition.
   - **`projects-kg`** (batch-7 stub authors): kg's half is `kg-api` **verbatim**
     plus a projects-authored `project-tree@1` template; there is no kg-side
     special surface — recorded so batch 7 starts from this substrate half.
-  - **`ccd-escalation`**: kg **hosts** the execution-engine's `LoopDepthExceeded`
+  - **`cc-escalation`**: kg **hosts** the execution-engine's `LoopDepthExceeded`
     arm (execution-engine authors the arm; queues.md reserves the union shape);
     kg contributes only `context` enrichment (graph_id, element ids, the causal
     chain slice from `kg_provenance`).

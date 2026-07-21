@@ -41,7 +41,7 @@ across nodes** (that is `mesh.completion-router`; inference is a forwarding
 *terminus*, not a router), **aggregation/observability across the fleet** (mesh's
 dashboard-serving plane — the former gateway, merged 2026-07-18), the
 **control-plane database engine** (`db` — inference is a *consumer* over a CLI
-subprocess / WS, never a linker, INTENT #29), **agent management** (`ccd`), or
+subprocess / WS, never a linker, INTENT #29), **agent management** (`cc`), or
 the **internals of its eight children** (each is a separately-designed module in
 this batch; this file designs the *seams* between them and the crate's mesh
 edges, not their guts). The name stays `inference`, not `llm`/`gen`: the crate is
@@ -314,7 +314,7 @@ data**, so it carries **light** provenance: the incoming request envelope's
 `correlation_id`/`causation_id` (from `types::Provenance`, already the one
 vocabulary — the `llm-calls`/`v1-completion-api` envelope carries it) is **stamped
 onto the completion row** so a completion traces back to the requesting agent/
-handler (ccd, org, a VDB handler) without a per-touch ledger. This is a
+handler (cc, org, a VDB handler) without a per-touch ledger. This is a
 store-schema addition (an additive column on `completions`, threaded api →
 scheduler → store) recorded here as a **parent-level requirement** so the seam
 carries the field end-to-end; it is deliberately **light** (no per-token trace,
@@ -352,7 +352,7 @@ boot/registration path; the router rides mesh-core's node-to-node data plane):
 - **mesh ← inference (api)** via `inference-events` — per-node lifecycle pub/sub on
   `inference.<node>.*`; the parent owns the `broadcast` bus, `api` publishes it
   over `pubsub-protocol`. (see scaffold/contracts/inference-events.md)
-- **ccd (agents) → inference (api)** via `llm-calls` — usage/metering-shaped
+- **cc (agents) → inference (api)** via `llm-calls` — usage/metering-shaped
   completion calls from agents that DO choose models (Claude Code does not route
   here — INTENT #40). Owned by `api`. (see scaffold/contracts/llm-calls.md)
 - **inference → db** via `db-inference-init` — **PARENT-owned**: fresh-node

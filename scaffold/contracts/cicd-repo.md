@@ -25,7 +25,7 @@ these verbs become repo-internal calls and the contract collapses with no rework
 
 ## Schema (sketch — repo authored; cicd consumes unchanged)
 
-Reused from `types::repo` (`RepoError`) and `types::ccd` for correlation.
+Reused from `types::repo` (`RepoError`) and `types::cc` for correlation.
 
 ```rust
 // cicd -> repo
@@ -68,7 +68,7 @@ offer to add the trigger — a directory change), `GhApiFailed { status }`,
 
 1. **own-crate vs emergent-from-repo** (INTENT #104, STANDING OPEN). Deciding
    input: does the watch/verify loop's dependency footprint stay inside git/GitHub
-   (→ emergent) or reach across `aws`/`ccd`/`environments`/`cron` (→ own-crate)?
+   (→ emergent) or reach across `aws`/`cc`/`environments`/`cron` (→ own-crate)?
    The Deployment Chaperone touches GH Actions + App Runner + CloudFront + agents,
    leaning own-crate; a GH-Actions-only first pipeline leans emergent. Deferring
    costs nothing (collapse path designed cheap either way).

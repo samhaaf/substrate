@@ -43,7 +43,7 @@ metadata/finances, and the migrated `.mind` workspace schema**. Requirements:
   #46; `surface-schema.md`): a project publishes its dashboard's
   render/interaction schema and the mesh dashboard mounts it.
 - **Per-project metadata + finances** attach here — the **`spend` hookup**
-  (INTENT #41/#68): spend queries CCD's usage ledger **pull-shaped, grouped by
+  (INTENT #41/#68): spend queries cc's usage ledger **pull-shaped, grouped by
   project/environment**, and projects is the grouping authority those
   `project_id`s resolve against. A "topological map" UI is the operator's stated
   interface intent (INTENT #43).
@@ -106,14 +106,14 @@ locked, for the real design pass.
 
 Per-project **metadata** (name, description, owning agent once `org` exists,
 lifecycle) is project-graph data. **Finances** are NOT stored in projects — they
-are **derived pull-shaped**: `spend` queries CCD's `usage_records ⨝ agent_runs`
-(ccd.md's ledger) grouped by `project_id`/`environment_id` (`spend-ccd`, spend's
+are **derived pull-shaped**: `spend` queries cc's `usage_records ⨝ agent_runs`
+(cc.md's ledger) grouped by `project_id`/`environment_id` (`spend-cc`, spend's
 edge), and projects is the authority those ids resolve against. So projects
 **does not push or duplicate cost data**; it is the grouping dimension. This
-honors INTENT #41 (spend is pull-shaped, sources never push) and #68 (CCD owns
-the usage DB; spend queries it). CCD threads already carry
-`agent_runs.project_id?`/`environment_id?` (ccd.md concern 2) — the
-`ccd-projects` edge is where projects validates and reads them back.
+honors INTENT #41 (spend is pull-shaped, sources never push) and #68 (cc owns
+the usage DB; spend queries it). cc threads already carry
+`agent_runs.project_id?`/`environment_id?` (cc.md concern 2) — the
+`cc-projects` edge is where projects validates and reads them back.
 
 ### 5. The `.mind` workspace-schema migration (INTENT #87) — the heavy note
 
@@ -164,12 +164,12 @@ the mapping onto substrate's layers, faithfully:
   not just re-homed data — flagged as the heaviest design surface for the real
   pass (the harness `mind-index` tool's behaviors become projects' service
   verbs).
-- **`worktree ↔ thread ↔ project ↔ environment` linking (ccd.md + repo.md,
+- **`worktree ↔ thread ↔ project ↔ environment` linking (cc.md + repo.md,
   batch 6).** The `.mind` workspace schema binds a git **worktree** and a CC
   **thread** together (INTENT #67, the "prior art to reuse"); the migration
-  splits ownership by layer. The **thread** half lands as the `ccd-projects`
+  splits ownership by layer. The **thread** half lands as the `cc-projects`
   edge: the `coordinator_thread_id` takeover mechanism and the CC-thread↔project
-  links become CCD's `agent_runs` rows linking threads to projects+environments,
+  links become cc's `agent_runs` rows linking threads to projects+environments,
   with projects the resolution authority (takeover-vs-continue —
   match/differ/unavailable — preserved as a project-level protocol). The
   **worktree/branch** half is **repo's** — repo.md concern 2 already reuses the
@@ -273,21 +273,21 @@ anticipated per wave2-plan §3c.
   crate exists (§6). **Rough shape:** deferred entirely — `artifacts` is
   un-designed (co-batched batch-7 stub). Named so the pair exists.
 
-- **`ccd-projects`** (ccd ↔ projects; stub-track — CCD authored the ledger side).
+- **`cc-projects`** (cc ↔ projects; stub-track — cc authored the ledger side).
   **Purpose:** thread↔project(+optional environment) linkage (INTENT #68,
-  ccd.md concern 2). **Rough shape:** CCD's `agent_runs.project_id?`/
+  cc.md concern 2). **Rough shape:** cc's `agent_runs.project_id?`/
   `environment_id?` are set at spawn and **validated against projects** once
-  projects leaves the stub track; projects reads CCD's per-project agent/usage
+  projects leaves the stub track; projects reads cc's per-project agent/usage
   rollup back (feeding the finance/metadata view, §4). No new mechanism — the
-  fields already live in CCD's ledger and `agent-management`. Content deferred.
+  fields already live in cc's ledger and `agent-management`. Content deferred.
 
 ## Relationships / edges (summary)
 
 Consumes: **kg** (`projects-kg`, structure graph), **vfs** (`projects-vfs`, file
 bodies), **rollup** (`projects-rollup`, task rollup), **vdb** (`projects-vdb`,
 attached databases), **mesh** (`projects-mesh`, registry + surface), **artifacts**
-(`projects-artifacts`, future typed work-units). Party to: **ccd**
-(`ccd-projects`, thread linkage), **spend** (via `spend-ccd`, projects is the
+(`projects-artifacts`, future typed work-units). Party to: **cc**
+(`cc-projects`, thread linkage), **spend** (via `spend-cc`, projects is the
 grouping authority — spend's edge, not projects'). Cross-cutting (consumed, not
 authored): `surface-schema`, `service-lookup`, `pubsub-protocol`,
 `restart-protocol`, and — for the migrated coordinator inbox — `queues-api`.
@@ -332,7 +332,7 @@ built.
 7. **Missing `projects-repo` pair** — the `.mind` workspace schema projects
    migrates binds a git worktree (INTENT #67); repo owns the worktree half
    (repo.md concern 2 reuses the same schema). But wave2-plan §3 names no
-   `projects-repo` contract, only `ccd-projects` (thread) and
+   `projects-repo` contract, only `cc-projects` (thread) and
    `repo-environments` (branch→env). Does a project reference its repo workspace
    through an unlisted `projects-repo` edge, purely transitively via the shared
    worktree↔thread↔branch identity, or via `repo-environments`? Flagged for the

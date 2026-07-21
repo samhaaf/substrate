@@ -66,6 +66,33 @@ invocation contract, and result-artifact provenance** — the "interactable"
 half that neither VFS (bytes) nor KG (structure) nor execution-engine (handler
 mechanics) owns on its own.
 
+## REFRAME (friction-round 3, 2026-07-20, INTENT #136) — objects with attributes AND METHODS
+
+The operator's reframing of what an artifact IS, verbatim-grade — this
+supersedes the emphasis (not the mechanics) of the wave-2 sketch below:
+
+- Artifacts look like **"schematized nodes in some graph"** — a program; an
+  execution with script + logs; an experiment with output data.
+- **The distinguishing value over raw KG is AGENT INTERACTION:** "when we
+  want agents to interact with certain systems and have tools attached to
+  those items — **the tools only visible when the artifact comes into
+  scope** — an artifact can be an **object with attributes and methods that
+  agents can interact with**. That might be the more useful abstraction."
+- **Artifacts would be used by the `agents` service** — the artifact's
+  attached tools become part of an agent's visible tool surface when the
+  artifact enters its scope.
+- **The standing question, recorded:** "is there anything useful in
+  artifacts we can't get from the knowledge graph directly?" (If the answer
+  is "only the methods/tools binding," artifacts may reduce to a KG
+  convention plus a scoping rule in `agents` — see Open questions 1/2.)
+
+Read the wave-2 "controller" sketch below through this lens: the versioned
+controller/interface IS the methods half of the object; the schema'd
+properties ARE the attributes half; "tools attached, visible in scope" is
+the agent-facing rendering of controllers. Nothing below is redesigned this
+round — the reframe is recorded so the eventual design pass starts from
+objects-with-methods-for-agents, not from files-with-runners.
+
 ## Design notes — the artifact model (schema + content + controller versioning)
 
 Sketch only; every struct name below is illustrative, NOT a frozen contract.

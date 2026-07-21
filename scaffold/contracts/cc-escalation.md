@@ -1,26 +1,28 @@
-# Contract: ccd-escalation
+# Contract: cc-escalation
+
+> *Renamed from `ccd-escalation` at friction-round 3 (INTENT #131, ccd → cc).*
 
 ## Parties
 - **Producers (two, one union shape):**
   - `mesh.queues` (L2) — authors the `DeadLetter` arm (dead-letter exhaustion).
   - `execution-engine` (L4, embedded in `vdb`/`kg`, reaching mesh through its
     host's `mesh-client`) — authors the `LoopDepthExceeded` arm.
-- **Consumer / receiver:** `ccd` (L5) — owns the receiver, the dedup ledger, and
+- **Consumer / receiver:** `cc` (L5) — owns the receiver, the dedup ledger, and
   `EscalationAck`.
 
 ## Purpose
 The **single investigation surface** for the two guardrails-of-last-resort that
 INTENT #70 and #89 treat as one pattern: queues' **dead-letter exhaustion** and
 the execution-engine's **loop-depth-exceeded**. Rather than two escalation
-surfaces, both conditions arrive at CCD as ONE `EscalationRequest` union so CCD
-grows exactly one investigation receiver. On receipt CCD assembles an
-investigation plugin (via `rollup-ccd`), spawns a high-priority investigating
+surfaces, both conditions arrive at cc as ONE `EscalationRequest` union so cc
+grows exactly one investigation receiver. On receipt cc assembles an
+investigation plugin (via `rollup-cc`), spawns a high-priority investigating
 Claude-Code agent through its ordinary admission engine, and threads the
 `correlation_id`/`context` so the agent starts warm.
 
 Delivery is the ordinary mesh queue fabric (`queues-api`, at-least-once,
 durable), so the escalation is itself a `SendEvent` toward a standing declarative
-trigger whose `HandlerRef::Service { slug: "ccd" }` delivers it — the guardrail
+trigger whose `HandlerRef::Service { slug: "cc" }` delivers it — the guardrail
 is declarative data, consistent with every other trigger.
 
 ## Schema
@@ -28,7 +30,7 @@ is declarative data, consistent with every other trigger.
 ```rust
 // authored jointly; envelope owned by queues, arms independently owned:
 pub struct EscalationRequest {
-    pub escalation_id: Uuid,            // idempotency key; dedup at ccd (INTENT #95)
+    pub escalation_id: Uuid,            // idempotency key; dedup at cc (INTENT #95)
     pub kind: EscalationKind,
     pub correlation_id: Option<Uuid>,   // Provenance root — the causal chain to investigate
     pub provenance: Provenance,         // types::Provenance
@@ -54,10 +56,10 @@ pub enum EscalationKind {
         parked_invocation: Uuid,        // the invocation parked, not run
         provenance_root: Uuid,          // correlation_id — walk ee_* tables from here
     },
-    // #[serde(other)] reserved so a future third kind never breaks ccd's deserialize
+    // #[serde(other)] reserved so a future third kind never breaks cc's deserialize
 }
 
-// ── ccd owns this ──
+// ── cc owns this ──
 pub enum EscalationAck {
     Investigating { thread: ThreadId }, // an investigating agent was spawned
     Declined { reason: String },        // e.g. hard budget pressure — DLQ retains, re-delivers
@@ -65,18 +67,18 @@ pub enum EscalationAck {
 ```
 
 Shared vocabulary promoted to `types`: `SubjectKey`, `ChainLink`, `AdapterKind`,
-`DbRef` (execution-engine's inclusion test passed — used by both engine and ccd's
+`DbRef` (execution-engine's inclusion test passed — used by both engine and cc's
 receiver). `QueueName`/`TriggerId` are `types::queue` vocabulary; `Slug`,
 `Provenance`, `ThreadId` are existing `types`.
 
-**Receiver behavior (ccd, owned):**
+**Receiver behavior (cc, owned):**
 1. Dedup on `escalation_id` against the `escalations` table — an escalation may
    arrive twice under at-least-once (INTENT #95); the second is a no-op returning
    the same `EscalationAck`.
-2. On a new escalation: assemble the investigation plugin via `rollup-ccd`, spawn
+2. On a new escalation: assemble the investigation plugin via `rollup-cc`, spawn
    a high-priority investigating agent through the ordinary admission engine,
    thread `correlation_id`/`context`, return `Investigating { thread }`, and
-   emit `ccd.escalation.investigating` on `ccd-events`.
+   emit `cc.escalation.investigating` on `cc-events`.
 3. If the strategy defers under hard budget pressure: return `Declined { reason }`.
    The escalation is **retained** (re-delivers / stays on the DLQ) — never lost.
 
@@ -88,9 +90,9 @@ investigation:
   `loop_key = (subject_key, handler)`.
 
 ## Error cases
-- **`CcdUnreachable`** (ccd not registered / offline): the escalation *event*
+- **`CcUnreachable`** (cc not registered / offline): the escalation *event*
   itself dead-letters onto its own queue's retention, alarmed, **never silently
-  lost**. It re-delivers when ccd returns; `escalation_id` dedups the retry.
+  lost**. It re-delivers when cc returns; `escalation_id` dedups the retry.
 - **`Declined { reason }`** under hard budget pressure: not an error — the
   contract's honest back-pressure signal; the DLQ retains the escalation.
 - **`DatabaseUnavailable`** (execution-engine arm only): the `database` was
@@ -101,9 +103,9 @@ investigation:
 
 ## Version sensitivity
 **MEDIUM** (both producers concur).
-- **Additive-safe:** new `EscalationKind` arms (`#[serde(other)]` reserved so ccd
+- **Additive-safe:** new `EscalationKind` arms (`#[serde(other)]` reserved so cc
   tolerates a future third kind); new `#[serde(default)]` fields within an arm
-  (a ccd built against queues' thin `LoopDepthExceeded` sketch still deserializes
+  (a cc built against queues' thin `LoopDepthExceeded` sketch still deserializes
   the enriched arm); the open `context: Value` absorbs richer investigation
   payloads without a wire change.
 - **Breaking:** changing `escalation_id`/`correlation_id` semantics, removing an
@@ -124,16 +126,16 @@ investigation:
   subject, no provenance root, no recent chain). Field rename `engine → host` is
   adopted from the owner. **Losing position (recorded):** queues' thin
   `{engine, depth, threshold}` — kept only as the `#[serde(default)]`
-  back-compat floor so a ccd compiled against the sketch still deserializes.
+  back-compat floor so a cc compiled against the sketch still deserializes.
 - **`EscalationAck::Investigating` thread type: `String` vs `ThreadId`.**
   DISAGREEMENT (minor). queues.md and execution-engine.md both wrote
-  `thread: String`; ccd.md wrote `thread: ThreadId`. **Winner: `ThreadId`**
-  (ccd owns `EscalationAck`, and `ThreadId` is ccd's ledger-key vocabulary —
-  a bare `String` would drop the type that `ccd-projects`/`spend-ccd` join on).
+  `thread: String`; cc.md wrote `thread: ThreadId`. **Winner: `ThreadId`**
+  (cc owns `EscalationAck`, and `ThreadId` is cc's ledger-key vocabulary —
+  a bare `String` would drop the type that `cc-projects`/`spend-cc` join on).
   `ThreadId(pub String)` is wire-identical, so this is a type-level tightening,
   not a wire break.
 - **Ownership line (agreed by all three, restated):** queues authors
-  `DeadLetter`, execution-engine authors `LoopDepthExceeded`, ccd owns the
+  `DeadLetter`, execution-engine authors `LoopDepthExceeded`, cc owns the
   receiver + `EscalationAck`. This file is the union of those three proposals;
   no arm was dropped.
 - **Delivery is `queues-api`, not a bespoke transport.** The execution-engine
@@ -164,7 +166,7 @@ the mesh queue fabric an `EscalationRequest` (`event_type: "ee.loop.exceeded"`):
 }
 ```
 
-The standing `ccd` trigger delivers it; ccd (running on macbook) dedups on
+The standing `cc` trigger delivers it; cc (running on macbook) dedups on
 `escalation_id`, assembles an investigation plugin, spawns a high-priority agent,
 and replies:
 
@@ -172,7 +174,7 @@ and replies:
 { "Investigating": { "thread": "thr-invest-77" } }
 ```
 
-CCD then emits on `ccd-events` (topic `ccd/macbook/escalation`):
+cc then emits on `cc-events` (topic `cc/macbook/escalation`):
 `{ "Escalation": { "escalation_id": "f5a2-loopkey-1",
    "kind_tag": "loop_depth_exceeded", "thread": "thr-invest-77" } }`.
 Under hard weekly budget pressure the same escalation would instead return

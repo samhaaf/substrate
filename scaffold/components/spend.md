@@ -36,8 +36,8 @@ over other services' authoritative ledgers.
 
 Sources, in build order:
 
-1. **CCD's usage database (first, primary).** CCD owns its own usage ledger
-   (INTENT #68); `spend` reads it pull-shaped (`spend-ccd`).
+1. **cc's usage database (first, primary).** cc owns its own usage ledger
+   (INTENT #68); `spend` reads it pull-shaped (`spend-cc`).
 2. **OpenRouter (later).** Per-key budgets and actual spend surfaced by
    `openrouter-mgmt` (INTENT #41; `openrouter-spend`).
 3. **AWS costs (later).** Cloud billing pulled through the `aws` crate — the
@@ -55,12 +55,12 @@ Budget **ENFORCEMENT** stays where the money is actually spent, at the moment
 of the call, under a single-writer authority. `spend` deliberately does **not**
 own any of it. Concretely:
 
-- **Claude-Code budgets are CCD's job.** CCD runs the usage-limits game with
+- **Claude-Code budgets are cc's job.** cc runs the usage-limits game with
   rich declarative budget/priority strategies — admission verdicts
   (admit/throttle/defer/deny), the token-ceiling guards, the 75th-percentile
-  burn-down, caller-priority honoring (INTENT #49, ccd.md's `Strategy` engine).
-  ccd.md already draws this exact line: *"It does not compute spend: it stores
-  usage and answers queries; spend computes cost pull-shaped over `spend-ccd`."*
+  burn-down, caller-priority honoring (INTENT #49, cc.md's `Strategy` engine).
+  cc.md already draws this exact line: *"It does not compute spend: it stores
+  usage and answers queries; spend computes cost pull-shaped over `spend-cc`."*
   The reverse also holds — `spend` does not compute admission. Enforcement reads
   the ledger *synchronously in the admission path*; `spend` reads the same
   ledger *asynchronously, after the fact*, for reporting. Same data, opposite
@@ -80,7 +80,7 @@ daemon — that violates single-port locality's spirit and adds a fault line in
 the hot path). Aggregation is **global, asynchronous, and read-only** — the
 opposite properties. Collapsing them into one service would either make `spend`
 a hot-path dependency of every money-touching call (a fault line, and technical
-debt by INTENT #38) or scatter reporting logic across CCD/openrouter/aws.
+debt by INTENT #38) or scatter reporting logic across cc/openrouter/aws.
 Keeping `spend` a pure read-model over authoritative ledgers is the boring,
 no-refactor-later shape (INTENT #38/#25). **`spend` answers "what did we
 spend?"; the sources answer "may this be spent?".**
@@ -91,18 +91,18 @@ spend?"; the sources answer "may this be spent?".**
 
 `spend` never receives a push of cost data; it queries on demand and on a
 schedule (a `cron-api` tenant for periodic recompute/caching). Because every
-source ledger is itself provenance-first (INTENT #85/#92 — CCD's
+source ledger is itself provenance-first (INTENT #85/#92 — cc's
 `usage_records`/`agent_runs` carry provenance on every row), `spend` **inherits
 provenance** rather than inventing its own: a reported cost traces back through
-`spend-ccd` to the exact metered turn. `spend` may keep a **derived cache** (a
+`spend-cc` to the exact metered turn. `spend` may keep a **derived cache** (a
 local SQLite read-model, SQLite-only locally per the standing rule) of rolled-up
 figures for fast dashboard reads, but the cache is disposable — the source
 ledgers are authoritative and re-pullable.
 
 ### 2. Per-project attribution rides fields that already exist
 
-The project/environment attribution keys are **already in CCD's ledger**:
-`agent_runs.project_id?` / `environment_id?` (ccd.md concern 2). So per-project
+The project/environment attribution keys are **already in cc's ledger**:
+`agent_runs.project_id?` / `environment_id?` (cc.md concern 2). So per-project
 rollup is `spend` reading `usage_records ⨝ agent_runs` **grouped by
 `project_id`/`environment_id`/`caller_slug`** — no new push, no duplicated cost
 store. `projects` is the authority those ids resolve against (projects.md §4
@@ -113,7 +113,7 @@ not stored redundantly (projects.md §2).
 
 ### 3. Cost = money, not local compute
 
-`spend` tracks **billed** money: Claude-Code token spend (CCD), OpenRouter
+`spend` tracks **billed** money: Claude-Code token spend (cc), OpenRouter
 actuals, AWS charges. **Local `inference` completions are not a `spend` source**
 — local generation costs electricity, not a metered bill, and `llm-calls` is
 metering-shaped for usage, not cost. If a future `agents` type routes paid
@@ -125,7 +125,7 @@ later pass doesn't wire `spend` into the inference hot path.
 
 `spend` publishes a **boring surface schema** (INTENT #46, surface-schema.md):
 cost-by-project / by-service / by-time-window meters, budget-vs-actual panels
-(reading budgets from CCD/openrouter to *display*, never to set), and a
+(reading budgets from cc/openrouter to *display*, never to set), and a
 per-project finance rollup — rendered schema-driven by the mesh dashboard,
 never hand-built. This is `spend`'s primary human surface.
 
@@ -137,7 +137,7 @@ shared libs.
 
 | Consumes | Via | Why |
 |----------|-----|-----|
-| `ccd` | `spend-ccd` | pull the usage ledger (PRIMARY, build first) |
+| `cc` | `spend-cc` | pull the usage ledger (PRIMARY, build first) |
 | `projects` | `spend-projects` (anticipated) | resolve/label `project_id`s for per-project rollups |
 | `openrouter-mgmt` | `openrouter-spend` | per-key budgets + actual spend (build later) |
 | `aws` | `spend-aws` (anticipated) | billing/cost pulls through the AWS crate (build later) |
@@ -152,29 +152,29 @@ Party to (consumed cross-cutting, not authored): `surface-schema`,
 stub track. Recorded now so neighbor contracts are shaped for a pull-shaped
 read-model from the start. I do NOT edit `scaffold/contracts/*`.*
 
-- **`spend-ccd`** (spend → ccd; existing stub-track pair — **spend's flagship
-  edge**, wave2-plan §3c). *Purpose:* pull-shaped queries of CCD's usage
+- **`spend-cc`** (spend → cc; existing stub-track pair — **spend's flagship
+  edge**, wave2-plan §3c). *Purpose:* pull-shaped queries of cc's usage
   database (INTENT #68). *Rough shape:* a **read-only** query surface over
   `usage_records ⨝ agent_runs`, grouped by `project_id`/`environment_id`/
   `caller_slug`/`model`/time-window; returns rolled-up token+cost figures with
-  the underlying provenance re-derivable. CCD authors the ledger side and has
-  already reserved this pair (ccd.md: *"pull-shaped spend queries of the usage
+  the underlying provenance re-derivable. cc authors the ledger side and has
+  already reserved this pair (cc.md: *"pull-shaped spend queries of the usage
   ledger… spend is L6-stub, content deferred"*). **No push, no reverse
-  ccd→spend edge, no hot-path coupling** — this is the async reporting read that
-  mirrors CCD's own synchronous admission read.
+  cc→spend edge, no hot-path coupling** — this is the async reporting read that
+  mirrors cc's own synchronous admission read.
 
 - **`spend-projects`** (spend → projects; **NEW anticipated — not in the
   wave2-plan §3c inventory; flagged**). *Purpose:* resolve/label the
-  `project_id`/`environment_id` keys that arrive on CCD's ledger rows into
+  `project_id`/`environment_id` keys that arrive on cc's ledger rows into
   project names + the containment hierarchy `spend` rolls up along. *Rough
-  shape:* a thin read/resolve edge — `spend` groups by ids from `spend-ccd`,
+  shape:* a thin read/resolve edge — `spend` groups by ids from `spend-cc`,
   then asks `projects` (the grouping authority) to resolve ids → names and to
   supply the parent/child edges for hierarchical rollup. Both ends are L6 stubs.
   **Flag:** projects.md §4 already frames per-project finance as *spend's* edge
-  ("spend queries CCD grouped by project/environment; projects is the authority
+  ("spend queries cc grouped by project/environment; projects is the authority
   those ids resolve against"), yet §3c lists no `spend-projects` pair — this
   stub proposes it so the per-pair round can confirm or fold the resolution into
-  `spend-ccd` + a projects read. Deferred either way.
+  `spend-cc` + a projects read. Deferred either way.
 
 - **`openrouter-spend`** (openrouter-mgmt ↔ spend; existing stub-track pair,
   wave2-plan §3c — the inventory name; the brief's "spend-openrouter" is the
@@ -199,7 +199,7 @@ read-model from the start. I do NOT edit `scaffold/contracts/*`.*
 
 Parent: none (top-level app-crate). Children: none designed this pass. A real
 design pass would likely decompose into libs: an `ingest` lib (the per-source
-pull adapters behind `spend-ccd`/`openrouter-spend`/`spend-aws`), a `rollup`
+pull adapters behind `spend-cc`/`openrouter-spend`/`spend-aws`), a `rollup`
 lib (grouping/attribution over project hierarchy — note the name collides with
 the `rollup` crate; pick a different lib name), a `cache` lib (the derived
 SQLite read-model), and a `surface` lib (the dashboard schema). Flagged, not
@@ -209,17 +209,17 @@ built.
 
 1. **`spend-projects` — real pair or folded?** Is per-project resolution its own
    edge, or does `spend` get project labels via a plain `projects` read while
-   attribution rides `spend-ccd`'s already-present ids? projects.md calls it
+   attribution rides `spend-cc`'s already-present ids? projects.md calls it
    spend's edge; §3c omits it. For the per-pair round / operator.
 2. **`spend-aws` timing.** AWS is design-only in v1 and `aws` has no billing
    surface yet. Does `spend`'s v1 stub anticipate a cost adapter in `aws`, or is
    AWS cost tracking explicitly out until AWS itself is real? Needs the operator.
-3. **Currency/unit normalization.** CCD meters *tokens*; OpenRouter and AWS bill
+3. **Currency/unit normalization.** cc meters *tokens*; OpenRouter and AWS bill
    *dollars*. Does `spend` normalize everything to a money figure (requiring a
    token→price table per model — where does that live, and who owns pricing
    updates?), or keep tokens and dollars as distinct measures side by side?
    Parked for the real design pass.
-4. **Budget *display* vs *enforcement* boundary.** `spend` reads CCD/openrouter
+4. **Budget *display* vs *enforcement* boundary.** `spend` reads cc/openrouter
    budgets to *show* budget-vs-actual. Confirm the read-only display of a budget
    never tempts a future pass to let `spend` set or gate one — the enforcement
    split (above) must stay hard.

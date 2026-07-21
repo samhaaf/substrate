@@ -1,7 +1,7 @@
 # Contract: service-lookup
 
 ## Parties
-Any device / service (ccd, org, **inference**, vfs, kg, projects, secrets, the
+Any device / service (cc, org, **inference**, vfs, kg, projects, secrets, the
 `mesh` CLI) ↔ its **LOCAL** `mesh.service-registry` daemon, over `:3649`
 (rides mesh-core's `mesh-transport` envelope). The client half is compiled
 into every service as part of `mesh-client`; the server half is
@@ -51,7 +51,7 @@ pub struct Endpoint {
     #[serde(default)] pub health_path: Option<String>, // e.g. "/health"
 }
 pub enum AddressingClass {
-    Singleton,   // exactly one live instance mesh-wide (db, ccd, kg, projects, org, secrets)
+    Singleton,   // exactly one live instance mesh-wide (db, cc, kg, projects, org, secrets)
     NodeScoped,  // one live instance per node (gc :8430, per-node vfs leg, inference api)
     FleetAlias,  // RESOLVE-TIME policy on a slug (inference) — NOT a stored record; see notes
     #[serde(other)] UnknownAddressing,
@@ -204,11 +204,11 @@ policy. The registry side adopts.**
   the escape hatch; the adopted primary above is the recommendation.
 
 **Other reconciliations:**
-- **`service-registration` (ccd) is a separate pair, not folded here.**
-  service-registry.md recommends CCD ride `service-lookup` with no distinct
-  schema (CCD's `Registration` is just `{slug:"ccd", addressing:Singleton,
+- **`service-registration` (cc) is a separate pair, not folded here.**
+  service-registry.md recommends cc ride `service-lookup` with no distinct
+  schema (cc's `Registration` is just `{slug:"cc", addressing:Singleton,
   requires:[rollup, db, inference?]}`). That folding is the `service-registration`
-  pair's call, outside this cluster; noted so the harmonizer keeps CCD as a
+  pair's call, outside this cluster; noted so the harmonizer keeps cc as a
   party of THIS document rather than authoring a parallel wire.
 - **Clock-skew caveat** (both LWW ordering and lease `expires_at` are naive
   wall-clock across nodes) is operator-blessed naive for v1 (INTENT #32),
@@ -239,7 +239,7 @@ resolution):**
 ```
 `macbook` registers identically with `node:"macbook"`, `port:8080`.
 
-**2. CCD resolves inference two ways:**
+**2. cc resolves inference two ways:**
 ```jsonc
 // "give me an inference node, don't care which"  (the 99% path)
 { "Resolve": { "addr": { "AnyNode": { "slug": "inference" } } } }

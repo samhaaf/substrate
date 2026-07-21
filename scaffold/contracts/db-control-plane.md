@@ -7,13 +7,14 @@ migrations+queries; any service that drives the DB control plane). Reached
 `db serve` daemon over WS — NEVER by linking `substrate-db`** (INTENT #29).
 Authored from `db.md` (authoritative; owns `lib/db`/`bin/db`).
 
-> **The `db serve` WS bearer is [FROZEN — operator flagged possible drift; do
-> not build; discussion pending (INTENT #115)].** The operator's recollection:
-> db = a standalone CLI tool; VDB = the mesh-accessed daemon — the daemon mode
-> may be the drift. The **CLI-subprocess half of this contract stands** (it is
-> the blessed, boot-safe, mesh-free access path; mesh may use db this way for
-> its own database — direct CLI execution, no daemon, no mesh dependency).
-> The WS framing below is retained as discussion input, not deleted.
+> **The `db serve` WS bearer is [ACCEPTED — friction-round 3, INTENT #128,
+> resolving the INTENT #115 drift flag].** The operator accepts "a session
+> concept with a headless stateful daemon running as part of db"; VDB is the
+> virtualization layer that delegates to db (so the same tools aren't
+> defined twice) and owns statement tracking / cleanup / session management
+> on its side (see `vdb-db`). The CLI-subprocess half stands unchanged (the
+> boot-safe, mesh-free access path; mesh may use db this way for its own
+> database — direct CLI execution, no daemon, no mesh dependency).
 
 **REWRITES the stale stub.** The wave-1 stub framed this edge as the
 "DB thing in a local stack for the Org/game demo" with a "programmatic access"

@@ -1,17 +1,28 @@
 # Substrate — Scaffold Overview (wave-2 close-out)
 
-> **THE SYSTEM IS "SUBSTRATE" — RESOLVED, full circle (friction-round 2,
-> 2026-07-20, INTENT #120).** "Substrate is a good name." The repo keeps its
-> name at v1; system name and repo name are now the same. This supersedes
-> both the "Mind OS at v1" lock (2026-07-18) and the friction-round-1 naming
-> pin (INTENT #117, Mesh OS / Broomstick OS candidates).
+> **NAMING REOPENED — "SUBSTRATE" IS THE WORKING NAME; THE FINAL NAME IS
+> OPEN (friction-round 3, 2026-07-20, INTENT #129/#141).** This supersedes
+> the round-2 "resolved Substrate, full circle" note (INTENT #120). Round 3:
+> "Mind temple — that's what this is. It's a mind temple. Maybe we call it
+> mind temple, or just temple. Mind Temple OS. Substrate OS. Those are the
+> candidates now." Round 4 (same day) crystallized the criteria while
+> keeping it open: Mind Temple is "a tiny bit cliche... I don't want to feel
+> embarrassed — I want to confuse people by using a word they've never heard
+> before"; Substrate remains "a really good starting point because the
+> philosophy is true — build up from reusable boring primitives. But a
+> temple you build a strong foundation in is a better abstraction."
+> **Candidates now: Substrate (OS) vs (Mind) Temple / the temple idea "in a
+> different language."** Criteria: simple, transcription-friendly,
+> non-cliche, resonant, possibly unfamiliar. Until decided, every
+> "Substrate" in this tree reads as the WORKING name.
 >
 > **Naming history, for the record:** the system was first locked as
 > **Mind OS** ("an operating system of my mind"), but that name is taken by
 > an existing company the operator finds cheesy; **Broomstick OS** was
 > pinned as a candidate but is "corny — it's the name of my business";
 > **Mesh OS** "doesn't say what it is." **Substrate** — the name the repo
-> carried all along — is restored as THE name. (Mycelium and ripple-derived
+> carried all along — was restored as THE name at friction-round 2 (INTENT
+> #120), then reopened at round 3 as above. (Mycelium and ripple-derived
 > names were rejected earlier; "ripples" is a RESERVED term, see the
 > placeholder section.) Stale "Mind OS" mentions surviving in component
 > files read as "Substrate."
@@ -31,12 +42,17 @@ in the harness workspace, `substrate-v2/reports/wave2-friction-points.md`).
 What exists at close-out:
 
 - **47 component files** in `scaffold/components/` (48 as of friction-round
-  2 — `onion.md` added as a requirements-only candidate stub, INTENT #122) —
-  44 live modules across
-  the 7-layer OS stack (L0–L6) plus 3 history/tombstone files (`mesh.md`, the
+  2 — `onion.md` added as a requirements-only candidate stub, INTENT #122;
+  renamed `schema.md` at friction-round 3, INTENT #131) —
+  **43 live modules** (44 until friction-round 3 dissolved the `org` crate,
+  INTENT #132) across
+  the 7-layer OS stack (L0–L6) plus **4 history/tombstone files** (`mesh.md`, the
   round-9 pre-split mesh design record; `gateway.md`, tombstone — gateway
   merged into mesh 2026-07-18; `stack.md`, superseded requirements history —
-  the module is `vdb`, "stack" survives as the PATTERN name).
+  the module is `vdb`, "stack" survives as the PATTERN name; `org.md`,
+  tombstone-with-content — the org crate dissolved into emergent
+  coordinators at friction-round 3, INTENT #132). The former `ccd.md` is
+  `cc.md` (rename, INTENT #131).
 - **75 contract files** in `scaffold/contracts/` — 71 live authored contracts
   + 4 tombstones (`mesh-registry-read` — gateway merge; `registry-replication`
   — superseded by `kv-replication`; `stack-vfs`/`stack-mesh` — renamed
@@ -59,9 +75,10 @@ What exists at close-out:
   authoritative (including their Reconciliation notes). Detail lives there,
   not here.
 
-**Governing precedence:** INTENT items (#1–#127, harness workspace) win over
+**Governing precedence:** INTENT items (#1–#141, harness workspace) win over
 scaffold text; contract files win over component-file proposals;
-`wave2-plan.md` remains the module-inventory record of the decompose step.
+`wave2-plan.md` remains the module-inventory record of the decompose step
+(it retains the pre-rename `ccd`/`onion`/`org` vocabulary as history).
 
 ## Friction-round 1 — operator answers folded in (2026-07-19, INTENT #108–#118)
 
@@ -110,6 +127,8 @@ verbatim rationale live in the named files):
   deleted. Mesh may use db via direct CLI execution for its own database (no
   daemon, no mesh dependency). → `components/db.md` concern 1,
   `contracts/vdb-db.md`, `contracts/db-control-plane.md`.
+  **SUPERSEDED at friction-round 3 (INTENT #128): UNFROZEN and ACCEPTED** —
+  see the friction-round 3 section below.
 - **Naming — PINNED, undecided** (INTENT #117): SUPERSEDED at friction-round
   2 (INTENT #120) — the name is **Substrate**; see the header note.
 - **App-dev framework — noted, future scope** (INTENT #118): see the
@@ -126,9 +145,10 @@ verbatim rationale live in the named files):
 The second clarification round. Dispositions (detail and verbatim rationale
 live in the named files):
 
-- **Naming — RESOLVED: Substrate** (INTENT #120): see the header note. Full
+- **Naming — RESOLVED: Substrate** (INTENT #120): full
   circle; the Mesh OS / Broomstick OS pin and the "Mind OS at v1" lock are
-  both superseded.
+  both superseded. **REOPENED at friction-round 3 (INTENT #129/#141)** —
+  Substrate is now the WORKING name; see the header note.
 - **Restart-signal semantics — deferred to a PHILOSOPHY** (INTENT #119): the
   per-app idle/critical question (including benchmark-as-Idle) is not ruled
   on here; a restart-interrupt-signal philosophy will be developed via the
@@ -141,14 +161,16 @@ live in the named files):
   `db` keeps only flat relational metadata. KG's charter explicitly gains:
   services can add new node types, schemas, version control — and "assume
   that every service will be using the knowledge graph." →
-  `components/kg.md` charter, `components/org.md` design note + OQ 1.
+  `components/kg.md` charter, `components/org.md` (since friction-round 3 a
+  tombstone — INTENT #121 carries forward in its "What org IS" section).
 - **NEW candidate crate: `onion` — schema-delta layering** (INTENT #122): a
   delta language over schema templates, flatten-on-template-update,
   residual deltas; applicable beyond KG (YAML, JSON schema). Captured as a
   requirements-only stub; **a dedicated KG-templating discussion round is
-  REQUIRED before any design.** → `components/onion.md`,
-  `components/kg.md` concern 3 note, and the tree below (candidate,
-  placement undecided).
+  REQUIRED before any design.** **RENAMED `schema` + upgraded to nested
+  inheritance at friction-round 3 (INTENT #131)** — see below. →
+  `components/schema.md`, `components/kg.md` concern 3 note, and the tree
+  below (candidate, placement undecided).
 - **Coordinators — elevated to a first-order concept** (INTENT #123):
   dedicated discussion required; recorded, not designed. →
   `components/projects.md` design note + open questions, and the open
@@ -176,9 +198,110 @@ live in the named files):
   disparate things" that must be made elegant together); and the owners
   open questions (INTENT #127, listed in the placeholder section).
 
+## Friction-round 3 — operator answers folded in (2026-07-20, INTENT #128–#141)
+
+The third clarification round. Dispositions (detail and verbatim rationale
+live in the named files):
+
+- **`db serve` — UNFROZEN, ACCEPTED** (INTENT #128, resolving #115): "it
+  actually does make sense to have a session concept with a headless
+  stateful daemon running as part of db." Division clarified: **VDB = the
+  virtualization layer** (same access to databases regardless of
+  environment/underlying technology), **delegating to db** so the same
+  tools aren't defined twice; **VDB owns statement tracking, cleanup, and
+  session management.** All round-1 FREEZE annotations removed. →
+  `components/db.md` concern 1, `components/vdb.md` concern 7,
+  `contracts/vdb-db.md`, `contracts/db-control-plane.md`,
+  `contracts/db-inference-init.md`.
+- **RENAME `ccd` → `cc`** (INTENT #131): "They're all daemons — we don't
+  need this one to be special. It's just cc, not the ccd." File renames:
+  `components/ccd.md` → `cc.md`; contracts `rollup-ccd` → `rollup-cc`,
+  `ccd-events` → `cc-events`, `ccd-escalation` → `cc-escalation`,
+  `ccd-projects` → `cc-projects`, `org-on-ccd` → `org-on-cc`, `spend-ccd`
+  → `spend-cc`, `agents-ccd` → `agents-cc`. Naming-history notes kept in
+  each file; `wave2-plan.md` keeps the old names as history.
+- **RENAME `onion` → `schema`, upgraded** (INTENT #131): "we'll just call
+  it schema. Our crate for managing schemas with versions and layering.
+  One boring tool for schema management, used within all the other
+  services." Model upgraded from single-layer template+delta to **NESTED
+  inheritance to arbitrary depth** ("this schema inherits from that schema
+  and applies these migrations, to arbitrary depth"). Accepted as a
+  concept; placement still undecided; the KG-templating discussion round
+  is still REQUIRED before design. → `components/schema.md`,
+  `components/kg.md` concern 3 note.
+- **`org` crate DISSOLVED — orgs are emergent** (INTENT #132): "We don't
+  need an org crate. Org is emergent — it just is a bunch of coordinators.
+  Maybe in the future an org node with a specific owner attached, like the
+  chief in the agentic-business idea." Org ≈ a knowledge graph linking
+  coordinators with typed edges (reports-to, delegates-to,
+  may-create-sub-coordinators), living ON kg (INTENT #121 unchanged).
+  `org.md` is now a tombstone-with-content; the L6 tree drops `org`;
+  `org-on-cc` survives as a shaped-for record only. → `components/org.md`,
+  `contracts/org-on-cc.md`.
+- **Coordinator = owner; the concept becomes a MINI-HARNESS** (INTENT
+  #130/#133, carrying #127's owners endgame): "They are the same thing."
+  Multi-threaded (one human thread + persistent per-message threads), an
+  HTTP-like message protocol to a workspace coordinator, broadcast to
+  sibling threads in the same space, messaging + workspace construct +
+  compaction built in; workspaces stay AS-IS; per-node-TYPE directory
+  structures tracked within the `schema` service; the archetype wants a
+  grounded name (deva/angel-class, "grounded, not mystical"). Recorded
+  verbatim-grade as a **DISCUSSION-REQUIRED first-order concept, not
+  designed**. → `components/org.md` (the concept's home), the placeholder
+  section below.
+- **Layer-6 purpose statement** (INTENT #134): "We need a bunch of boring
+  services, but one of those boring services enables the future of mind
+  work. That's what we're aiming towards at the layer-6 level." → the L6
+  section below.
+- **KG distribution: distributed-everywhere may be a HARD constraint**
+  (INTENT #135): "This is a distributed graph — it needs to be accessible
+  from every mesh node... keeping it distributed might have to be a hard
+  constraint. But maybe I'm misunderstanding the question — come back to
+  this." The wave-2 home-node + offline refuse/branch model **NEEDS
+  REVISITING** against it — flagged as a REQUIRED KG discussion item
+  (alongside the templating round), deliberately NOT redesigned now. →
+  `components/kg.md` concern 4 flag.
+- **Artifacts reframed: objects with attributes AND METHODS** (INTENT
+  #136): schematized graph nodes whose distinguishing value is **agent
+  interaction** — tools attached to items, visible only when the artifact
+  comes into scope; used by the `agents` service. The standing question
+  recorded: "is there anything useful in artifacts we can't get from the
+  knowledge graph directly?" → `components/artifacts.md` reframe section.
+- **Custom agents do NOT route through cc** (INTENT #137): "Custom agents
+  might call OpenRouter, might call the inference tool — they're not
+  necessarily going to call cc." cc is for the **full Claude Code agent
+  shape**; the brokered-through-cc lean is superseded. →
+  `components/agents.md`, `contracts/agents-cc.md`, `contracts/llm-calls.md`,
+  `components/cc.md` routing addendum.
+- **Error-taxonomy migration: NOW** (INTENT #138): "We're going to do
+  everything before we even test it. There's no production use of it yet...
+  we're going to build it correctly." Existing flat leaves migrate in ONE
+  sweep at skeleton time; no bridge period. → `components/types.md`.
+- **BIG unification idea: mesh messaging on schema inheritance** (INTENT
+  #139): "the ENTIRE messaging protocol in the mesh could be done using
+  schemas and schema inheritance." Recorded as a discussion/design item for
+  the next pass — NOT applied to the authored contracts. →
+  `components/schema.md`.
+- **Rollup moves toward KG** (INTENT #140): plugin-rollup "more like a
+  graph... built on top of schemas and KG"; prompt fragments possibly stay
+  file-based; "skip directly to rollup being built on top of KG" recorded
+  as direction, design deferred. → `components/rollup.md` concern 8 note.
+- **Naming reopened** (INTENT #129/#141): Substrate (OS) vs (Mind) Temple /
+  temple-in-another-language; criteria: simple, transcription-friendly,
+  non-cliche, resonant, possibly unfamiliar. **Substrate = working name;
+  final name open.** → the header note.
+- Newly open / still open after this round: the coordinators discussion
+  round (INTENT #123, now enriched by #130/#132/#133 — the mini-harness,
+  the archetype name, per-node-type directory structures); the
+  KG-templating / `schema` design round (INTENT #122/#131) plus the KG
+  distribution-constraint revisit (INTENT #135); the INTENT #139
+  schema-unification round; the rollup-on-KG design pass (INTENT #140);
+  and the final name (INTENT #141).
+
 ## The OS layering — final component tree
 
-44 live modules, 7 layers. A module may only depend on its own layer's peers
+43 live modules, 7 layers (44 until friction-round 3 dissolved `org`,
+INTENT #132). A module may only depend on its own layer's peers
 and lower layers; every cross-app call goes through the local mesh daemon
 (single-port locality, `:3649`); in-process linking across app boundaries is
 forbidden (INTENT #29), shared libs excepted (compiled in — `types`,
@@ -198,14 +321,19 @@ L4 data+execution  db (app)         vdb (app; "stack" = the pattern name)
                    execution-engine (shared-lib)   kg (app)   rollup (app)
 L5 services/apps   inference (app) ── store engine scheduler models cache
                                       telemetry benchmark api (8 internal libs)
-                   repo (app)       ccd (app)      dashboard (ui/dashboard)
-L6 org plane       org  projects  artifacts  environments  cicd
+                   repo (app)       cc (app)      dashboard (ui/dashboard)
+L6 org plane       projects  artifacts  environments  cicd
    (STUB track)    spend  agents  aui  openrouter-mgmt
                    (design notes + anticipated contracts; "not implementing now")
+                   [org — DISSOLVED, friction-round 3, INTENT #132: emergent,
+                    "just a bunch of coordinators"; org.md is a tombstone-with-
+                    content holding the coordinator/owner concept]
 
-candidate          onion (schema-delta layering — INTENT #122; existence and
-   (undecided)     placement both undecided; requirements-only stub; a
-                   dedicated KG-templating discussion round required first)
+candidate          schema (schema management: versions + layering, nested
+   (placement      inheritance to arbitrary depth — INTENT #122/#131; renamed
+    undecided)     from `onion` at friction-round 3; accepted as a concept,
+                   placement undecided; requirements-only stub; the dedicated
+                   KG-templating discussion round is still required first)
 ```
 
 Notable placements (full reasoning in `wave2-plan.md` §1): `aws` sits at L2
@@ -241,11 +369,11 @@ round) · `network-events` (peer on/off + self-connectivity feed) ·
 **Completion data plane:**
 `v1-completion-api` (the `/v1` REST+WS surface, forwarded transparently) ·
 `node-state-poll` (router's reconcile reads) · `inference-events` (per-node
-pub/sub lifecycle stream) · `llm-calls` (ccd → inference, metering-shaped).
+pub/sub lifecycle stream) · `llm-calls` (cc → inference, metering-shaped).
 
 **Observability plane:**
 `dashboard-feed` (browser fan-out + REST + static hosting) · `gc-events` ·
-`ccd-events` · `system-state` (SystemState incl. the wave-2
+`cc-events` · `system-state` (SystemState incl. the wave-2
 `effective_max_concurrent`).
 
 **Storage plane:**
@@ -259,29 +387,33 @@ design-only + creds + S3 CSE keys + genesis rule) · `openrouter-secrets`
 
 **Data & execution plane:**
 `db-control-plane` · `db-inference-init` · `vdb-db` (the `db serve` session
-protocol — db's second public surface; **FROZEN pending the INTENT #115
-db-serve drift discussion**) · `vdb-vfs` (SQLite-file-in-VFS;
+protocol — db's second public surface; **ACCEPTED — friction-round 3, INTENT
+#128 resolved the round-1 freeze**) · `vdb-vfs` (SQLite-file-in-VFS;
 renamed from `stack-vfs`) · `vdb-mesh` (registration/catalog/locks; renamed
 from `stack-mesh`) · `aws-vdb` (RDS+Lambda target, design-only v1) ·
 `kg-vdb` (KG built ON VDB) · `kg-vfs` (node→file pointers) · `kg-mesh` ·
 `kg-api` (the KG consumer surface — added by the contract round) ·
-`rollup-mesh` (trigger payload-assembly) · `rollup-vfs` · `rollup-ccd` ·
-`ccd-escalation` (DLQ + loop-depth-exceeded investigations, one shape).
+`rollup-mesh` (trigger payload-assembly) · `rollup-vfs` · `rollup-cc` ·
+`cc-escalation` (DLQ + loop-depth-exceeded investigations, one shape).
 
 **Inference-internal (the node's crate contracts):**
 `store-access` · `engine-exec` · `model-ensure` · `kv-cache` ·
 `benchmark-collections` · `api-dispatch`.
 
 **Service/application plane:**
-`service-registration` (ccd as registrant/resolver) · `agent-management`
-(spawn/track/signal/stream/reap) · `org-on-ccd` (+ the maximalist-consumer
-read bundle) · `repo-vfs` · `repo-environments` (v1-facing shape pinned
+`service-registration` (cc as registrant/resolver) · `agent-management`
+(spawn/track/signal/stream/reap) · `org-on-cc` (the maximalist-consumer
+read bundle — party dissolved at friction-round 3, INTENT #132; survives
+as the shaped-for record for the coordinator/owner concept) · `repo-vfs` ·
+`repo-environments` (v1-facing shape pinned
 despite environments being stub-track) · `cicd-repo`.
 
 **L6 stub-track (anticipated contracts, content deferred):**
 `projects-vfs` · `projects-mesh` · `projects-kg` · `projects-rollup` ·
-`projects-vdb` · `projects-artifacts` · `ccd-projects` · `spend-ccd` ·
-`agents-ccd` · `aui-mesh` · `openrouter-spend` · `environments-vdb`.
+`projects-vdb` · `projects-artifacts` · `cc-projects` · `spend-cc` ·
+`agents-cc` (Claude-Code shape only — INTENT #137) · `aui-mesh` ·
+`openrouter-spend` · `environments-vdb`. (All seven former `*-ccd` names
+were renamed `*-cc` at friction-round 3, INTENT #131.)
 
 **Tombstones (4):** `mesh-registry-read`, `registry-replication`,
 `stack-vfs`, `stack-mesh` — each file explains its supersession.
@@ -301,7 +433,7 @@ mesh daemon on `:3649` and resolves every dependency by slug — never a static
 URL. Records ride `replicated-kv` (leases + heartbeats + LWW tombstones), so
 "anywhere you access mesh is exactly the same."
 
-- **Addressing classes:** `Singleton` (db, ccd, kg, secrets…) · `NodeScoped`
+- **Addressing classes:** `Singleton` (db, cc, kg, secrets…) · `NodeScoped`
   (gc `:8430`, vfs legs, per-node `inference` instances) · `FleetAlias` — a
   **resolve-time policy** on the `inference` slug (→ local `:3649` →
   completion-router), NOT a stored record. Per-node `inference` registration
@@ -324,7 +456,7 @@ URL. Records ride `replicated-kv` (leases + heartbeats + LWW tombstones), so
 ## Standing cross-cutting principles
 
 1. **INTENT wins.** Where scaffold text conflicts with the INTENT ledger
-   (#1–#127), INTENT governs.
+   (#1–#141), INTENT governs.
 2. **Provenance is first-order** — healthcare-grade traces on every handler
    touch; scoped per-project/per-database; VDB is its primary home; VFS
    carries a lighter requirement.
@@ -357,7 +489,9 @@ URL. Records ride `replicated-kv` (leases + heartbeats + LWW tombstones), so
    please-update warning to the sender.
 10. **Naming guardrails:** the module is `vdb`, "stack" is the pattern;
     "ripples" is RESERVED and names nothing in v1; `inference` will not be
-    renamed; the system is **Substrate** (INTENT #120).
+    renamed; `ccd` is now `cc` and `onion` is now `schema` (INTENT #131);
+    the system's WORKING name is **Substrate** — the final name is OPEN
+    (INTENT #129/#141, superseding #120's "resolved").
 11. **Process law — boring decisions only (friction-round 2, INTENT #124):**
     in the next scaffolding run, agents capture all open questions and make
     BORING decisions only. "I want them to make boring decisions, and if a
@@ -373,16 +507,28 @@ URL. Records ride `replicated-kv` (leases + heartbeats + LWW tombstones), so
 
 ## L6 / placeholder section
 
-The nine L6 modules are **design stubs with anticipated contracts, explicitly
-"not implementing now"** (INTENT #49/#51): `org` (autonomous organizations —
-owning agents + the negotiation protocol; minimum imports inference+ccd+db),
+**The L6 purpose statement (friction-round 3, INTENT #134):** "We need a
+bunch of boring services, but one of those boring services enables the
+future of mind work. That's what we're aiming towards at the layer-6 level."
+
+The eight L6 modules (nine until `org` dissolved — friction-round 3, INTENT
+#132) are **design stubs with anticipated contracts, explicitly
+"not implementing now"** (INTENT #49/#51):
 `projects` (graphical FS over VFS via a KG graph; the confirmed .mind
 workspace-schema migration — heavy design notes retained), `artifacts` ("no
-more files — artifacts"), `environments` (stub-track yet load-bearing: it
+more files — artifacts"; reframed at friction-round 3 as objects with
+attributes AND METHODS that agents interact with, tools visible in scope —
+INTENT #136), `environments` (stub-track yet load-bearing: it
 pins the v1-facing `repo-environments` shape), `cicd` (own-crate vs
 emergent-from-repo OPEN), `spend` (pull-shaped cost queries), `agents` (the
-generalization ON TOP of ccd — never absorbs it), `aui` (voice interface over
-the mesh), `openrouter-mgmt` (per-key budgets). **`ripples` — RESERVED
+generalization ON TOP of cc for the Claude-Code shape — never absorbs it;
+custom agents call OpenRouter/inference DIRECTLY, INTENT #137), `aui`
+(voice interface over the mesh), `openrouter-mgmt` (per-key budgets).
+**`org` is NOT a module (INTENT #132):** "org is emergent — it just is a
+bunch of coordinators," probably a KG linking coordinators with typed edges
+(reports-to, delegates-to, may-create-sub-coordinators); possibly a future
+org NODE with a chief owner attached; `org.md` is its tombstone-with-content
+and the home of the coordinator/owner concept. **`ripples` — RESERVED
 TERM**: a future KG micro-agent system; not designed, not discussed, and the
 word must not name the execution-engine or any propagation mechanism.
 **App-development framework (INTENT #118, future scope, noted only):** "We
@@ -398,38 +544,33 @@ can be swapped without re-engineering. Wanted alongside it: a KG around tool
 uses and feedback on tools. Governed by standing principle 12
 (don't-reinvent). Not designed, not scheduled.
 
-**Coordinators — a first-order concept, dedicated discussion required
-(INTENT #123, recorded not designed):** the operator's verbatim-grade
-sketch: coordinators attach to workspaces; workspaces often attach to
-worktrees; workspaces could be pulled out as their own thing built on top of
-VDB; **one coordinator per workspace**. "I really only like to talk to
-coordinators — I don't like talking to individual agents at all." AUI
-threads = a coordinator with a workspace attached. Coordinators live inside
-a project on a branch; the workspace merges into other branches with it.
-**Coordinator compaction:** "I should be able to compact the thread and
-basically lose nothing." Coordinator-as-a-SERVICE is worth considering. The
-git+projects+environments+coordinators interplay is currently "a bunch of
-disparate things" that must be made elegant together. → `projects.md`.
-
-**THE ENDGAME — topological OWNERS (INTENT #127, recorded verbatim-grade,
-deliberately NOT designed):** "That is it, dude. That is what we're going
-for." An **owner** is a coordinator-like daemon with NO human in the loop,
-idle unless woken, owning a thing (an app, a project, a component). Flow: a
-user's coordinator sends feedback to an owner → the owner examines its
-thing, responds with a proposal + new data contract → the requester
-(human-in-the-loop via their coordinator) approves → the owner dispatches
-subagents as a coordinator would → reports completion + new contract +
-version info. "All of our boring services will be very easy to update."
-Name: **owner** (over manager/lead) — "it owns a thing; once we build a
-thing, we put an owner in charge of it, and that's how we improve the thing
-in the future." Owners arrange **hierarchically over the topological map**
-of projects/sub-projects/components — THE primitive for building autonomous
-organizations. The operator's own open questions: org or projects? KG
-relationship — how much graph feeds an owner on wake? Is an owner exactly a
-coordinator without a human (leaning YES — owners wake to a perfectly
-organized workspace)? How to keep the topological map linearly separable —
-add coordinators, establish relationships, sometimes merge them? →
-`org.md`.
+**Coordinators/OWNERS — ONE first-order concept, dedicated discussion
+required (INTENT #123, sharpened by #127/#130/#132/#133; recorded not
+designed):** friction-round 3 resolved that **coordinator and owner ARE THE
+SAME THING** (INTENT #130) — an owner is a coordinator with no human in the
+loop — and the org crate dissolved into this concept (INTENT #132). The
+round-2 sketch stands: coordinators attach to workspaces; workspaces often
+attach to worktrees; **one coordinator per workspace**. "I really only like
+to talk to coordinators — I don't like talking to individual agents at
+all." AUI threads = a coordinator with a workspace attached. Coordinators
+live inside a project on a branch; the workspace merges into other branches
+with it. **Coordinator compaction:** "I should be able to compact the
+thread and basically lose nothing." The round-3 sharpening (INTENT
+#130/#133): the concept becomes a **MINI-HARNESS** — multi-threaded (one
+human thread + persistent per-message threads), an **HTTP-like message
+protocol** for sending one message to a workspace coordinator, handled in a
+dedicated thread then **broadcast to sibling threads** in the same space;
+messaging capability, a dedicated workspace construct, and compaction built
+in. Each coordinator has its own KG and workspace; the workspace concept
+stays AS IT IS (the existing .mind construct); per-node-TYPE directory
+structures are tracked within the `schema` service; the archetype wants a
+grounded name (deva, angel — "a spiritual construct, an archetype — but
+grounded, not mystical"). The endgame flow (INTENT #127 — owners
+hierarchical over the topological map, propose → approve → dispatch →
+report with contract + version info) now lives under this concept. The
+git+projects+environments+coordinators interplay is still "a bunch of
+disparate things" that must be made elegant together. Full verbatim-grade
+record: → `org.md` (the concept's home) and `projects.md`.
 
 ## History
 

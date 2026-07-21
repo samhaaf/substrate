@@ -318,7 +318,7 @@ contract edges. Contract edges, grouped:
   (pubsub-relay), `network-events` (network-topology), `tailscale-status`
   (tailscale-query), `v1-completion-api` / `node-state-poll` (completion-router),
   `dashboard-feed` / `surface-schema` / `inference-events` / `gc-events` /
-  `ccd-events` (dashboard-serving), `queues-api` / `locks-api` / `cron-api`
+  `cc-events` (dashboard-serving), `queues-api` / `locks-api` / `cron-api`
   (queues/locks/cron). mesh-core provides the transport and boot they ride; their
   wire shapes are their designers' to propose in batches 2–3.
 
@@ -399,5 +399,5 @@ are superseded by them.
   `pubsub-protocol` (pubsub-relay), `network-events` (network-topology),
   `tailscale-status` (tailscale-query), `v1-completion-api` / `node-state-poll`
   (completion-router), `dashboard-feed` / `surface-schema` / `inference-events`
-  / `gc-events` / `ccd-events` (dashboard-serving), `queues-api` / `locks-api`
+  / `gc-events` / `cc-events` (dashboard-serving), `queues-api` / `locks-api`
   / `cron-api` (queues/locks/cron). → `scaffold/contracts/`

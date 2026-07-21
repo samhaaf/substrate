@@ -179,7 +179,7 @@ LWW flip and mesh-core's `ProcessControl`:
    lease + a passing health check against `Endpoint.health_path`) up to a
    `handoff_deadline`. If it never becomes healthy → **abort**: keep the old,
    kill the new, raise `SuperError::HandoffStalled { slug }` + alarm (dashboard,
-   optionally ccd). No flip happens; the old instance was never disturbed.
+   optionally cc). No flip happens; the old instance was never disturbed.
 3. **Flip** — write the registry LWW entry `slug -> new endpoint` (newest
    `version` wins; INTENT #32). Resolves now route to the new instance. This is
    the atomic cut-over; single-port locality means callers never notice.
@@ -231,9 +231,9 @@ and applies:
 - **Crash-loop detection:** N crashes within a rolling window → stop restarting,
   mark the service `Degraded`, raise `SuperError::CrashLooping { slug, count }`,
   and escalate — surface on the dashboard and hand a
-  `ccd-escalation`-shaped investigation to CCD (the same escalation surface
+  `cc-escalation`-shaped investigation to cc (the same escalation surface
   DLQ/loop-depth uses — INTENT #70/#89; flagged as a shared shape below, authored
-  by queues/ccd, consumed here).
+  by queues/cc, consumed here).
 - **`critical` services** (concern 1) get a shorter backoff and louder alarm; a
   non-critical service's crash loop degrades quietly.
 
@@ -318,7 +318,7 @@ independently reconciles a globally-eventually-consistent desired state.**
    dependant's pairwise requirement unmet AND a compatible binary is present,
    supervision issues a **HIGH-priority (L3) compatibility restart** (INTENT #77)
    to roll the dependant to a compatible version. If no compatible binary is
-   present, it marks the service `Degraded` and surfaces it (dashboard + ccd) —
+   present, it marks the service `Degraded` and surfaces it (dashboard + cc) —
    **never silently runs an incompatible pairing.**
 
 6. **Dispositions after friction-round 1 (INTENT #113):** (a) binary delivery +
@@ -365,9 +365,9 @@ not a contract edge — INTENT #29/#45).
 - **mesh-core** (parent shell) — consumes `trait ProcessControl`
   (spawn/signal/adopt/discover) and provides `trait Supervisor` (boot plan,
   restart choreography) UP to the Bootstrapper. In-process trait seams.
-- **ccd** via `ccd-escalation` (consumed, not authored) — crash-loop /
+- **cc** via `cc-escalation` (consumed, not authored) — crash-loop /
   incompatibility investigations ride the same escalation shape as DLQ /
-  loop-depth (INTENT #70/#89). Authored by queues/ccd; supervision is a producer.
+  loop-depth (INTENT #70/#89). Authored by queues/cc; supervision is a producer.
 - Imports `substrate-types` (`restart`, `node`, `id`, `error` vocabulary) — a
   shared-lib dependency, NOT a contract edge.
 

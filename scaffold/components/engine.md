@@ -206,7 +206,7 @@ only `LlamaBackend` (+ text stubs) exist, and implement nothing image/video:
 
 `Vllm`/`Mlx` stubs stay **Text** modality; `RemoteApiBackend` remains the
 proxy-to-external seam (a legitimate future *fallback* backend when local hardware
-is unavailable — distinct from CCD, which is external Claude-Code and explicitly
+is unavailable — distinct from cc, which is external Claude-Code and explicitly
 NOT routed to inference, INTENT #40). **Implement none of image/video now** —
 this concern only pins the seam so later is additive.
 

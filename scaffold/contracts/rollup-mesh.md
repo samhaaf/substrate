@@ -31,7 +31,7 @@ rollup authors this edge. Two facets: (a) rollup's own registration
 Reused from `types::rollup`: `RollupTarget`, `RollupRef`, `RefTarget`,
 `InsertForm`, `VersionSpec`, `SlotMap`, `ScopeChain`, `Resolved`,
 `PluginManifest`, `MaterializeResult`, `RollupError`, `CallerContext`;
-`OutputSink` (from `rollup-ccd`).
+`OutputSink` (from `rollup-cc`).
 
 ```rust
 // caller -> rollup (over pubsub-protocol / mesh WS)
@@ -42,7 +42,7 @@ enum RollupClientMsg {
                    scope: ScopeChain, caller: CallerContext },
                  // -> Vec<ResolvedInsert>   (the trigger-assembly subset queues needs)
     Materialize  { manifest: PluginManifest, slots: SlotMap, scope: ScopeChain, output: OutputSink },
-                 // -> MaterializeResult      (same op as rollup-ccd::AssemblePlugin)
+                 // -> MaterializeResult      (same op as rollup-cc::AssemblePlugin)
     ListFragments{ scope: ScopeChain },
                  // -> Vec<FragmentUse>       (metadata only — no bodies)
 }
@@ -93,10 +93,10 @@ reference time (queues.md concern 2).
   canonical. The two describe the identical operation (resolve a `Vec<RollupRef>`
   against an event subject) — no semantic disagreement, only a name. Noted so
   queues' fill imports `ResolveRefs`.
-- **`Materialize` shared with `rollup-ccd`.** `RollupClientMsg::Materialize` and
-  `rollup-ccd::AssemblePlugin` are one operation (see `rollup-ccd` reconciliation
+- **`Materialize` shared with `rollup-cc`.** `RollupClientMsg::Materialize` and
+  `rollup-cc::AssemblePlugin` are one operation (see `rollup-cc` reconciliation
   notes); the generic `rollup-mesh` surface carries it under `Materialize` with a
-  `slots` field, ccd's named edge under `AssemblePlugin` with `runtime_slots`.
+  `slots` field, cc's named edge under `AssemblePlugin` with `runtime_slots`.
   One implementation.
 - **No competing mesh-side proposal** for registration — plain `service-lookup`
   instance, adopted verbatim. `AnyNode` addressing is rollup's stateless-service
@@ -105,7 +105,7 @@ reference time (queues.md concern 2).
 ## Example data
 
 A `queues` trigger on **macbook** assembles an incident-investigation payload
-(the `ccd-escalation` path): its `AssemblyTemplate` has a `Rollup(RollupRef)`
+(the `cc-escalation` path): its `AssemblyTemplate` has a `Rollup(RollupRef)`
 node that inlines an incident-summary fragment and *references* (not inlines) the
 `code-review` skill:
 
@@ -130,6 +130,6 @@ node that inlines an incident-summary fragment and *references* (not inlines) th
                    "version": "Latest", "inline_slots": {} } } ]
 ```
 
-The assembled payload feeds the `ccd-escalation` investigating agent; the
+The assembled payload feeds the `cc-escalation` investigating agent; the
 `code-review` skill stays a reference (token-saving, prefix-cache-stable),
 carrying the same `correlation_id` across the causal chain.

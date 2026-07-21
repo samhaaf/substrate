@@ -89,7 +89,7 @@ transparent to rollup.
 ## Example data
 
 rollup, on **macbook**, resolves the `code-review` fragment for the `demo`
-project (from `rollup-ccd`'s assembly). It lists versions, reads the latest, and
+project (from `rollup-cc`'s assembly). It lists versions, reads the latest, and
 records the content hash:
 
 ```jsonc
@@ -116,5 +116,5 @@ records the content hash:
   "class": "Immutable", "content_hash": "sha256:9a1f…", "size": 2210, "replication": 2 }
 ```
 
-The `content_hash sha256:9a1f…` matches the one recorded in `rollup-ccd`'s
+The `content_hash sha256:9a1f…` matches the one recorded in `rollup-cc`'s
 provenance — the same fragment, exactly reproducible.

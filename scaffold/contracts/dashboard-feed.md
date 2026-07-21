@@ -38,7 +38,7 @@ ANY  /api/nodes/:id/:slug/*  -> same-origin proxy -> resolve(slug,id) -> mesh re
 
 ```rust
 // browser -> daemon : exactly types::pubsub::PubSubClientMsg, but Publish is REJECTED
-//   Subscribe   { filters: Vec<TopicFilter> }   // Prefix("inference"|"gc"|"ccd"|"network"|"dashboard")
+//   Subscribe   { filters: Vec<TopicFilter> }   // Prefix("inference"|"gc"|"cc"|"network"|"dashboard")
 //                                                //   + Completion(id) for the per-completion view (INTENT #5)
 //   Unsubscribe { subscriber_id: Uuid }
 //   Publish(..)                                 // -> Error { code: NotRegistered } (read-only observer)
@@ -139,7 +139,7 @@ pub struct GpuStats  { pub utilization_fraction: f32, pub is_estimate: bool } //
 - **REST proxy is aggregation, never routing** (`dashboard-serving.md`): the
   `ANY /api/nodes/:id/:slug/*` proxy resolves + relays through mesh; it does not
   itself become a routing layer. This subsumes the wave-1 per-service "REST
-  proxy" affordances (`inference-events`/`gc-events`/`ccd-events`) into one
+  proxy" affordances (`inference-events`/`gc-events`/`cc-events`) into one
   same-origin path.
 
 ## Example data
@@ -159,18 +159,18 @@ Fleet = **macbook** + **pi**. Browser loads `http://macbook:3648/`, then:
 The frontend renders pi's GPU as `~12%` with a tooltip (INTENT #9).
 
 `GET /api/surface` returns a `DashboardManifest` whose `navigation` includes a
-`NavKind::Service` entry for `ccd` (surface_slug `ccd`) and a `NavKind::Project`
+`NavKind::Service` entry for `cc` (surface_slug `cc`) and a `NavKind::Project`
 entry for **demo**; `surfaces` carries the `SurfaceSchema` each live service
 published (inference on macbook advertises model `qwen3-4b` in its schema fields).
 
 WS session on `/events`:
 ```
-browser -> { "Subscribe": { "filters": [ { "Prefix": "ccd" }, { "Prefix": "network" } ] } }
+browser -> { "Subscribe": { "filters": [ { "Prefix": "cc" }, { "Prefix": "network" } ] } }
 daemon  -> { "Ack": { "envelope_id": "…" } }
-daemon  -> { "Delivery": { "topic": "ccd/macbook/agent",
+daemon  -> { "Delivery": { "topic": "cc/macbook/agent",
                            "provenance": { "origin_node": "macbook" },
-                           "payload": { "event_type": "ccd.agent.started", … } } }
+                           "payload": { "event_type": "cc.agent.started", … } } }
 ```
-The frontend keys that delivery to the macbook cell of the CCD panel. If the
+The frontend keys that delivery to the macbook cell of the cc panel. If the
 browser accidentally sends `Publish`, the daemon answers
 `{ "Error": { "code": "NotRegistered", "detail": "read-only observer" } }`.

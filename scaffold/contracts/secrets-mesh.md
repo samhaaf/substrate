@@ -21,7 +21,7 @@ Two facets, both over the **local** mesh daemon (single-port locality, INTENT
 
 1. **Registration / resolution** — an ordinary `service-lookup` instance:
    secrets registers `slug="secrets"` at its endpoint so consumers
-   (rollup/repo/vdb/db/aws/vfs/ccd/environments) resolve it, and secrets resolves
+   (rollup/repo/vdb/db/aws/vfs/cc/environments) resolve it, and secrets resolves
    `db`/`aws`/peers by slug.
 2. **The mesh-brokered `secrets/` KV keyspace** — a keyspace-scoped surface mesh
    exposes ONLY to the registered `secrets` slug, relaying put/get/scan/watch of

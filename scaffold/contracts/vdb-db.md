@@ -1,19 +1,23 @@
 # Contract: vdb-db
 
-> **[FROZEN — operator flagged possible drift; do not build; discussion
-> pending (friction-round 1, 2026-07-19, INTENT #115).]** This whole contract
-> rides the `db serve` daemon mode, which the operator has flagged as possible
-> design drift. His recollection, verbatim: "We explicitly were keeping the db
-> crate as a standalone crate that you call as a tool, and we talked about
-> having a virtual database VDB service accessed through the mesh. I'm going
-> to push back and say I believe there was some drift that happened, and we
-> need to talk about it before I commit to anything with respect to the
-> database statement." I.e. db = standalone CLI tool; VDB = the mesh-accessed
-> daemon — the daemon role may belong to VDB, with vdb reaching `lib/db`'s
-> capabilities some other way (to be discussed). The design below is
-> deliberately RETAINED, not deleted, as the discussion input. Note also:
-> mesh may use db via **direct CLI execution** for its own database (no
-> daemon, no mesh dependency).
+> **[UNFROZEN — ACCEPTED (friction-round 3, 2026-07-20, INTENT #128;
+> resolves the friction-round-1 INTENT #115 drift flag).]** The operator
+> accepts the `db serve` daemon mode this contract rides, verbatim: "Now
+> that you mention there are drivers for sessions that need to run, it
+> actually does make sense to have a session concept with a headless
+> stateful daemon running as part of db... VDB is basically just a
+> virtualized layer to our databases that allows the same access regardless
+> of environment or underlying technology. If it wants to delegate to the
+> db CLI so you don't have to redefine the same tools twice, that makes
+> sense. That's okay with me. VDB just has to keep track of which
+> statements it has running and do proper cleanup and session management."
+> The division on this edge, clarified: **db owns the headless stateful
+> session daemon; vdb is the virtualization layer** (same access to
+> databases regardless of environment/underlying technology), **delegating
+> to db so the same tools aren't defined twice — and vdb owns statement
+> tracking, cleanup, and session management** over the sessions it opens
+> here. Note also (unchanged): mesh may use db via **direct CLI execution**
+> for its own database (no daemon, no mesh dependency).
 
 ## Parties
 `vdb` daemon (`bin/vdb` on a database-hosting node) → `db` daemon (`db serve`

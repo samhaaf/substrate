@@ -150,7 +150,7 @@ Design:
   observer/api on read. `insert_completion` (`completions.rs:93`) gains a
   `&Provenance` argument that the `api` layer stamps from the inbound `/v1`
   request envelope (which already carries `Provenance` per `types.md` `pubsub.rs`).
-  A CCD `llm-calls` completion thus records `origin_service = "ccd"` +
+  A cc `llm-calls` completion thus records `origin_service = "cc"` +
   `correlation_id` = the agent session's chain root; a benchmark completion
   records `origin_service = "benchmark"`.
 - **Atomic by construction.** Unlike `db` (which needs a *separate* `ops.provenance`

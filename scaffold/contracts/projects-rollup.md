@@ -9,7 +9,7 @@ mechanism. Content deferred until `projects` leaves the stub track.)*
 ## Purpose
 *"Tasks are rolled up"* (INTENT #51): `projects` derives a `ScopeChain` from the
 project hierarchy and resolves task/artifact bodies via `rollup`'s
-fragment-reference system — the same rollup that assembles CCD plugins assembles
+fragment-reference system — the same rollup that assembles cc plugins assembles
 project task/artifact content.
 
 ## Rough shape

@@ -136,7 +136,7 @@ the subscribe path — see friction points (this is a concrete ask of
   status snapshots (the sole input); network-topology is the SOLE consumer of
   this edge since the contract round (completion-router dropped — see
   scaffold/contracts/tailscale-status.md Reconciliation notes).
-- any subscriber (ccd, org, mesh's in-process observability hub) via
+- any subscriber (cc, org, mesh's in-process observability hub) via
   `network-events` — **produces** the topology + self-connectivity WS feed on
   topic `net.topology` (scaffold/contracts/network-events.md).
 - `pubsub-relay` (in-process sibling lib) — the transport `network-events` rides:
@@ -201,7 +201,7 @@ are superseded by them.
     `relay: Option<String>` was kept at this module's request.
   - Participation note: the call is synchronous per tailscale-query's charter;
     this module wraps it in `spawn_blocking` + its own `timeout`.
-- `network-events` (network-topology → subscribers ccd, org, and mesh's
+- `network-events` (network-topology → subscribers cc, org, and mesh's
   in-process observability hub) — the provenance-tagged `net.topology` feed
   (retained `Snapshot` + `Peer*`/`SelfOffline`/`SelfOnline` deltas, the
   peers-unknown-under-self-offline and seq-gap rules).

@@ -41,7 +41,7 @@ pub/sub protocol like everyone else, and is not aware of the ports of the
 services it drives (single-port locality, INTENT #58).
 
 **Boundary — what `aui` does NOT own.** It is not a new integration surface for
-each service, not a completion runtime (inference), not an agent manager (ccd),
+each service, not a completion runtime (inference), not an agent manager (cc),
 and not a knowledge/graph plane. It **composes existing service surfaces into a
 voice-navigable experience**; it reimplements none of them.
 
@@ -88,19 +88,19 @@ benefits the dashboard too) — **not** to grow an AUI-specific integration edge
 ## Thread / conversation linkage to projects
 
 The operator drives by voice in ongoing **conversations**; those conversations
-are the same kind of object CCD already tracks as **threads**, and CCD already
+are the same kind of object cc already tracks as **threads**, and cc already
 links **thread↔project (+ optional environment)** in its ledger (INTENT #68;
-ccd.md `agent_runs.project_id?`/`environment_id?`, the `ccd-projects` edge).
+cc.md `agent_runs.project_id?`/`environment_id?`, the `cc-projects` edge).
 
-- **Anticipated shape:** an AUI conversation is (or maps to) a CCD-style thread,
+- **Anticipated shape:** an AUI conversation is (or maps to) a cc-style thread,
   carrying the same optional `(project, environment)` linkage — so "what I said
   by voice" attaches to the right project the same way an agent run does. This
   reuses `ThreadId` / `ProjectId` / `EnvRef` identities already pinned in
-  ccd.md/environments.md; **no new identity type.**
+  cc.md/environments.md; **no new identity type.**
 - **Not decided this pass:** whether AUI owns its own conversation records or
-  registers them as threads *through* CCD (the natural path, since CCD already
+  registers them as threads *through* cc (the natural path, since cc already
   owns the thread↔project ledger and `agent-management`). Recorded as an open
-  question, not resolved — projects and CCD's stub-track `ccd-projects` are the
+  question, not resolved — projects and cc's stub-track `cc-projects` are the
   neighbors that settle it.
 
 ## Relationship to the interface-layer branch — OUT OF SCOPE
@@ -122,8 +122,8 @@ AUI consumes the mesh's cross-cutting planes, not a fixed roster of services.
 | mesh.service-registry | `service-lookup` | discover + resolve every service to drive |
 | every service | `surface-schema` | the render/interaction description → voice grammar |
 | mesh (pub/sub) | `pubsub-protocol` | live event subscription for spoken state |
-| `ccd` (realistic) | `ccd-projects` reuse / `agent-management` | conversation-as-thread + thread↔project linkage |
-| `projects` (realistic) | via CCD's thread↔project link | attach voice conversations to projects |
+| `cc` (realistic) | `cc-projects` reuse / `agent-management` | conversation-as-thread + thread↔project linkage |
+| `projects` (realistic) | via cc's thread↔project link | attach voice conversations to projects |
 
 ## Anticipated contracts (wave 2, stub track)
 
@@ -143,12 +143,12 @@ voice consumer.*
   `aui` leaves the stub track, `aui-mesh`'s content should be **authored as a
   binding of those three contracts, not as new surface area.**
 
-- **`ccd-projects` reuse** (aui → ccd/projects; anticipated, not a new stub).
-  *Purpose:* an AUI conversation is a CCD-style thread carrying the optional
-  `(project, environment)` linkage (INTENT #68). *Rough shape:* reuse ccd.md's
+- **`cc-projects` reuse** (aui → cc/projects; anticipated, not a new stub).
+  *Purpose:* an AUI conversation is a cc-style thread carrying the optional
+  `(project, environment)` linkage (INTENT #68). *Rough shape:* reuse cc.md's
   existing thread↔project ledger + `agent-management`; AUI registers/labels
   conversations as threads rather than inventing a parallel record. Whether AUI
-  owns conversation records or delegates to CCD is open (below). No new identity
+  owns conversation records or delegates to cc is open (below). No new identity
   type; no AUI-owned contract stub this pass.
 
 ## Open questions
@@ -156,9 +156,9 @@ voice consumer.*
 1. **Substrate `aui` vs. the harness AUI.** Does substrate's `aui` supersede,
    wrap, or share code with the existing `~/code/harness/apps/aui`? Provenance
    noted; the relationship is unresolved.
-2. **Conversation ownership: AUI-owned vs. CCD-registered.** Are AUI
-   conversations first-class AUI records, or CCD threads created through
-   `agent-management`? The thread↔project ledger already lives in CCD, which
+2. **Conversation ownership: AUI-owned vs. cc-registered.** Are AUI
+   conversations first-class AUI records, or cc threads created through
+   `agent-management`? The thread↔project ledger already lives in cc, which
    argues for delegation — but not decided this pass.
 3. **Voice grammar from a render-oriented schema.** `surface-schema` was designed
    to describe *rendering + calls* for the dashboard. Is that description rich

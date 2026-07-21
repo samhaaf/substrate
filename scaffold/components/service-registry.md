@@ -102,7 +102,7 @@ pub struct Endpoint {                 // refines "slug -> host:port": a browsabl
 }
 
 pub enum AddressingClass {
-    Singleton,   // exactly one live instance mesh-wide (db, ccd, kg, projects, org, secrets)
+    Singleton,   // exactly one live instance mesh-wide (db, cc, kg, projects, org, secrets)
     NodeScoped,  // one live instance per node (gc :8430, per-node vfs leg, inference api)
     FleetAlias,  // resolve-time POLICY on the inference slug (-> local mesh :3649) — NOT a stored record; concern 5 as relaxed
 }
@@ -292,12 +292,12 @@ The registry is the *discovery half* of two process-hygiene duties; mesh-core's
 Contract edges (cross-process WS/wire, rides mesh-core's `mesh-transport` frame on
 `:3649`):
 
-- **any device/service (ccd, org, inference, vfs, kg, projects, secrets, the mesh
+- **any device/service (cc, org, inference, vfs, kg, projects, secrets, the mesh
   CLI) ↔ service-registry** via `service-lookup` — register / renew / deregister /
   resolve / resolve_all / list; THE wiring seam. Client half is `mesh-client`.
   (scaffold/contracts/service-lookup.md)
-- **ccd ↔ service-registry** via `service-registration` — CCD as a first-class
-  registrant+resolver; an *instance* of `service-lookup`, called out because CCD
+- **cc ↔ service-registry** via `service-registration` — cc as a first-class
+  registrant+resolver; an *instance* of `service-lookup`, called out because cc
   is both. No distinct schema (an instance of `service-lookup`).
   (scaffold/contracts/service-registration.md)
 - **mesh daemon ↔ mesh daemon** via `kv-replication` — the collapse HAPPENED at
@@ -388,7 +388,7 @@ formerly in this section are superseded by the authored contracts.
     real endpoint. `FleetSlugNotRegisterable` is narrowed to guard only a
     caller writing a *stored* FleetAlias record. The body of this file was
     updated to the winning shape at harmonization.
-- `service-registration` — (ccd ↔ mesh.service-registry) — an instance of `service-lookup`. → `scaffold/contracts/service-registration.md`
+- `service-registration` — (cc ↔ mesh.service-registry) — an instance of `service-lookup`. → `scaffold/contracts/service-registration.md`
 - `kv-replication` (mesh daemon ↔ mesh daemon) — the registry is a keyspace TENANT of the one replication protocol; `registry-replication` is a superseded tombstone. → `scaffold/contracts/kv-replication.md`
 
 Also a party to (cross-cutting): `restart-protocol` (registry flip in port-handoff), `surface-schema` — see `scaffold/contracts/`.

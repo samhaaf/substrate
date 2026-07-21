@@ -37,7 +37,7 @@ any cross-node networking — all `dashboard-serving`/`mesh`. It holds no
 authoritative state: every byte it renders arrives through mesh's browser origin,
 and it discovers everything (which nodes exist, which services are live, where
 each is) via mesh, never a hardcoded port (INTENT #36). It does not talk to
-inference, gc, ccd, or any peer node directly, in any shape — the browser never
+inference, gc, cc, or any peer node directly, in any shape — the browser never
 leaves the single mesh origin (single-port locality reaches the browser via the
 same-origin proxy). It defines no wire protocol: the `/events` socket speaks
 `dashboard-serving`'s read-only `pubsub-relay` profile, and the render manifest is
@@ -78,7 +78,7 @@ a big-bang rewrite:
   regresses while services still lack schemas. The mount rule is per `(node,
   slug)`: **if a live slug has a published `SurfaceSchema`, render it via
   `SchemaRenderer`; else, if a hardcoded panel exists for that slug, render the
-  legacy panel; else render nothing.** As inference/gc/ccd ship their schemas
+  legacy panel; else render nothing.** As inference/gc/cc ship their schemas
   (their batch-5/3/6 passes), each legacy panel is deleted the commit its schema
   lands — the count only shrinks, and the frontend never carries two renderers
   for the same live surface. This is the honest transition the operator asked
@@ -111,7 +111,7 @@ topic }` messages with a hand-stamped `node_id`. Wave-2 replaces this with
 
 - **Subscribe frames become `PubSubClientMsg::Subscribe { filters }`.** The
   browser sends `TopicFilter`s (`Prefix("inference")`, `Prefix("gc")`,
-  `Prefix("ccd")`, `Prefix("network")`, `Prefix("dashboard")` for the fleet
+  `Prefix("cc")`, `Prefix("network")`, `Prefix("dashboard")` for the fleet
   stream; `Completion(id)` for a per-completion view — INTENT #5). Because the
   browser reads the whole fleet from its LOCAL mesh's relay
   (`dashboard-serving.md` concern 3), those top-level prefixes ARE "all";
@@ -316,7 +316,7 @@ hardcoded); prod already uses `window.location.host`, which is correct.
   `dashboard-serving`'s; the frontend-render half is in the authored contract. (see
   `scaffold/contracts/surface-schema.md`)
 
-No direct edges to inference, gc, ccd, network-topology, or any peer node —
+No direct edges to inference, gc, cc, network-topology, or any peer node —
 deliberately, to keep mesh the single always-on aggregation point.
 
 ## Nesting

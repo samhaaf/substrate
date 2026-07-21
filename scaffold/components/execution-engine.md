@@ -32,7 +32,7 @@ the OS's three hard guarantees as designed-in structure, not policy:
 3. **Loop-bounded** — causal loop detection with a loop-depth threshold on
    repeats of `(subject, handler)` in the chain (INTENT #70 — loop depth, not
    naive cascade depth), with the escalation hook publishing an incident that
-   a ccd agent investigates.
+   a cc agent investigates.
 
 **Boundary — what execution-engine does NOT own.** It is an internal library
 dependency of its host apps, **NOT a contract edge** (locked rounds 4–5;
@@ -268,7 +268,7 @@ pub type LoopKey = (SubjectKey, /*handler*/ String);   // "(table,row,handler)" 
   constant proposed **3**, fill-time-tunable): the would-be invocation is
   **parked, not run** — recorded in provenance as `outcome: LoopParked`, the
   trigger's delivery routed to the failure path (concern 5's DLQ flow), and
-  ONE `EscalationRequest { kind: LoopDepthExceeded }` published toward ccd
+  ONE `EscalationRequest { kind: LoopDepthExceeded }` published toward cc
   (deduped by the loop's identity — `(correlation_id, loop_key)` — so a hot
   loop produces one investigation, not a thousand). Park-don't-run is the
   conservative choice: by the time depth N repeats on one row, running once
@@ -276,12 +276,12 @@ pub type LoopKey = (SubjectKey, /*handler*/ String);   // "(table,row,handler)" 
   the agent to read.
 - **Optional circuit-breaker** (per-trigger `on_loop: Park | ParkAndDisable`):
   `ParkAndDisable` flips the trigger inactive until explicitly re-enabled
-  (an operator/ccd action), for triggers whose loops are known-destructive.
+  (an operator/cc action), for triggers whose loops are known-destructive.
   Default `Park`. Flagged for operator taste.
 - **The chain is bounded in memory, complete on disk.** `recent` truncates at
   K links; `counts` never truncates (it is the guardrail); the FULL chain is
   always reconstructible by walking `ee_invocations.causation_id` links in
-  provenance — which is exactly what the investigating ccd agent does.
+  provenance — which is exactly what the investigating cc agent does.
 - **The chain crosses app boundaries.** `TraceCtx` serializes into the meta
   of every engine-mediated effect: `ctx.sql` calls carry it down `vdb-db`;
   `ctx.emit` stamps `causal_parent` on the Envelope; KG's writes through VDB
@@ -323,10 +323,10 @@ contract.**
   mesh-client, `queues-api`) onto the database's dead-letter queue
   `ee.dlq.<database>` (lazily ensured; an ordinary mesh queue, INTENT #95).
   From there the standard fabric takes over: the DLQ's own declarative
-  trigger escalates to ccd exactly as queues.md concern 8 designed. **The
+  trigger escalates to cc exactly as queues.md concern 8 designed. **The
   engine builds no escalation transport of its own** — both of its escape
   hatches (dead-letter AND loop-park) ride the same queue fabric they guard,
-  and both arrive at ccd through the ONE shared `ccd-escalation` shape.
+  and both arrive at cc through the ONE shared `cc-escalation` shape.
 - `FailPolicy` (from db's contract): `FailClosed` deliveries follow the
   retry→DLQ path; `FailOpen` marks the delivery failed-and-done (logged in
   provenance, no DLQ) for advisory handlers whose failure must never gum the
@@ -368,7 +368,7 @@ policy call (its databases, its GC discipline), flagged to the vdb designer.
 The full lineage query — "everything that led to the current state" — is a
 walk: row → `ee_touches` (which invocations wrote it) → `ee_invocations`
 (what fired them, `causation_id`) → `ee_changes` (the originating changes) →
-recurse to the root user action. This is the query the investigating ccd
+recurse to the root user action. This is the query the investigating cc
 agent, the dashboard's provenance view, and the healthcare-grade audit all
 share.
 
@@ -423,13 +423,13 @@ flagged to the operator (Friction #3) rather than discovered in production —
 
 Per the wave2-plan §3 footer, execution-engine's host relationships are
 **internal library dependencies, deliberately NOT contract edges**. Its one
-assigned contract pair is `ccd-escalation` (shared with queues/ccd). It is
+assigned contract pair is `cc-escalation` (shared with queues/cc). It is
 additionally a *consumer* (through its hosts) of two cross-cutting APIs.
 
-- **mesh(DLQ)/execution-engine → ccd** via **`ccd-escalation`** — the shared
+- **mesh(DLQ)/execution-engine → cc** via **`cc-escalation`** — the shared
   investigation surface; queues (batch 2) proposed the union shape and
   assigned this design the `LoopDepthExceeded` arm — authored below.
-  *(authored: scaffold/contracts/ccd-escalation.md.)*
+  *(authored: scaffold/contracts/cc-escalation.md.)*
 - **`vdb`** — HOST (internal-lib seam, not a contract): VDB embeds the engine
   with the `Tables` adapter, implements `HostSeam` (SQL via `vdb-db`, mesh via
   its mesh-client, secrets via `vdb-secrets`, artifacts via `vdb-vfs` — the
@@ -448,7 +448,7 @@ additionally a *consumer* (through its hosts) of two cross-cutting APIs.
   (`causation_id`/`correlation_id`), `Event`, `Envelope`. NEW types proposed
   for the harmonizer: `TraceCtx`/`ChainLink`/`SubjectKey` pass the inclusion
   test (public signatures of execution-engine, vdb, kg, and the
-  `ccd-escalation` schema) → a `types` provenance-adjacent module (extend
+  `cc-escalation` schema) → a `types` provenance-adjacent module (extend
   `provenance.rs` or a sibling `trace.rs` — harmonizer's call; own-module
   guardrail says sibling).
 - **`queues`** (consumer, via host mesh-client, `queues-api`) — DLQ
@@ -495,7 +495,7 @@ posture (no net / no env / no creds; host-side traced egress with
 use-without-seeing secret injection), the `TraceCtx`/`CausalChain` structure
 with the `(subject, handler)` loop metric and park+escalate semantics, the
 deterministic-delivery idempotency contract with engine-local + `locks`
-dedup tiers, the in-band `ee_*` provenance schema, and the retry→DLQ→ccd
+dedup tiers, the in-band `ee_*` provenance schema, and the retry→DLQ→cc
 flow are all decided and specified — the no-net-by-default sandbox posture
 now operator-blessed (friction-round 2, INTENT #125).
 **approach-sketched** in three spots:
@@ -545,7 +545,7 @@ The per-pair contract round authored these edges; the contract files are
 authoritative (including their Reconciliation notes). The detailed proposals
 formerly in this section are superseded by the authored contracts.
 
-- `ccd-escalation` — the `LoopDepthExceeded` arm (mine; queues owns `DeadLetter`; ccd owns the receiver). → `scaffold/contracts/ccd-escalation.md`
+- `cc-escalation` — the `LoopDepthExceeded` arm (mine; queues owns `DeadLetter`; cc owns the receiver). → `scaffold/contracts/cc-escalation.md`
 
 Also a party to (authored elsewhere / cross-cutting): `locks-api`, `queues-api` — see `scaffold/contracts/`.
 

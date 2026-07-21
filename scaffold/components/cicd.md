@@ -28,7 +28,7 @@ A cicd pipeline:
   Cloudflare/CloudFront, and whatever else a deployment touches;
 - **verifies deployments** — polls until the deployed artifact is live and
   healthy (e.g. SHA-verification of what production actually serves);
-- **may invoke agents / CCD as pipeline steps** — an agent can be a step:
+- **may invoke agents / cc as pipeline steps** — an agent can be a step:
   diagnosing a failed run, deciding a retry, triggering an invalidation;
 - **trends deterministic** — the goal, operator-grade: "eventually make it
   deterministic with as few agents in the loop as possible." Agents are
@@ -91,11 +91,11 @@ A cicd pipeline decomposes cleanly onto the LOCKED mesh substrate:
   `deploy.failed`. No new scheduler — `cron` is the pg_cron-equivalent already.
 - **Exactly-once and loop-safety come for free.** Per-trigger event-ID
   semaphores (`locks`, INTENT #95) give exactly-once step execution;
-  `execution-engine`'s loop-depth detection + the ccd escalation hook already
+  `execution-engine`'s loop-depth detection + the cc escalation hook already
   exist for run-away retries. cicd does not reinvent any of this.
-- **Agent steps are just handlers that call ccd.** An agent-in-the-loop step
+- **Agent steps are just handlers that call cc.** An agent-in-the-loop step
   (diagnose-from-logs, decide-retry, trigger-invalidation) is a handler whose
-  code invokes ccd (`ccd-escalation`-shaped, or a direct `agent-management`
+  code invokes cc (`cc-escalation`-shaped, or a direct `agent-management`
   spawn). The "trend deterministic" goal is then literally *replacing an
   agent-invoking handler with a deterministic bash/SQL handler* over time —
   the substrate makes de-agenting a per-step edit, not a rewrite.
@@ -116,7 +116,7 @@ A cicd pipeline decomposes cleanly onto the LOCKED mesh substrate:
 
 Working hypothesis (NOT resolved): **cicd ≈ a declarative pipeline-definition
 layer + a verify vocabulary + a de-agenting ledger, sitting on queues + cron +
-locks + repo + ccd.** If that holds, cicd is thin config over frozen primitives —
+locks + repo + cc.** If that holds, cicd is thin config over frozen primitives —
 which is the boring, no-new-engine outcome the standing principles prefer. This
 directly feeds the own-crate-vs-emergent question below.
 
@@ -136,10 +136,10 @@ tradeoff precisely rather than hand-wave it:
   the watch/verify loop is small enough to live as a `repo` internal lib, and
   the whole cicd contract surface disappears. **Cheapest, fewest new crates,
   most boring.**
-- **Case for OWN-CRATE.** cicd's substrate is `queues`/`cron`/`ccd`/
+- **Case for OWN-CRATE.** cicd's substrate is `queues`/`cron`/`cc`/
   `environments`, NOT git — the GH-Actions surface (`cicd-repo`) is only *one*
   of the external services it watches (App Runner, Cloudflare have no repo
-  seam). Its agent-invoking steps pull in `ccd`; its verify loop watches AWS via
+  seam). Its agent-invoking steps pull in `cc`; its verify loop watches AWS via
   `aws`; its pipeline definitions attach to `environments`. Folding all that
   into `repo` would make `repo` own deployment orchestration, App Runner
   polling, and agent scheduling — a scope creep that violates repo's own stated
@@ -148,7 +148,7 @@ tradeoff precisely rather than hand-wave it:
   orchestration in one place.
 - **The deciding question (for the operator, later):** does the watch/verify
   loop's dependency footprint stay inside repo's world (git + GitHub) or does it
-  reach broadly across `aws`/`ccd`/`environments`/`cron`? The Deployment
+  reach broadly across `aws`/`cc`/`environments`/`cron`? The Deployment
   Chaperone touches GH Actions **and** App Runner **and** CloudFront **and**
   agents — which leans **own-crate**. But if v1's first real pipeline is
   GH-Actions-only, **emergent-from-repo** ships sooner with less. **Left OPEN;
@@ -220,16 +220,16 @@ with no stub until the own-crate-vs-emergent and hierarchy questions resolve.
   cicd is a party/consumer, authors no new mesh contract. No stub until cicd
   leaves the stub track.
 
-### `cicd → ccd` (agents as pipeline steps) — anticipated
+### `cicd → cc` (agents as pipeline steps) — anticipated
 
 - **Purpose.** An agent step (diagnose a failed run from logs, decide a retry,
   trigger a CloudFront invalidation) is a handler that invokes a cloud-code
-  agent via `ccd`. This is the "agents in the loop" the Deployment Chaperone
+  agent via `cc`. This is the "agents in the loop" the Deployment Chaperone
   embodies — and the thing cicd progressively *replaces* with deterministic
   handlers ("as few agents in the loop as possible").
-- **Rough shape.** cicd invokes ccd's `agent-management` (spawn/track/stream/reap)
-  for an agent step, or reuses the `ccd-escalation` shape (DLQ/loop-depth
-  investigation) for failure diagnosis. Metering rides ccd's usage DB; `spend`
+- **Rough shape.** cicd invokes cc's `agent-management` (spawn/track/stream/reap)
+  for an agent step, or reuses the `cc-escalation` shape (DLQ/loop-depth
+  investigation) for failure diagnosis. Metering rides cc's usage DB; `spend`
   queries it (pull-shaped). No cicd-owned stub yet.
 
 ### `cicd ↔ environments` (pipeline attachment / activation) — anticipated
@@ -265,7 +265,7 @@ question.
    above but deliberately NOT resolved; the collapse path is designed cheap
    either way (repo.md concern 8), so deferring costs nothing. Deciding input:
    does the watch/verify loop's dependency footprint stay inside git/GitHub
-   (→ emergent) or reach across aws/ccd/environments/cron (→ own-crate)? The
+   (→ emergent) or reach across aws/cc/environments/cron (→ own-crate)? The
    Deployment Chaperone touches all four, leaning own-crate; a GH-Actions-only
    first pipeline leans emergent.
 2. **hierarchy vs. `environments`** — sibling vs. child (INTENT #63; "environments
@@ -289,7 +289,7 @@ question.
 
 **requirements-only** (layer-6 design stub — **NOT implementing now**). Faithful
 capture of operator intent (mesh-resident pipelines watching external services,
-deployment verification, agents/CCD as steps, the increasingly-deterministic
+deployment verification, agents/cc as steps, the increasingly-deterministic
 goal, the Deployment Chaperone grounding) + the boring "config over queues+cron"
 hypothesis + a sharpened (unresolved) own-crate-vs-emergent tradeoff + anticipated
 contracts by name and rough shape only. No schemas frozen; content lands when cicd

@@ -93,7 +93,7 @@ catch-all**, so an older subscriber hard-fails on a newer node's new variant.
 Adding the catch-all is a `types` change, not an api change — flagged to the
 `types` refit (friction below). The raw `/v1` REST bodies themselves are NOT
 version-critical for the router (it never parses them), but ARE for typed
-consumers (`ccd`/`org`/dashboard), so additive-only still governs them.
+consumers (`cc`/`org`/dashboard), so additive-only still governs them.
 
 ### 2. Close the token-streaming gap — subscribe to the engine/scheduler broadcast seam
 
@@ -146,7 +146,7 @@ the `pubsub-relay` boundary (its concern 4/8: pub/sub is NOT the byte-transparen
 completion proxy; that is the router's `forward()`/WS-relay) — they are served by
 two mechanisms, never conflated:
 
-- **The client token stream** (a caller, or `ccd`/`org` via `llm-calls`, wanting
+- **The client token stream** (a caller, or `cc`/`org` via `llm-calls`, wanting
   the generated tokens): the `/v1/completions/:id/stream` **WebSocket**, relayed
   byte-transparently by the router (completion-router.md concern 7, a separate
   path from `forward()`). This is the primary, and only always-on, token path.
@@ -228,7 +228,7 @@ service registry, never a guessed/baked URL; types.md deprecates
 
 | Class | Routes | Who reaches it | In the mesh era |
 |---|---|---|---|
-| **Fleet-facing** (forwarded byte-transparently via `:3649`) | all `/v1/completions*`, `/v1/collections*`, `/v1/models*`, `/v1/estimate`, `/v1/benchmark/run`, the `/v1/completions/:id/stream` WS | clients, `ccd`/`org` (`llm-calls`) | reached ONLY through the router's `forward()`/WS-relay |
+| **Fleet-facing** (forwarded byte-transparently via `:3649`) | all `/v1/completions*`, `/v1/collections*`, `/v1/models*`, `/v1/estimate`, `/v1/benchmark/run`, the `/v1/completions/:id/stream` WS | clients, `cc`/`org` (`llm-calls`) | reached ONLY through the router's `forward()`/WS-relay |
 | **Mesh-internal reads** (off the request path) | `GET /v1/system/state` (+`/metrics`), `GET /v1/models`, `GET /health`, `GET /v1/benchmark/kernel` | `completion-router` (`node-state-poll`), health probes, dashboard | primary consumer is the mesh; cheap, never on the submit path (api.md wave-1 concern 2, re-affirmed) |
 | **Surface self-description** | `GET /v1/surface` (NEW, concern 6) | `dashboard-serving`'s surface pipeline (via registry) | mesh-internal pull; also pushed at registration |
 | **Standalone/dev-only** | the raw `/events` WS | a no-mesh dev browser | superseded by pub/sub in mesh mode (concern 4) |

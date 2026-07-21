@@ -95,7 +95,7 @@ crate at once). Four guardrails, in order of teeth:
 for real).** `SubstrateError` is today ONE flat enum growing by domain-tagged,
 string-payload leaves per consuming crate (`Store`, `Db`, `Engine`, `Transport`,
 `ServerUnhealthy`, …). That scales O(error-cases), not O(components): every new
-V2 component (`mesh`, `vfs`, `secrets`, `ccd`, `kg`, …) would sprinkle more
+V2 component (`mesh`, `vfs`, `secrets`, `cc`, `kg`, …) would sprinkle more
 leaves onto one already-long enum. Wave-2 restructuring (INTENT #26 unlocked
 this): `error.rs` becomes an `error/` module directory —
 
@@ -139,13 +139,16 @@ exceeded because two partitions merged," catchable, handled per-application) is
 a named variant on `LockError`, not a stringly leaf — it is a first-class,
 matchable error because applications branch on it.
 
-**Migration cost is real and is the operator's call** — see Controversial
-decisions. The existing flat inference/store/db leaves must move into their
-sub-enums, which touches every `SubstrateError::Store(...)` construction site
-across `inference`/`db`/`store`. This design specifies the target end-state;
-whether wave-2 migrates the existing leaves now or only routes NEW domains
-through sub-enums (leaving old leaves flat until each owning component is
-re-touched) is flagged, not silently chosen.
+**Migration timing — RESOLVED: NOW (friction-round 3, 2026-07-20, INTENT
+#138).** The operator's call, verbatim: "We're going to do everything before
+we even test it. There's no production use of it yet... we're going to build
+it correctly." The existing flat inference/store/db leaves migrate into
+their sub-enums **in one sweep at skeleton time — no bridge period, no
+old-leaves-stay-flat transition**. The sweep touches every
+`SubstrateError::Store(...)`-style construction site across
+`inference`/`db`/`store`; it is mechanical-but-wide and lands before any
+production use exists. The formerly-flagged migrate-now-vs-later question is
+closed.
 
 ## New wave-2 modules (all `implementation-ready`)
 
@@ -411,7 +414,7 @@ Top-level shared lib (`lib/types`). No parent, no children.
 
 `implementation-ready` — for the existing crate, the four disciplinary
 guardrails, the error-module restructuring (target end-state fully specified;
-only the migrate-now-vs-later rollout is an operator flag), and all five new
+the rollout is RESOLVED migrate-now-in-one-sweep, INTENT #138), and all five new
 wave-2 modules (`provenance`, `event`, `pubsub`, `surface`, `restart`) plus the
 `node.rs` split. The struct shapes are buildable as written; the per-pair
 contract round tunes exact field names and the mesh-side behavior, not the
@@ -427,10 +430,11 @@ mesh/completion-router component designs.
 **implementation-ready + low-to-medium complexity → cheap/fast model OK.** The
 new modules are pure data-struct declarations with serde derives — a fast model
 can transcribe them directly from this file. Two carve-outs warranting a
-slightly stronger hand or a careful reviewer: (1) the `error/` restructuring, if
-the operator elects the full migration of existing flat leaves — that is a
-mechanical-but-wide change across `inference`/`db`/`store` construction sites,
-and a wide change at the ONE seam wants care; (2) applying guardrail 4's serde
+slightly stronger hand or a careful reviewer: (1) the `error/` restructuring —
+the operator HAS elected the full one-sweep migration of existing flat leaves
+(INTENT #138) — a mechanical-but-wide change across `inference`/`db`/`store`
+construction sites, and a wide change at the ONE seam wants care; (2) applying
+guardrail 4's serde
 attributes (`#[serde(default)]`, no `deny_unknown_fields`, `#[serde(other)]`
 arms) uniformly across the wire-crossing modules — easy to get individually,
 easy to forget one, so it wants a checklist pass. Neither needs a design-depth

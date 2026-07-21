@@ -8,7 +8,7 @@ wire, never linked — INTENT #29):** mesh via `secrets-mesh` (registration +
 the mesh-brokered `secrets/` replicated keyspace), the OS keychain as
 root-of-trust, `db` via `db-secrets` (the Supabase push adapter), `aws` via
 `aws-secrets` (SM push + S3 CSE key handoff, design-only). **Consumed by:**
-`rollup`, `repo`, `vdb`/`db` handlers, `ccd`/`org` agents, `environments`,
+`rollup`, `repo`, `vdb`/`db` handlers, `cc`/`org` agents, `environments`,
 `aws`/`vfs` (S3 encryption keys), `openrouter-mgmt`. Grounded in
 replicated-kv.md (opaque-bytes replication, `mirror_values` redaction, the
 delegated aws-mesh genesis-key circularity), db.md + `lib/db/src/vault.rs`
@@ -171,7 +171,7 @@ egress path:
 - **Use surfaces (resolve-into-sink).** The plaintext flows from the secrets
   store *directly into a sink* by non-LLM code — never through the caller's
   context:
-  - **injected into a spawned process's env** (ccd/org agent processes, deploy
+  - **injected into a spawned process's env** (cc/org agent processes, deploy
     steps) — done by the supervising harness, not returned to the completion;
   - **composed into a DB connection string / auth header inside a handler**
     (vdb/db handlers reaching third parties) — the handler receives a
@@ -210,7 +210,7 @@ pub struct CallerContext {
 }
 ```
 
-Services known to feed an LLM (`rollup`, `ccd`, `inference` prompt assembly,
+Services known to feed an LLM (`rollup`, `cc`, `inference` prompt assembly,
 `org` agents) default `llm_safe = true`. Under `llm_safe`, a request for a
 secret's **raw** form does one of two configured things (per-deployment
 default = degrade):

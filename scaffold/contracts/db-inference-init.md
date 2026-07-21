@@ -37,10 +37,10 @@ struct MigrateReport {
 **Boot-safe rationale:** on a cold node, mesh may not yet relay and the `db
 serve` daemon may not be up. A `bin/db` subprocess needs **no mesh** — so it is
 the reliable bootstrap path. Once the node is warm, later control-plane access
-can move to the `db serve` daemon over WS (`db-control-plane`) — though note
-the `db serve` daemon mode itself is FROZEN pending the INTENT #115 drift
-discussion; this contract's CLI-subprocess path is unaffected (it is the
-blessed standalone-tool access model).
+can move to the `db serve` daemon over WS (`db-control-plane`) — the daemon
+mode is ACCEPTED (friction-round 3, INTENT #128, resolving the INTENT #115
+drift flag); this contract's CLI-subprocess path is unchanged either way (it
+is the blessed standalone-tool access model).
 
 ## Error cases
 - `DbError::MigrationFailed { id, detail }` on a failed first-boot apply →

@@ -25,15 +25,15 @@ client — a thin composition of three already-designed cross-cutting edges:
 - Each service's `SurfaceSchema.actions[]` becomes an utterable command grammar;
   `sections[]`/`fields[]` become speakable readouts (honoring `Honesty::Estimate`
   → spoken hedge, the audio analogue of the tilde+tooltip).
-- Live `pubsub` subscriptions (`inference.*`, `ccd.*`, `network.*`) drive spoken
+- Live `pubsub` subscriptions (`inference.*`, `cc.*`, `network.*`) drive spoken
   notifications; the top-level-agent-only speaking rule is an AUI-side concern,
   not carried on the wire.
-- An AUI conversation is a CCD-style thread carrying the optional
-  `(project, environment)` linkage — reuse `ccd-projects` / `agent-management`
+- An AUI conversation is a cc-style thread carrying the optional
+  `(project, environment)` linkage — reuse `cc-projects` / `agent-management`
   rather than inventing a parallel conversation record.
 
 ## Open questions
-- Whether AUI owns conversation records or delegates them to CCD (leaning
+- Whether AUI owns conversation records or delegates them to cc (leaning
   delegate — no new identity type).
 - Whether a "voice grammar" needs any schema hint beyond `surface-schema`
   (e.g. an optional `speakable` field) — preferably none; keep the schema boring.

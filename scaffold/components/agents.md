@@ -12,7 +12,7 @@
 **Status:** WAVE-2 net-new stub (no repo code; no wave-1 placeholder). **Layer:**
 L6 organization plane, ops-facing. **Nesting:** top-level app-crate when it is
 eventually built (crate=app, INTENT #22) — a daemon/CLI entry point, never a
-library others link (INTENT #29). **Track:** STUB. **Relationship to CCD:**
+library others link (INTENT #29). **Track:** STUB. **Relationship to cc:**
 layered strictly ON TOP; **never absorbs it** (INTENT #49, LOCKED).
 
 ## Charter
@@ -21,31 +21,31 @@ layered strictly ON TOP; **never absorbs it** (INTENT #49, LOCKED).
 interface that would let Mind OS drive Claude Code and other, custom agents
 through one addressable surface. The operator's framing, verbatim (INTENT #40):
 
-> "there may be a greater umbrella we create at some point called CCD — agents
+> "there may be a greater umbrella we create at some point called cc — agents
 > might be an interface we use to generalize across Claude Code and some other
 > custom agents that may or may not use our inference service. Doing LLM
 > completions is going to be useful sometimes."
 
-And the hard boundary that pins this crate's relationship to CCD (INTENT #49,
+And the hard boundary that pins this crate's relationship to cc (INTENT #49,
 verbatim):
 
-> "CCD needs to be its own thing that can be called by agents… At some point we
+> "cc needs to be its own thing that can be called by agents… At some point we
 > could generalize agents on top of it."
 
-So: **CCD stays a top-level service forever**; `agents` is the layer that CALLS
+So: **cc stays a top-level service forever**; `agents` is the layer that CALLS
 it, generalizing across agent types. `agents` is the *type-abstraction* layer,
-not a second process supervisor. Everything CCD already does well — process
+not a second process supervisor. Everything cc already does well — process
 spawn/track/signal/stream/reap, the stable agent-handle namespace, the
 usage-limits game, escalation-investigation dispatch — `agents` **reuses**
 rather than reimplements.
 
 **Boundary — what `agents` does NOT own.** It does not supervise OS processes,
 does not play the Claude-Code usage-limits game, and does not own an agent
-ledger — all of that is CCD, reached via `agents-ccd`. It does not run
+ledger — all of that is cc, reached via `agents-cc`. It does not run
 completions itself (inference). It does not own inter-agent conversation, org
 structure, negotiation, or metacognition — that is `org`, which sits *above*
-`agents` the same way `org` today sits above CCD. `agents` is the thin
-type-generalizing seam between org's org-model and CCD's process-model.
+`agents` the same way `org` today sits above cc. `agents` is the thin
+type-generalizing seam between org's org-model and cc's process-model.
 
 ## The agent-type abstraction (operator intent, faithfully)
 
@@ -54,16 +54,28 @@ named or implied by the operator's words; only the first exists today:
 
 | Agent type | Completion egress | Managed via | Status |
 |------------|-------------------|-------------|--------|
-| **claude-code** | Anthropic native (Claude Code picks no models — INTENT #40 LOCKED) | CCD's `agent-management`; usage metered from the CC subprocess stream | exists today (CCD) |
-| **custom local agents** | **local inference** (these CAN choose models — INTENT #40) via `v1-completion-api`, metered through CCD's reserved `llm-calls` edge | CCD process-supervision reused; completion routed to inference | future |
-| **future third-party** | provider-native or inference, per type | same reuse pattern | speculative |
+| **claude-code** | Anthropic native (Claude Code picks no models — INTENT #40 LOCKED) | cc's `agent-management`; usage metered from the CC subprocess stream | exists today (cc) |
+| **custom local agents** | **DIRECT — OpenRouter or local inference (`v1-completion-api`), never through cc** (INTENT #137, resolving the earlier cc-brokered lean) | NOT cc — cc is for the full Claude Code agent shape only | future |
+| **future third-party** | provider-native or inference, per type — direct, per INTENT #137 | same rule | speculative |
 
 The distinguishing rule the operator drew (INTENT #40): Claude Code **cannot**
 choose models, so it never routes to local inference; **custom agents CAN**
 choose models and **MAY** use the inference service. `agents` is the layer where
 that per-type routing decision lives — for Claude Code it's a no-op passthrough
-to CCD; for a custom agent it's "spawn under CCD's supervisor, but point its
-completions at `/v1/`."
+to cc; for a custom agent the completion egress is its own.
+
+**Friction-round 3 sharpening (2026-07-20, INTENT #137): custom agents do
+NOT route through cc.** Verbatim: "Custom agents might call OpenRouter,
+might call the inference tool — they're not necessarily going to call cc.
+Cloud Code is a full agent expecting a certain structure (plugins etc.);
+our custom agents might evolve to make more use of the concepts within our
+[system]." cc is the runtime for the **full Claude Code agent shape**
+specifically — plugins, its process/output structure, the usage-limits
+game. Custom agent types call **OpenRouter or inference directly**; the
+earlier lean toward cc-brokered completions (and toward reusing cc's
+process supervisor as the default for non-CC types) is superseded. What, if
+anything, supervises/meters custom agents is an open design question for
+when `agents` leaves the stub track — it is NOT answered "cc" by default.
 
 ## What a generalized agent interface OWNS vs DELEGATES
 
@@ -74,17 +86,20 @@ Held to the operator's words — no invented scope. Best current read:
   caller uses without knowing the underlying runtime, and the per-type routing
   decision (native egress vs. local-inference egress).
 - **DELEGATES (everything heavy):**
-  - **spawn / track / signal / stream / reap** → CCD's `agent-management`
-    (already the stable handle namespace; `agents` handles map onto CCD handles).
-  - **usage metering + the limits/budget game** → CCD (its ledger, its
-    declarative budget/priority strategies).
-  - **completions for inference-using types** → inference's `v1-completion-api`,
-    with CCD metering via the reserved `llm-calls` path (ccd.md §`llm-calls`
-    already reserves this edge "for the FUTURE `agents` umbrella").
-  - **converse / negotiate / org-structure** → `org` (above `agents`), NOT here.
+  - **Claude-Code-type agents** — spawn / track / signal / stream / reap →
+    cc's `agent-management` (the stable handle namespace; `agents` handles
+    map onto cc handles), usage metering + the limits/budget game → cc.
+    This delegation is for the **Claude Code agent shape only** (INTENT
+    #137).
+  - **completions for custom agent types** → **OpenRouter or inference
+    (`v1-completion-api`) DIRECTLY — not through cc** (INTENT #137,
+    superseding the earlier reading of cc.md's `llm-calls` reservation as a
+    broker path; `llm-calls` remains at most an optional metering surface).
+  - **converse / negotiate / org-structure** → the emergent coordinator
+    layer (formerly `org` — dissolved, INTENT #132; see org.md), NOT here.
 
 Open on purpose (see below): whether **converse** — driving a turn, streaming
-output — is an `agents`-owned verb or stays a straight passthrough to CCD's
+output — is an `agents`-owned verb or stays a straight passthrough to cc's
 stream. The operator hasn't said; this stub does not decide it.
 
 ## Import surface (anticipated — all mesh-mediated, never Cargo-linked)
@@ -94,67 +109,77 @@ Every dependency is a top-level app reached over the wire (WS/CLI) through mesh
 
 | Consumes | Via | Why |
 |----------|-----|-----|
-| `ccd` | `agents-ccd` | process supervision, handle namespace, metering, limits — the substrate `agents` generalizes over (PRIMARY) |
-| `inference` | `agents-inference` (rides `v1-completion-api` + CCD's `llm-calls` metering) | completions for custom agent types that choose models |
+| `cc` | `agents-cc` | the Claude-Code agent type ONLY: process supervision, handle namespace, metering, limits (INTENT #137) |
+| `inference` | `agents-inference` (rides `v1-completion-api`; direct, not cc-brokered — INTENT #137) | completions for custom agent types that choose models |
+| OpenRouter | via `openrouter-mgmt` / provider-native | direct completion egress for custom agent types (INTENT #137) |
 
-And `agents` is itself CONSUMED by `org` (`org-agents`, below): org's
-per-application owning agents become instances managed through this umbrella.
+And `agents` is itself CONSUMED from above — formerly by `org`
+(`org-agents`, below); with the org crate dissolved (INTENT #132), the
+consumer is the emergent coordinator/owner layer (see org.md).
 
 ## Anticipated contracts (wave 2, stub track)
 
 *Names + purpose + rough shape only — schemas deferred until `agents` leaves the
-stub track. Recorded now so CCD, inference, and org are shaped for a future
+stub track. Recorded now so cc, inference, and org are shaped for a future
 type-generalizing consumer from the start.*
 
-- **`agents-ccd`** (agents → ccd; authored — `agents`' assigned pair, and
-  already sketched from CCD's side in ccd.md). *Purpose:* the generalization
-  layered ON CCD — `agents` drives CCD's process-supervision + admission +
-  metering engine for whatever agent type it is managing. *Rough shape:*
-  inbound-to-CCD only (no CCD→agents reverse edge; CCD stays callable and
-  independent per INTENT #49). Reuses CCD's `agent-management`
-  (spawn/signal/list/stream/reap) verbatim, plus the reserved `llm-calls`
-  metering path for non-CC types; `agents` adds only the **agent-type +
-  model-choice** framing on top. No new supervisor, no absorbed CCD.
+- **`agents-cc`** (agents → cc; authored — `agents`' assigned pair, and
+  already sketched from cc's side in cc.md). *Purpose:* driving the
+  **Claude-Code agent type** through cc — its process-supervision +
+  admission + metering engine. *Rough shape:* inbound-to-cc only (no
+  cc→agents reverse edge; cc stays callable and independent per INTENT
+  #49). Reuses cc's `agent-management` (spawn/signal/list/stream/reap)
+  verbatim; `agents` adds only the **agent-type + model-choice** framing on
+  top. No new supervisor, no absorbed cc. **Scope narrowed (friction-round
+  3, INTENT #137): this edge carries the full-Claude-Code agent shape ONLY
+  — custom agent types do not ride it.**
 
 - **`agents-inference`** (agents → inference; NEW anticipated, stub-track).
   *Purpose:* the completion egress for **custom agent types that CAN choose
   models and MAY use local inference** (INTENT #40). *Rough shape:* NOT a new
   inference surface — reuses the standard `v1-completion-api` (`/v1/` REST+WS,
-  forwarded through mesh), with usage metered into CCD's ledger via the reserved
-  `llm-calls` edge (ccd.md §`llm-calls`). Claude Code agents never touch this
-  edge. Open: whether a custom agent's completion goes agents→inference directly
-  or is brokered through CCD (which meters it) — see open questions.
+  forwarded through mesh). **RESOLVED (friction-round 3, INTENT #137): the
+  call goes agents→inference (or agents→OpenRouter) DIRECTLY, never brokered
+  through cc.** cc.md's `llm-calls` reservation survives only as an optional
+  metering surface, not a broker. Claude Code agents never touch this edge.
 
-- **`org-agents`** (org → agents; NEW anticipated, stub-track both ends).
-  *Purpose:* org's **per-application owning agents** (INTENT #88a — every app
-  gets an owning agent, with sub/peer agents) become instances managed through
-  the `agents` umbrella rather than org reaching CCD directly. *Rough shape:*
-  org resolves/spawns/addresses owning + sub/peer agents by type-agnostic handle
-  through `agents`; `agents` fans that onto CCD (`agents-ccd`) and inference
-  (`agents-inference`). This would re-seat part of org.md's current
-  `org-on-ccd` bundle onto `agents` once `agents` exists — flagged, not decided
-  (org is designed against CCD today because `agents` isn't built).
+- **`org-agents`** (coordinators → agents; NEW anticipated, stub-track both
+  ends; the `org` crate is DISSOLVED per INTENT #132 — the upstream party is
+  now the emergent coordinator/owner layer). *Purpose:* per-thing
+  owners/coordinators (INTENT #88a lineage, now the coordinator concept —
+  see org.md) manage their agent instances through the `agents` umbrella
+  rather than reaching cc directly. *Rough shape:* resolve/spawn/address
+  agents by type-agnostic handle through `agents`; `agents` fans Claude-Code
+  types onto cc (`agents-cc`) and custom types onto direct inference/
+  OpenRouter egress (`agents-inference`, INTENT #137). Whether part of the
+  `org-on-cc` bundle re-seats here once `agents` exists stays flagged, not
+  decided.
 
 ## Open questions
 
-1. **Does `agents` even become a crate, or stay a facet of CCD?** The operator
-   said the umbrella "**might**" be created and floated calling it CCD itself
-   ("a greater umbrella… called CCD"). INTENT #49 then separated them firmly
-   (CCD is its own thing agents calls). The stub honors the separation, but
-   whether `agents` is a distinct daemon or a thin library facade over CCD is
+1. **Does `agents` even become a crate, or stay a facet of cc?** The operator
+   said the umbrella "**might**" be created and floated calling it cc itself
+   ("a greater umbrella… called cc"). INTENT #49 then separated them firmly
+   (cc is its own thing agents calls). The stub honors the separation, but
+   whether `agents` is a distinct daemon or a thin library facade over cc is
    genuinely undecided.
-2. **Direct vs. CCD-brokered inference for custom agents.** Does a custom
-   agent's completion go agents→inference directly (with CCD metering after the
-   fact), or does CCD broker every completion so metering is inline? ccd.md's
-   `llm-calls` reservation leans CCD-brokered; not settled.
+2. **Direct vs. cc-brokered inference for custom agents — RESOLVED
+   (friction-round 3, INTENT #137): DIRECT.** "Custom agents might call
+   OpenRouter, might call the inference tool — they're not necessarily
+   going to call cc." cc is for the full Claude Code agent shape; the
+   `llm-calls` cc-brokered lean is superseded. (What meters/supervises
+   custom agents is folded into open question 5.)
 3. **Is `converse`/turn-driving an `agents` verb?** Owns-vs-delegates for the
    streaming turn interaction is unspecified by the operator; could be a pure
-   passthrough to CCD's stream or a first-class `agents` surface.
-4. **org-on-ccd vs. org-agents once `agents` exists.** org.md wires org→ccd
-   directly today. When `agents` lands, how much of org's CCD interaction
+   passthrough to cc's stream or a first-class `agents` surface.
+4. **org-on-cc vs. org-agents once `agents` exists.** org.md wires org→cc
+   directly today. When `agents` lands, how much of org's cc interaction
    re-seats onto `org-agents`? Both edges are anticipated; the migration is a
    future design pass's call.
 5. **What is a "custom agent," concretely?** The operator named the category
    ("some other custom agents") without defining a runtime, plugin model, or
-   handle lifecycle for non-CC types. Everything past "reuse CCD's supervisor,
-   route completions to inference" is unspecified and intentionally left open.
+   handle lifecycle for non-CC types — and noted they "might evolve to make
+   more use of the concepts within our [system]" rather than the Claude Code
+   plugin structure. With the cc-brokered lean gone (INTENT #137), the
+   supervision/metering story for custom agents is fully open — it is NOT
+   "reuse cc's supervisor" by default. Intentionally left open.

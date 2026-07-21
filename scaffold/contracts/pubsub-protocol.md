@@ -217,7 +217,7 @@ opaque-payload / open-identifier philosophy). Point by point:
    (`ts_millis`→`emitted_at`, `origin_*`→`service`/`node_id`).
 
 8. **Convergence coupling (deferred to harmonization):** `network-events`,
-   `dashboard-feed`, `inference-events`, `gc-events`, `ccd-events` re-express as
+   `dashboard-feed`, `inference-events`, `gc-events`, `cc-events` re-express as
    topic prefixes on this envelope, becoming *examples of payloads*, not
    independent wire formats. Their example data should be authored as `Envelope`s
    on the reserved prefixes in this one example world.

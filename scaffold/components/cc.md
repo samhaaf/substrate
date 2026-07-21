@@ -1,29 +1,40 @@
-# ccd
+# cc
+
+> **RENAMED `ccd` → `cc` (friction-round 3, 2026-07-20, INTENT #131).** The
+> operator: "They're all daemons — we don't need this one to be special. It's
+> just cc, not the ccd." Everything below that reads `cc` was `ccd` through
+> wave 2 and friction-rounds 1–2; the contract files were renamed with it
+> (`rollup-ccd` → `rollup-cc`, `ccd-events` → `cc-events`, `ccd-escalation` →
+> `cc-escalation`, `ccd-projects` → `cc-projects`, `org-on-ccd` → `org-on-cc`,
+> `spend-ccd` → `spend-cc`, `agents-ccd` → `agents-cc`). Naming history: "CCD"
+> originally stood for the cloud-code daemon. Registry slug, crate names
+> (`bin/cc`/`lib/cc`), `types::cc`, and the `cc.*` topic prefix all follow the
+> rename at skeleton time.
 
 **Status:** WAVE-2 REFIT of the wave-1 `ccd.md` (net-new crate; no prior repo
 code). **Layer:** L5 app-crate (service/application plane). **Nesting:**
 top-level, flat — internal parts are libraries within the crate (crate=app,
-INTENT #22). **LOCKED (INTENT #49/#68/#104, round-9):** CCD stays a top-level
+INTENT #22). **LOCKED (INTENT #49/#68/#104, round-9):** cc stays a top-level
 service, NOT merged under any `agents` umbrella; a future `agents` layer
-generalizes ON TOP of CCD and never absorbs it (`agents-ccd`, stub-track). CCD
+generalizes ON TOP of cc and never absorbs it (`agents-cc`, stub-track). cc
 lives inside the Substrate workspace as a first-class member (INTENT #23:
 "they're all just apps in the repo").
 
 **What wave-2 changes vs wave-1.** The charter's center of gravity moves from
 "process supervisor + LLM egress" to **the Claude-Code usage-game broker**: the
-declarative budget/priority **strategy language** evaluated against CCD's **own
+declarative budget/priority **strategy language** evaluated against cc's **own
 usage ledger** is now the primary design concern, and its admission-under-budget-
 pressure shape is deliberately **converged with `scheduler`'s admission design**
 (the operator liked that convergence — same shape, different pressure axis).
 Process supervision (wave-1's core) is retained and refit with **orphan
-re-adoption across daemon restart**. New wave-2 surfaces: the `ccd-escalation`
+re-adoption across daemon restart**. New wave-2 surfaces: the `cc-escalation`
 receiver (DLQ / loop-depth investigation dispatch, INTENT #70/#89), thread↔
 project↔environment linking in the ledger (INTENT #68), and `rollup`
 consumption for on-demand plugin assembly.
 
 ## Charter
 
-CCD is the daemon that **runs, meters, and governs cloud-code (Claude Code)
+cc is the daemon that **runs, meters, and governs cloud-code (Claude Code)
 agent processes** on a machine and **plays the Claude-Code usage-limits game
 well**. Its distinguishing job (INTENT #49) is spending a *constrained,
 non-fungible* Claude Code budget — weekly limits, 5-hour session windows,
@@ -31,7 +42,7 @@ per-model/per-tier sub-limits — according to **rich declarative budget/priorit
 strategies** so that autonomous orgs can "access resources ongoing without
 draining my usage." The operator's verbatim target strategy: *"if there's an
 hour left in a session and tokens left, use all available session tokens as long
-as it doesn't cross the 75th percentile of total weekly usage."* CCD owns: (1)
+as it doesn't cross the 75th percentile of total weekly usage."* cc owns: (1)
 the **strategy language + budget-admission engine** — declarative rules
 evaluated against the usage ledger to decide admit/throttle/defer/deny, honoring
 a caller's `priority`; (2) its **own usage database** (INTENT #68 — sessions,
@@ -47,43 +58,53 @@ agents, no symlinks/copies).
 
 **The routing answer (INTENT #40, LOCKED).** Claude Code calls are **NOT** routed
 to local inference — Claude Code doesn't let you choose models, so there is no
-`/v1/` redirect shim for CCD's Claude Code agents; they speak to Anthropic
-natively and CCD governs *usage*, not *egress*. CCD **meters** Claude Code usage
+`/v1/` redirect shim for cc's Claude Code agents; they speak to Anthropic
+natively and cc governs *usage*, not *egress*. cc **meters** Claude Code usage
 from the subprocess's own structured output stream (turn-level input/output/cache
 tokens Claude Code reports), NOT from inference. The `llm-calls`→inference edge
 is **reserved metering-shaped** for the FUTURE `agents` umbrella (other agent
 types CAN choose models and MAY use local inference); it is not on the Claude
-Code path.
+Code path. **Friction-round 3 addendum (INTENT #137):** custom agents do NOT
+route through cc at all — "custom agents might call OpenRouter, might call the
+inference tool — they're not necessarily going to call cc. Cloud Code is a full
+agent expecting a certain structure (plugins etc.)." cc is the runtime for the
+full Claude Code agent shape specifically; the earlier lean toward cc-brokered
+completions for custom agent types is superseded (see `agents.md` and
+`agents-cc`). The `llm-calls` reservation stands only as an *optional* metering
+surface, never a mandatory broker.
 
-**Boundary — what CCD does NOT own.** CCD does not own inter-agent *conversation*,
+**Boundary — what cc does NOT own.** cc does not own inter-agent *conversation*,
 org structure, manager/sub-agent hierarchies, pipelines, negotiation, or
-metacognition — that entire layer is **Org**, built on top of CCD (`org-on-ccd`),
-inbound-only (no reverse dependency). CCD manages *processes and their usage*;
-Org manages *agents talking to each other*. CCD does not implement completion
+metacognition — that entire layer sits above cc, inbound-only (no reverse
+dependency): formerly the `org` crate, now the **emergent coordinator/owner
+layer** (the org crate is DISSOLVED — friction-round 3, INTENT #132; see
+org.md; `org-on-cc` survives as the shaped-for record). cc manages
+*processes and their usage*; the coordinator layer manages *agents talking
+to each other*. cc does not implement completion
 scheduling, model residency, or the `/v1/` API (it is a consumer of inference,
-never a peer runtime — no inference→CCD edge). It does not persist an org-graph
+never a peer runtime — no inference→cc edge). It does not persist an org-graph
 or knowledge graph. It owns no dashboard — it *emits* events and *publishes a
-surface schema* for mesh's observability plane to render (`ccd-events`,
+surface schema* for mesh's observability plane to render (`cc-events`,
 `surface-schema`). It does not compute *spend*: it stores usage and answers
-queries; `spend` computes cost pull-shaped over `spend-ccd`. It does not author
+queries; `spend` computes cost pull-shaped over `spend-cc`. It does not author
 the DLQ/loop-depth *conditions* (queues/execution-engine do) — it owns the
 *receiver* and the investigation it spawns.
 
 ## Primary design concerns
 
-These are the genuinely-hard parts that earn CCD its own crate.
+These are the genuinely-hard parts that earn cc its own crate.
 
 ### 1. The declarative strategy language + budget-admission engine — CENTRAL
 
-This is the reason CCD is more than a process babysitter. A **strategy** is
+This is the reason cc is more than a process babysitter. A **strategy** is
 declarative **DATA** (never code — mirroring INTENT #103's declarative triggers
 and #101's trigger-as-data), a small ordered rule set evaluated against the usage
 ledger to produce an **admission verdict** for a unit of agent work. The engine
 is deliberately shaped like `scheduler`'s admission controller (scheduler.md
 concern 1): scheduler lowers a *concurrency target* proportionally through a
-soft-pressure band and admits nothing above hard pressure; **CCD lowers a
+soft-pressure band and admits nothing above hard pressure; **cc lowers a
 token/agent-admission target proportionally through a soft *budget*-pressure
-band and defers above hard budget pressure.** The percentile guard is CCD's
+band and defers above hard budget pressure.** The percentile guard is cc's
 analogue of scheduler's `effective_max_concurrent`-from-a-fitted-surface: a
 *dynamic ceiling*, computed from the ledger, that caps admission. Same admission
 shape, different axis (budget vs system pressure). This convergence is a design
@@ -97,9 +118,9 @@ the *weekly* limit, guarded by a rolling percentile of the operator's own
 historical weekly usage so autonomous work never crosses into the budget the
 operator wants reserved for himself.
 
-### 2. CCD's own usage ledger / database (INTENT #68) — pull-shaped, provenance-first
+### 2. cc's own usage ledger / database (INTENT #68) — pull-shaped, provenance-first
 
-CCD owns a **local SQLite** database (per-node local DB, INTENT #31; SQLite-only
+cc owns a **local SQLite** database (per-node local DB, INTENT #31; SQLite-only
 locally, INTENT #98/#72). It is the *system of record* for sessions, per-turn
 token usage, observed limit surfaces, and agent-run history — and the substrate
 the strategy engine reads every admission tick. It is **queried pull-shaped** by
@@ -110,7 +131,7 @@ materials of the plugin the agent ran with, so "everything that led to the curre
 state" is traceable — what plugin, what fragments@version, what thread, what
 project/environment, what caller/priority produced each token of spend. Thread
 records link to projects and optionally to environments (INTENT #68), the
-`ccd-projects` edge.
+`cc-projects` edge.
 
 ### 3. Cloud-code process supervision + orphan re-adoption (wave-1 core, refit)
 
@@ -120,25 +141,25 @@ idle → exited/failed); capturing and **parsing its structured output stream**
 into agent-run events and **usage records** (turn-level tokens are the
 authoritative metering signal — concern 1 depends on this); delivering
 signals/input to a running agent; reaping/cleanup. Wave-2 adds **orphan
-re-adoption across daemon restart**: CCD persists each spawned agent's OS pid +
+re-adoption across daemon restart**: cc persists each spawned agent's OS pid +
 a spawn cookie in the ledger and, on restart, re-adopts still-live children
 (re-attaching to their output streams via a durable fifo/log file) rather than
 orphaning or double-spawning them — the same discipline `supervision` applies to
 service processes (supervision.md concern 6, zombie-killing), applied to *agent*
 processes. This is OS-process-supervision work (backpressure on output streams,
-crash recovery, orphan cleanup) and is why CCD is a daemon.
+crash recovery, orphan cleanup) and is why cc is a daemon.
 
 ### 4. A stable handle namespace addressable from outside
 
 Callers (Org, the dashboard via mesh, `spend`) address agents **by handle**.
-Handles are stable, survive a CCD restart where the process survived (concern 3),
+Handles are stable, survive a cc restart where the process survived (concern 3),
 and map to live process state through a registry that is the single source of
 truth for "who is running." This registry + its query/stream API is the surface
 `agent-management` exposes.
 
 ### 5. Escalation-investigation dispatch (INTENT #70/#89) — the incident receiver
 
-CCD receives `EscalationRequest`s (the shared `ccd-escalation` shape: DLQ-
+cc receives `EscalationRequest`s (the shared `cc-escalation` shape: DLQ-
 exhaustion from `queues`, loop-depth-exceeded from `execution-engine`) and
 **spawns an investigating agent** — a Claude Code agent, assembled from an
 investigation plugin via rollup, handed the `correlation_id`/provenance so it can
@@ -149,13 +170,13 @@ investigation is agent work with a (high) priority like any other.
 
 ### 6. First-class mesh participation
 
-Unlike a leaf service, CCD is *both* registrant and resolver
+Unlike a leaf service, cc is *both* registrant and resolver
 (`service-registration`, an instance of `service-lookup`): it registers its own
 `slug -> host:port` so Org/spend/mesh find it, and resolves `inference`/`rollup`/
 peers by slug. It participates in the cross-cutting mesh protocols like every
 service: `restart-protocol` (its interruptibility is a function of live agent
 work — it is `Uninterruptible` while agents burn budget mid-turn), `pubsub-
-protocol` (its `ccd-events` stream), `queues-api` (the escalation is delivered as
+protocol` (its `cc-events` stream), `queues-api` (the escalation is delivered as
 a handler payload), `locks-api` (single-writer guard on the ledger's limit
 surfaces across nodes), and `cron-api` (the periodic percentile/limit recompute
 and session-reset roll).
@@ -176,7 +197,7 @@ per caller/priority-class and stored as data (in the ledger, replicated where
 relevant) — never compiled code.
 
 ```rust
-// types::ccd  (proposed — see contracts section)
+// types::cc  (proposed — see contracts section)
 pub struct Strategy {
     pub id: StrategyId,
     pub scope: StrategyScope,          // Default | Caller(Slug) | PriorityClass(u8) | Named(String)
@@ -232,7 +253,7 @@ Per admission request (`AdmitRequest { estimated_tokens, priority, caller, threa
 the engine, each tick:
 
 1. **Reads the ledger** to bind every `Term` (session/weekly/per-tier state +
-   the rolling `WeeklyPercentile`). These reads are the CCD analogue of
+   the rolling `WeeklyPercentile`). These reads are the cc analogue of
    scheduler reading `SystemState`.
 2. **Finds the first matching rule**, takes its verdict.
 3. **Reduces by guards** — computes `min(verdict_ceiling, guard_ceiling…)`; a
@@ -246,7 +267,7 @@ the engine, each tick:
    next tick / on a `cron`-driven limit-recompute / on session reset; Deny fails
    the request to the caller.
 
-The **budget-pressure fraction** CCD classifies is `weekly_used /
+The **budget-pressure fraction** cc classifies is `weekly_used /
 weekly_percentile_ceiling` (and, independently, `session_used / session_limit`),
 directly paralleling scheduler's memory-pressure fraction. A single shared
 "admission-under-pressure" mental model spans both crates — flagged for the
@@ -286,7 +307,7 @@ operator's own interactive work is effectively priority-max and unguarded.
 
 ## The usage ledger (schema sketch)
 
-Local SQLite (`ccd.db`), owned by the `ledger` lib. Boring, provenance-first,
+Local SQLite (`cc.db`), owned by the `ledger` lib. Boring, provenance-first,
 pull-queryable.
 
 - **`sessions`** — `(session_id, window_start, window_end, session_limit_tokens,
@@ -306,21 +327,21 @@ pull-queryable.
   metering signal and the atoms `spend` aggregates.
 - **`strategies`** — the declarative `Strategy` rows (data, not code).
 - **`escalations`** — `(escalation_id, kind, correlation_id, spawned_handle?,
-  ack, received_at)` — the `ccd-escalation` receiver's dedup + audit table.
+  ack, received_at)` — the `cc-escalation` receiver's dedup + audit table.
 
 `spend` reads `usage_records` ⨝ `agent_runs` (grouped by project/environment/
-caller) over `spend-ccd`. Provenance on every row satisfies INTENT #85/#92.
+caller) over `spend-cc`. Provenance on every row satisfies INTENT #85/#92.
 
 ## Relationships / edges
 
 - **cloud-code agents** via `agent-management` (scaffold/contracts/agent-management.md)
   — spawn/track/signal/stream/reap by stable handle; the multi-agent substrate
   Org layers on. **I author this edge (wave 2).**
-- **mesh.queues(DLQ) / execution-engine** via `ccd-escalation`
-  (scaffold/contracts/ccd-escalation.md — authored; queues proposed the DLQ half,
+- **mesh.queues(DLQ) / execution-engine** via `cc-escalation`
+  (scaffold/contracts/cc-escalation.md — authored; queues proposed the DLQ half,
   execution-engine the loop-depth arm) — **I own the receiver + `EscalationAck`
   (wave 2).**
-- **rollup** via `rollup-ccd` (scaffold/contracts/rollup-ccd.md) — on-demand
+- **rollup** via `rollup-cc` (scaffold/contracts/rollup-cc.md) — on-demand
   plugin assembly (`Materialize`/`AssemblePlugin`); rollup authored its side, I
   propose the **consumer view (wave 2).**
 - **inference (api)** via `llm-calls` (scaffold/contracts/llm-calls.md) —
@@ -329,37 +350,39 @@ caller) over `spend-ccd`. Provenance on every row satisfies INTENT #85/#92.
   types. I propose the metering-shaped view; inference/api authors the `/v1`
   surface it reuses (`v1-completion-api`).
 - **mesh.service-registry** via `service-registration`, an instance of
-  `service-lookup` (scaffold/contracts/service-registration.md) — CCD registers
+  `service-lookup` (scaffold/contracts/service-registration.md) — cc registers
   its own endpoint and resolves dependencies by slug; static-fallback on a single
   box.
-- **mesh** via `ccd-events` (scaffold/contracts/ccd-events.md) — agent-lifecycle/
+- **mesh** via `cc-events` (scaffold/contracts/cc-events.md) — agent-lifecycle/
   run/usage WS event stream over `pubsub-protocol`; mesh's observability plane
   aggregates it (mirrors `inference-events`/`gc-events`). **Round-9: strike the
   wave-1 "proposed, pending confirmation" marker — confirmed in scope** (flag #6
   in wave2-plan §5). I author.
-- **surface-schema** (scaffold/contracts/surface-schema.md) — CCD publishes its
+- **surface-schema** (scaffold/contracts/surface-schema.md) — cc publishes its
   observable-surface schema (budget/limit meters, agent roster, strategy set,
   escalation feed) for the mesh dashboard to render schema-driven.
-- **org** via `org-on-ccd` (scaffold/contracts/org-on-ccd.md) — Org is the
-  downstream maximalist consumer; inbound-to-CCD only, DEFERRED/open (Org is the
-  maximalist-consumer exception). Callers like Org call CCD **with a priority**
-  the budget engine honors. I record the shaped-for surface; content deferred.
-- **projects** via `ccd-projects` (authored; stub-track) — thread↔project (+
-  optional environment) linkage stored in CCD's ledger. Anticipated; projects is
+- **coordinators (formerly org)** via `org-on-cc`
+  (scaffold/contracts/org-on-cc.md) — the downstream maximalist consumer;
+  inbound-to-cc only, DEFERRED/open. The org crate is dissolved (INTENT
+  #132); the consumer is the emergent coordinator/owner layer, which calls
+  cc **with a priority** the budget engine honors. Shaped-for surface only;
+  content deferred.
+- **projects** via `cc-projects` (authored; stub-track) — thread↔project (+
+  optional environment) linkage stored in cc's ledger. Anticipated; projects is
   L6-stub, content deferred.
-- **spend** via `spend-ccd` (authored; stub-track) — pull-shaped spend queries of
+- **spend** via `spend-cc` (authored; stub-track) — pull-shaped spend queries of
   the usage ledger. Anticipated; spend is L6-stub, content deferred.
-- **agents** via `agents-ccd` (authored; stub-track) — the future generalization
-  layered on CCD (never absorbs it). Anticipated; content deferred.
+- **agents** via `agents-cc` (authored; stub-track) — the future generalization
+  layered on cc (never absorbs it). Anticipated; content deferred.
 - **Cross-cutting mesh protocols** (surface-schema-style, one stub many parties —
-  I am a party, I do not author): `pubsub-protocol` (ccd-events transport),
+  I am a party, I do not author): `pubsub-protocol` (cc-events transport),
   `restart-protocol` (interruptibility = f(live agent work)), `queues-api`
   (escalation handler delivery), `locks-api` (single-writer on limit surfaces),
   `cron-api` (periodic limit/percentile recompute + session-reset roll).
 
 ## Nesting (if applicable)
 
-Parent: none (top-level L5 app). Children: none at the scaffold level. The `ccd`
+Parent: none (top-level L5 app). Children: none at the scaffold level. The `cc`
 crate decomposes into **libraries within the crate** (not separate crates — they
 are not independently apps, INTENT #22):
 
@@ -372,21 +395,21 @@ are not independently apps, INTENT #22):
 - `ledger` — the SQLite usage database + its pull-query surface for `spend`;
   provenance-first schema (concern 2).
 - `registry` — the stable handle namespace + live-agent state (concern 4).
-- `escalation` — the `ccd-escalation` receiver + investigation-agent dispatch
+- `escalation` — the `cc-escalation` receiver + investigation-agent dispatch
   (concern 5).
 - `control` — the HTTP/WS control API implementing `agent-management`, the
-  `org-on-ccd` consumption surface, `ccd-events` emission, and `surface-schema`
+  `org-on-cc` consumption surface, `cc-events` emission, and `surface-schema`
   publication.
 - `mesh_client` — thin `service-lookup`/restart-protocol/pubsub client (compiles
   in `lib/mesh-client`, INTENT #45 — not re-hand-rolled).
 - `config` — daemon config + static-fallback endpoints.
 
 **Crate = app (CLI + daemon split).** ONE app, two faces of one binary, mirroring
-`bin/gc`/`bin/db`/`bin/mesh`: `bin/ccd` provides the daemon (`ccd serve`) and a
-thin noun-verb **client CLI** (`ccd agent spawn|list|logs|send|kill`,
-`ccd budget show`, `ccd strategy set|list`, `ccd usage query`) whose subcommands
-are HTTP calls into the running daemon. Real logic in `lib/ccd`; the binary is a
-thin entry point. Workspace members: `bin/ccd` + `lib/ccd`.
+`bin/gc`/`bin/db`/`bin/mesh`: `bin/cc` provides the daemon (`cc serve`) and a
+thin noun-verb **client CLI** (`cc agent spawn|list|logs|send|kill`,
+`cc budget show`, `cc strategy set|list`, `cc usage query`) whose subcommands
+are HTTP calls into the running daemon. Real logic in `lib/cc`; the binary is a
+thin entry point. Workspace members: `bin/cc` + `lib/cc`.
 
 **Shared-library eye (flag for the dedup pass, INTENT #25 — do not build now).**
 (a) the `v1-completion-api` client (reqwest wrapper) is shared with mesh's
@@ -394,7 +417,7 @@ observability plane and Org → extraction target `substrate-api-client`; (b)
 `service-lookup`/restart/pubsub client is already `lib/mesh-client` (consume it);
 (c) the **admission-under-pressure** vocabulary is a genuine convergence with
 `scheduler` → candidate `types::admission` at the closing extract pass. Keep
-CCD's copies thin and obviously-extractable; do not gold-plate.
+cc's copies thin and obviously-extractable; do not gold-plate.
 
 ## Thoroughness level
 
@@ -412,12 +435,12 @@ questions), not the language shape.
 
 ## Assigned design-depth
 
-Opus 4.8 — single-agent Component Designer, grounded on the wave-1 `ccd.md`, the
+Opus 4.8 — single-agent Component Designer, grounded on the wave-1 `cc.md`, the
 governing INTENT items (#40/#49/#68/#70/#89/#104), and the batch-1→5 neighbor
 designs (`types`, `queues` [escalation + trigger data model], `scheduler`
-[admission convergence], `rollup` [rollup-ccd/materialize], `supervision`
+[admission convergence], `rollup` [rollup-cc/materialize], `supervision`
 [restart/interruptibility], `service-registry`, `api`/`inference` [llm-calls]).
-CCD is net-new (no prior repo code), so grounding is intent-capture-grade for
+cc is net-new (no prior repo code), so grounding is intent-capture-grade for
 scope and repo-grade for shape/conventions. NOT a Design Mesh run.
 
 ## Suggested fill-model
@@ -436,21 +459,21 @@ so the convergence is real in code, not just on paper.
 
 The per-pair contract round authored these edges; the contract files are authoritative (including Reconciliation notes). Detailed proposals formerly here are superseded by them.
 
-- `agent-management` (ccd ↔ cloud-code agents; shaped-for org/agents/dashboard/aui) — spawn/track/signal/stream/reap by stable handle; every spawn admission-gated with a `BudgetGrant`. → `scaffold/contracts/agent-management.md`
-- `ccd-escalation` (queues + execution-engine → ccd) — the single investigation surface; ccd owns the receiver + `EscalationAck`. Reconciled: execution-engine's enriched `LoopDepthExceeded` arm won (`engine` → `host`); `Investigating.thread` is `ThreadId`. → `scaffold/contracts/ccd-escalation.md`
-- `rollup-ccd` (ccd → rollup) — on-demand plugin materialization; `AssemblePlugin` is the same shape as `rollup-mesh::Materialize` (`runtime_slots` name kept on this edge); provenance recorded on `agent_runs`. → `scaffold/contracts/rollup-ccd.md`
-- `llm-calls` (ccd / future agents → inference `/v1`) — thin alias of `v1-completion-api` + CCD metering; NOT the Claude Code path (INTENT #40 — CC usage meters from `agent-management` `TurnUsage`). → `scaffold/contracts/llm-calls.md`
-- `service-registration` (ccd ↔ mesh.service-registry) — register/resolve by slug; instance of `service-lookup`. → `scaffold/contracts/service-registration.md`
-- `ccd-events` (ccd → mesh observability) — `ccd.*` event catalog; CONFIRMED live (wave-1 "pending" marker resolved) and re-grounded as a topic-prefix catalog on `pubsub-protocol`, not a parallel WS wire; `AgentEvent` vocabulary lives in `agent-management`. → `scaffold/contracts/ccd-events.md`
-- `org-on-ccd` (org → ccd) — maximalist-consumer shaping (callers pass a `priority` the strategy engine honors); content DEFERRED. → `scaffold/contracts/org-on-ccd.md`
-- `ccd-projects` (ccd ↔ projects, stub-track) — thread↔project(+environment) ledger linkage; content deferred (INTENT #51/#68). → `scaffold/contracts/ccd-projects.md`
-- `spend-ccd` (spend → ccd, stub-track) — pull-shaped usage-ledger queries; content deferred (INTENT #41/#68). → `scaffold/contracts/spend-ccd.md`
-- `agents-ccd` (agents → ccd, stub-track) — future generalization layered on CCD, never absorbs it; content deferred (INTENT #49). → `scaffold/contracts/agents-ccd.md`
-- `surface-schema` (ccd is a publishing party) — observable-surface schema: budget/limit meters, agent roster, strategy set, escalation feed. → `scaffold/contracts/surface-schema.md`
-- Cross-cutting protocols ccd is party to (does not author): `pubsub-protocol` (ccd-events transport) → `scaffold/contracts/pubsub-protocol.md`; `restart-protocol` (interruptibility = f(live agent work)) → `scaffold/contracts/restart-protocol.md`; `queues-api` (escalation delivery) → `scaffold/contracts/queues-api.md`; `locks-api` (single-writer on limit surfaces) → `scaffold/contracts/locks-api.md`; `cron-api` (periodic limit/percentile recompute + session-reset roll) → `scaffold/contracts/cron-api.md`
+- `agent-management` (cc ↔ cloud-code agents; shaped-for org/agents/dashboard/aui) — spawn/track/signal/stream/reap by stable handle; every spawn admission-gated with a `BudgetGrant`. → `scaffold/contracts/agent-management.md`
+- `cc-escalation` (queues + execution-engine → cc) — the single investigation surface; cc owns the receiver + `EscalationAck`. Reconciled: execution-engine's enriched `LoopDepthExceeded` arm won (`engine` → `host`); `Investigating.thread` is `ThreadId`. → `scaffold/contracts/cc-escalation.md`
+- `rollup-cc` (cc → rollup) — on-demand plugin materialization; `AssemblePlugin` is the same shape as `rollup-mesh::Materialize` (`runtime_slots` name kept on this edge); provenance recorded on `agent_runs`. → `scaffold/contracts/rollup-cc.md`
+- `llm-calls` (cc / future agents → inference `/v1`) — thin alias of `v1-completion-api` + cc metering; NOT the Claude Code path (INTENT #40 — CC usage meters from `agent-management` `TurnUsage`). → `scaffold/contracts/llm-calls.md`
+- `service-registration` (cc ↔ mesh.service-registry) — register/resolve by slug; instance of `service-lookup`. → `scaffold/contracts/service-registration.md`
+- `cc-events` (cc → mesh observability) — `cc.*` event catalog; CONFIRMED live (wave-1 "pending" marker resolved) and re-grounded as a topic-prefix catalog on `pubsub-protocol`, not a parallel WS wire; `AgentEvent` vocabulary lives in `agent-management`. → `scaffold/contracts/cc-events.md`
+- `org-on-cc` (org → cc) — maximalist-consumer shaping (callers pass a `priority` the strategy engine honors); content DEFERRED. → `scaffold/contracts/org-on-cc.md`
+- `cc-projects` (cc ↔ projects, stub-track) — thread↔project(+environment) ledger linkage; content deferred (INTENT #51/#68). → `scaffold/contracts/cc-projects.md`
+- `spend-cc` (spend → cc, stub-track) — pull-shaped usage-ledger queries; content deferred (INTENT #41/#68). → `scaffold/contracts/spend-cc.md`
+- `agents-cc` (agents → cc, stub-track) — future generalization layered on cc, never absorbs it; content deferred (INTENT #49). → `scaffold/contracts/agents-cc.md`
+- `surface-schema` (cc is a publishing party) — observable-surface schema: budget/limit meters, agent roster, strategy set, escalation feed. → `scaffold/contracts/surface-schema.md`
+- Cross-cutting protocols cc is party to (does not author): `pubsub-protocol` (cc-events transport) → `scaffold/contracts/pubsub-protocol.md`; `restart-protocol` (interruptibility = f(live agent work)) → `scaffold/contracts/restart-protocol.md`; `queues-api` (escalation delivery) → `scaffold/contracts/queues-api.md`; `locks-api` (single-writer on limit surfaces) → `scaffold/contracts/locks-api.md`; `cron-api` (periodic limit/percentile recompute + session-reset roll) → `scaffold/contracts/cron-api.md`
 
 Component-side notes:
-- Shared vocabulary lands in `types::ccd` (`CcdError` in `types::error::ccd`); rollup vocabulary (`PluginManifest`, `OutputSink`, …) is imported from `types::rollup`, never redefined.
+- Shared vocabulary lands in `types::cc` (`CcError` in `types::error::cc`); rollup vocabulary (`PluginManifest`, `OutputSink`, …) is imported from `types::rollup`, never redefined.
 
 ## Non-obvious tests (conformance + correctness)
 
@@ -469,13 +492,13 @@ Component-side notes:
   (scheduler's "admit nothing above hard"). Property test the monotonicity.
 - **Strategy is data, not code:** a `Strategy` round-trips through JSON and back
   and evaluates identically; an invalid `Strategy` (unknown `Term`, malformed
-  `Predicate`) fails `StrategyInvalid` at *registration* (`ccd strategy set`),
+  `Predicate`) fails `StrategyInvalid` at *registration* (`cc strategy set`),
   never at admission time — the evaluator is total over valid strategies.
 - **Warm-start / unobserved limits:** with an empty ledger (no weekly history),
   `WeeklyPercentile(75)` binding surfaces `LimitUnobserved` and the engine falls
   back to the `Strategy.fallback` (conservative `Defer`/small fixed ceiling) —
   it never divides by zero or admits unbounded on missing data.
-- **Orphan re-adoption across daemon restart:** spawn an agent, hard-kill the CCD
+- **Orphan re-adoption across daemon restart:** spawn an agent, hard-kill the cc
   daemon, restart it → the still-live Claude Code child is re-adopted by
   (pid, spawn_cookie), its handle is stable, its output stream re-attaches from
   the durable log, and NO second copy is spawned (the agent-side analogue of
@@ -490,7 +513,7 @@ Component-side notes:
   (never lost) rather than spawning past the limit.
 - **Provenance completeness for spend:** every `usage_records` row joins to an
   `agent_runs` row carrying `RollupProvenance` (plugin bill-of-materials) +
-  project/environment/caller — a `spend-ccd` rollup can attribute every token to
+  project/environment/caller — a `spend-cc` rollup can attribute every token to
   a (project, environment, plugin@version, thread) with no orphan usage.
 - **Priority is honored:** two simultaneous `Spawn`s under the same tight budget,
   priorities 9 and 1, admit the priority-9 work first and `Defer` the priority-1

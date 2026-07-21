@@ -125,7 +125,7 @@ consumer/source from the start. Both pairs are already named in wave2-plan §3c.
   per-key budget/usage into its per-project cost tracking. *Rough shape:* a
   read-only query surface exposing, per runtime key, its `{ budget/limit, usage,
   remaining, label/scope }`; `spend` polls it (never a push from here), on the
-  same PULL discipline spend already uses for CCD's usage DB. The mapping of
+  same PULL discipline spend already uses for cc's usage DB. The mapping of
   keys → projects/finances is deferred (see open questions).
 
 - **Provisioning-API interaction — EXTERNAL, not a mesh contract.** All

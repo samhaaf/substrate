@@ -145,7 +145,7 @@ model/cache/backend management) and because the wave-2 centralization changes
    respects locks and runs hourly, so the race is the same *class* as today.
    Wave-2 closes it cleanly with an **additive atomic `register_and_lock`
    command** (one round-trip, daemon-side atomic under the store mutex) that new
-   callers (VFS, and a future `db`/`ccd` cache dir) should prefer. No debt: the
+   callers (VFS, and a future `db`/`cc` cache dir) should prefer. No debt: the
    two-step still works; the combined op is a strict improvement.
 
 7. **gc is a per-node singleton, not a fleet — an addressing subtlety for the

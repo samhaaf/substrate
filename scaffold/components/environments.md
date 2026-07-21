@@ -81,9 +81,9 @@ replicated-store row. Requirements:
 - **projects** — an environment is a subset of a project; nested-projects naive
   rule above; databases attach to projects/environments (rides projects/vdb —
   `projects-vdb`). Edge naming deferred; no environments-owned stub.
-- **ccd** — CCD threads are optionally linkable to an environment within a
-  project (recorded on CCD's usage DB; ccd.md / `ccd-projects`). No
-  environments-owned stub — CCD holds the optional `EnvRef`.
+- **cc** — cc threads are optionally linkable to an environment within a
+  project (recorded on cc's usage DB; cc.md / `cc-projects`). No
+  environments-owned stub — cc holds the optional `EnvRef`.
 - **cicd** — consumes environments; hierarchy OPEN (see design notes). No stub
   until decided.
 

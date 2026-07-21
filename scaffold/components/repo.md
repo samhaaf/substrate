@@ -154,7 +154,7 @@ co-located with the anchored repo. So:
   1). A worktree-migration or node-loss carries the model *with* the repo — no
   separate replication scheme invented.
 - **Per-node operational index = a local `repo.db` SQLite** on the plain OS
-  filesystem (like inference's `store`, secrets' cache, ccd's usage DB — INTENT
+  filesystem (like inference's `store`, secrets' cache, cc's usage DB — INTENT
   #31: "everywhere you have a daemon running on a node, you need a database that
   manages that node's data"), a read-through cache/index of the repos anchored
   here plus in-flight operation state.

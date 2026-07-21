@@ -128,17 +128,17 @@ over near-verbatim from `ws.rs`.
 
 This is the biggest structural change from the gateway design, and it
 **deviates from the literal wave2-plan charter line** ("per-node subscription
-reconciliation — one inference-WS + one gc-WS + one ccd-WS per node, no leaks/
+reconciliation — one inference-WS + one gc-WS + one cc-WS per node, no leaks/
 doubles"). That line describes the V1 gateway model (`upstream.rs`:
 `connect_inference`/`connect_gc` opened a WS to each service on each node and
 republished into a `Hub`). In v2 that model is **superseded by `pubsub-relay`**:
 
-- inference / gc / ccd **publish their own event catalogs** onto the reserved
-  topic prefixes `inference.*` / `gc.*` / `ccd.*` via `mesh-client` →
+- inference / gc / cc **publish their own event catalogs** onto the reserved
+  topic prefixes `inference.*` / `gc.*` / `cc.*` via `mesh-client` →
   `pubsub-relay` (their responsibility, their design passes — batch 5, batch 3,
   batch 6). network-topology publishes `network.*`.
 - dashboard-serving, running inside the *same* daemon, simply subscribes locally
-  to `pubsub-relay` with `Fleet`-scope prefix filters (`inference`, `gc`, `ccd`,
+  to `pubsub-relay` with `Fleet`-scope prefix filters (`inference`, `gc`, `cc`,
   `network`). `pubsub-relay`'s cross-node interest-routed relay (its concern 7)
   guarantees matching events from *every* node reach this daemon — so "anywhere
   you access mesh is the same" (INTENT #35) gives dashboard-serving the whole
@@ -259,14 +259,14 @@ mesh-internal seams):
   (scaffold/contracts/inference-events.md)
 - **mesh ← gc** via `gc-events` — gc's catalog on `gc.*`. Same re-grounding.
   (scaffold/contracts/gc-events.md)
-- **mesh ← ccd** via `ccd-events` — ccd's agent-lifecycle catalog on `ccd.*`;
+- **mesh ← cc** via `cc-events` — cc's agent-lifecycle catalog on `cc.*`;
   still carries the wave2-plan "proposed, pending confirmation" marker (flag #6).
-  Same re-grounding. (scaffold/contracts/ccd-events.md)
+  Same re-grounding. (scaffold/contracts/cc-events.md)
 
 Internal-lib seams (compiled-in, NOT contract edges — INTENT #29/#45):
 
 - **consumes** `pubsub-relay::trait PubSub` (in-process subscribe to
-  `inference.*`/`gc.*`/`ccd.*`/`network.*` for the browser feed; publish
+  `inference.*`/`gc.*`/`cc.*`/`network.*` for the browser feed; publish
   `dashboard.*` change notices) — the feed substrate (concern 2/3).
 - **consumes** `service-registry::trait Resolver` (`list`/`resolve_all`/`resolve`
   — discover services for aggregation, resolve `(slug, node)` for the proxy) and
@@ -301,7 +301,7 @@ to `supervision`'s OPEN mixed-version protocol (open question); (c) the exact
 `TopicFilter` shape the browser uses is whatever `types::pubsub` finalizes
 (pubsub-relay and types differ on scoped-vs-flat filters — a harmonizer call I
 consume, do not re-litigate); (d) whether `inference-events`/`gc-events`/
-`ccd-events` fully collapse into pubsub-protocol topic pointers is a per-pair
+`cc-events` fully collapse into pubsub-protocol topic pointers is a per-pair
 round call (recommended below).
 
 ## Assigned design-depth
@@ -337,9 +337,9 @@ formerly in this section are superseded by the authored contracts.
 
 - `dashboard-feed` — (mesh/dashboard-serving → dashboard frontend) — THE batch-6 seam. → `scaffold/contracts/dashboard-feed.md`
 - `surface-schema` — (every service → mesh dashboard) — the serving/aggregation half. → `scaffold/contracts/surface-schema.md`
-- `inference-events` — / `gc-events` / `ccd-events` (mesh ← inference/gc/ccd) — RE-GROUND onto pubsub-protocol. → `scaffold/contracts/inference-events.md`
+- `inference-events` — / `gc-events` / `cc-events` (mesh ← inference/gc/cc) — RE-GROUND onto pubsub-protocol. → `scaffold/contracts/inference-events.md`
 
-Also a party to (authored elsewhere / cross-cutting): `ccd-events`, `gc-events`, `kv-replication`, `pubsub-protocol` — see `scaffold/contracts/`.
+Also a party to (authored elsewhere / cross-cutting): `cc-events`, `gc-events`, `kv-replication`, `pubsub-protocol` — see `scaffold/contracts/`.
 
 Component-side notes:
 - `mesh-registry-read` is a tombstone (gateway merged into mesh): the node/fleet

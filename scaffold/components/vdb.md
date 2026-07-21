@@ -77,7 +77,7 @@ not own the trigger *data model* — that is `types::trigger`, authored by
 `queues` (batch 2), consumed UNCHANGED with a row-change subject binding
 (concern 6). It does not own trigger/handler *evaluation mechanics* — that is
 the shared `execution-engine` lib (its stack-tables adapter runs inside the
-vdb daemon; loop detection, causal-chain tracking, and the ccd escalation hook
+vdb daemon; loop detection, causal-chain tracking, and the cc escalation hook
 live there, not here). It does not own scheduling (`cron`), delivery
 (`queues`), distributed semaphores (`locks`), replication of its catalog
 (`replicated-kv`), cloud mechanics (`aws`), or secret material (`secrets`). It
@@ -396,14 +396,21 @@ which is why the upgrade target is only ever cloud (round-9 lock).
   queues'/cron's own designed mechanisms, riding through unchanged. The
   `vdb-mesh` contract below reflects this reduced, honest scope.
 
-### 7. `db` as the execution arm — the call mechanism (co-designed with db, batch 4; proposal + flag)
+### 7. `db` as the execution arm — the call mechanism (co-designed with db, batch 4; ACCEPTED)
 
-> **[FROZEN — the `db serve` daemon mode is under operator drift review; do
-> not build; discussion pending (friction-round 1, INTENT #115).]** The
-> operator's recollection: db = a standalone CLI tool; VDB = the mesh-accessed
-> daemon — the daemon role may belong here in vdb, not in db. This concern's
-> design is retained as discussion input; see `db.md` concern 1 and
-> `contracts/vdb-db.md` for the full annotation.
+> **[UNFROZEN — ACCEPTED (friction-round 3, 2026-07-20, INTENT #128;
+> resolves the INTENT #115 drift flag).]** The operator accepts the `db serve`
+> headless stateful session daemon as part of db, with the division
+> clarified, verbatim: "VDB is basically just a virtualized layer to our
+> databases that allows the same access regardless of environment or
+> underlying technology. If it wants to delegate to the db CLI so you don't
+> have to redefine the same tools twice, that makes sense. That's okay with
+> me. VDB just has to keep track of which statements it has running and do
+> proper cleanup and session management." So: **vdb = the virtualization
+> layer** (same access to databases regardless of environment/technology),
+> **delegating to db** (so the same tools aren't defined twice), and **vdb
+> owns statement tracking, cleanup, and session management** over the
+> sessions it opens. See `db.md` concern 1 and `contracts/vdb-db.md`.
 
 The locked decomposition makes `db` the crate that "actually runs the actions
 against specific databases," and INTENT #29 forbids linking it. The mechanism
@@ -487,7 +494,7 @@ kept. The design:
   (`vdb provenance <db> --row <table>/<pk>` and `--trace <correlation_id>` on
   the CLI + dashboard), **the execution-engine's loop-detection substrate**
   (loop depth = repeated (table, pk) occurrences along a causation chain,
-  INTENT #70 — one chain, two consumers, by design), and the ccd
+  INTENT #70 — one chain, two consumers, by design), and the cc
   escalation's investigation context.
 - **Configured per-project/per-database (INTENT #92):**
   `ProvenanceConfig { level: Full | Touch | Off, retention: Duration,
@@ -653,9 +660,9 @@ Contract edges (cross-process, via the local `:3649` daemon):
 - **kg** via `kg-vdb` — KG's graph storage/routing through vdb (concern 11).
   Reconciled with KG mid-batch.
   *(authored: scaffold/contracts/kg-vdb.md)*
-- **ccd** via `ccd-escalation` — consumed, not authored: the
+- **cc** via `cc-escalation` — consumed, not authored: the
   execution-engine's `LoopDepthExceeded` arm fires from inside vdb's engine
-  adapter (queues/ccd own the shape; execution-engine authors that arm).
+  adapter (queues/cc own the shape; execution-engine authors that arm).
 
 Cross-cutting protocols (one shared document, vdb a party; consumed, not
 authored): `queues-api` (stack handlers as `HandlerRef` targets; handlers
@@ -768,7 +775,7 @@ Also a party to (cross-cutting): `locks-api`, `queues-api`, `cron-api`, `restart
   same chain and reports depth correctly.
 - **Loop guardrail end-to-end:** a deliberately cyclic pair of triggers
   (A-change → handler writes A) stops at the loop-depth threshold, records
-  `LoopStopped`, fires ONE `ccd-escalation` (LoopDepthExceeded arm, deduped
+  `LoopStopped`, fires ONE `cc-escalation` (LoopDepthExceeded arm, deduped
   by escalation_id), and the database remains serviceable.
 - **Crash-replay of the tailer:** kill the daemon mid-dispatch (after
   changelog write, before cursor advance) → on restart the row re-dispatches;

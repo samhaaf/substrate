@@ -11,8 +11,8 @@ requirements. **Consumes (over the wire / compiled shared libs only — never
 cross-app links, INTENT #29):** `vfs` via `rollup-vfs` (fragment/plugin
 residence), `secrets` via `rollup-secrets` (secret references, never raw in
 output), mesh via `rollup-mesh` (registration + resolve surface), `types` +
-`mesh-client` (shared libs, compiled in). **Consumed by:** `ccd` via
-`rollup-ccd` (on-demand plugin assembly — PRIMARY consumer), mesh
+`mesh-client` (shared libs, compiled in). **Consumed by:** `cc` via
+`rollup-cc` (on-demand plugin assembly — PRIMARY consumer), mesh
 `queues`/triggers via `rollup-mesh` (declarative payload-assembly references),
 `projects` via `projects-rollup` (future — "tasks are rolled up"). Grounded in
 the harness engine, secrets.md (concern 4/8, `llm_safe`), queues.md (concern 2,
@@ -52,7 +52,7 @@ output). It does not own the **trigger/handler paradigm** — that is `queues`
 (L2) and `execution-engine` (L4); rollup is *called by* a trigger's
 `AssemblyTemplate` to resolve a `Rollup(RollupRef)` node, it does not own
 queues/dispatch. It does not own **plugin execution or agent spawning** — that
-is `ccd`; rollup materializes the plugin directory, ccd points a Claude Code
+is `cc`; rollup materializes the plugin directory, cc points a Claude Code
 process at it. It does not own the **project/scope hierarchy** — that is
 `projects` (L6); v1 rollup takes an explicit ordered scope chain per request
 (projects supplies it later). It does not own **the fragments dependency
@@ -120,7 +120,7 @@ error, ported). A fragment loaded from scope S resolves *its own* inner
 `{{file:}}`/`{{prompt:}}` refs relative to S — the harness's
 "file-resolves-relative-to-the-containing-prompt's-project" rule (tests 24/25),
 ported so an inherited fragment's relative paths never break. **v1 ScopeChain
-source:** the caller passes it (ccd knows its plugin's scopes; a trigger's
+source:** the caller passes it (cc knows its plugin's scopes; a trigger's
 assembly carries a scope; a CLI user passes `--scope`). **Future:** `projects`
 (L6) derives the chain from the project hierarchy (`projects-rollup`) — flagged,
 not built now. Fragment layout convention in VFS:
@@ -148,7 +148,7 @@ writes `skills/<slug>/SKILL.md`, `agents/<slug>.md`, `commands/<slug>.md`,
 (external→internal slot names) then `slot_overrides` (win over everything) port
 unchanged. **Substrate change:** the output goes to a caller-chosen `OutputSink`
 (concern 5) not a fixed dir, and generation is **on demand per request** — no
-symlinks, no copying: ccd asks for a plugin, gets a freshly-assembled directory,
+symlinks, no copying: cc asks for a plugin, gets a freshly-assembled directory,
 uses it, discards it (the fragments are the durable source of truth in VFS).
 
 ### 4. Raw-vs-reference insert axis (INTENT #94) + the unconditional secret-safety invariant
@@ -197,28 +197,28 @@ secrets' `use(ref, sink)` verb directly. Stated as a deliberate deviation in
 Friction points so secrets + the operator bless "rollup never resolves raw
 secrets, full stop."
 
-### 5. CCD as primary consumer — plugin assembly on demand, into a caller sink
+### 5. cc as primary consumer — plugin assembly on demand, into a caller sink
 
-CCD spawns Claude Code processes with a working dir and a plugin directory
-("CCD ideally would be built on top of this prompt rollup"). The `rollup-ccd`
+cc spawns Claude Code processes with a working dir and a plugin directory
+("cc ideally would be built on top of this prompt rollup"). The `rollup-cc`
 surface is **directory rollup with a caller-chosen output**:
 
 ```rust
 enum OutputSink {
-    LocalDir(PathBuf),        // materialize to a real local dir ccd hands to Claude Code (the common case)
+    LocalDir(PathBuf),        // materialize to a real local dir cc hands to Claude Code (the common case)
     VfsDir(VfsPath),           // materialize into VFS (a durable, shareable plugin)
     Inline,                    // return the file set in the response (small plugins / no disk)
 }
 ```
 
-ccd sends a `PluginManifest` + `runtime_slots` + `ScopeChain` + `OutputSink`;
+cc sends a `PluginManifest` + `runtime_slots` + `ScopeChain` + `OutputSink`;
 rollup resolves every fragment (walk-up/version/recursion, VFS-backed) and
 materializes. **No symlinks, no file-copying** — each spawn gets a fresh
 assembly from the fragment source of truth, so specialized agents get
 specialized plugins without a proliferation of copied files. The result carries
-the full provenance manifest (concern 9) so ccd can record exactly which
+the full provenance manifest (concern 9) so cc can record exactly which
 fragment versions an agent ran with (reproducibility + the causal chain into
-ccd's usage DB).
+cc's usage DB).
 
 ### 6. Fragment residence — VFS-backed v1 (`rollup-vfs`); NOT VDB-backed yet
 
@@ -252,7 +252,7 @@ stable-first ordering** as a first-order property, not an accident:
   the cache. `Reference` inserts (concern 4) reinforce this: a referenced (not
   inlined) skill keeps volatile bulk *out* of the prefix entirely.
 - **Cache-key surface.** `Resolved` exposes a `stable_prefix_len` hint so
-  inference/ccd can reason about the cacheable boundary. Advisory, not enforced.
+  inference/cc can reason about the cacheable boundary. Advisory, not enforced.
 
 ### 8. Fragments-in-database evolution — RECOMMEND file-based v1, VDB-backed v2 (FLAGGED)
 
@@ -264,7 +264,7 @@ poses: file-based-on-VFS v1 or VDB-backed now?
 **Recommendation: file-based on VFS for v1 (the harness port); the
 dependency-graph + cascade recompilation as v2, VDB-backed.** Rationale:
 
-1. **v1 doesn't need it.** rollup is **pull / resolve-on-demand** (ccd assembles
+1. **v1 doesn't need it.** rollup is **pull / resolve-on-demand** (cc assembles
    a plugin when it needs one; a trigger resolves at assembly time). With lazy
    resolution, "recompilation" is just *re-resolving at read time* — always
    fresh, no cache to invalidate. The dependency graph is a *precompilation
@@ -290,6 +290,21 @@ same VDB promotion mechanics), emitting healthcare-grade provenance per
 recompilation. rollup's read path checks the precompiled cache first, falls back
 to resolve-on-demand. **Flagged for the operator** — recommendation is
 file-based v1, and I do not build the VDB path this pass.
+
+> **Friction-round 3 direction (2026-07-20, INTENT #140) — rollup moves
+> toward KG; design deferred.** The operator's read of the evolution:
+> prompt/text fragments may stay **file-based**, but "the **plugin rollup is
+> definitely more like a graph... built on top of schemas and KG**" — the
+> plugin manifest as a schema; plugin fragments/deltas as **graph nodes with
+> their own schemas**; tools linked with their own fragments (skills, tools,
+> commands); "a plugin rolls up a bunch of plugin fragments and gets a whole
+> plugin with all the tools and everything we've learned about them." And
+> since KG sits on VFS anyway: "we could **skip directly to rollup being
+> built on top of KG**" — i.e. the v2 target above may be **KG (schemas +
+> graph)** rather than a bare VDB stack database. Recorded as direction
+> only; the design is deferred to its own pass (alongside the `schema` /
+> KG-templating round, INTENT #122/#131, and the INTENT #139
+> schema-unification discussion). The file-based v1 port stands unchanged.
 
 ### 9. Provenance FIRST-ORDER — the reproducible build manifest (INTENT #85/#92)
 
@@ -320,12 +335,12 @@ contains a secret value (only `SecretRef`s).
 
 ### 10. Service shape — daemon + CLI, dual-role (crate=app, INTENT #29)
 
-rollup is consumed by *apps* (ccd) and by *mesh* (queues/triggers) that cannot
+rollup is consumed by *apps* (cc) and by *mesh* (queues/triggers) that cannot
 link it (INTENT #29: no cross-app in-process linking). So rollup is a **daemon
 registering on the local mesh** (single-port locality, `:3649`, via
-`mesh-client`), serving `rollup-mesh`/`rollup-ccd` over WS — and **also a
+`mesh-client`), serving `rollup-mesh`/`rollup-cc` over WS — and **also a
 noun-verb `clap` CLI** for human/local use, exactly like `db`/`secrets`/`gc`/
-`ccd`:
+`cc`:
 
 ```
 rollup resolve <template|--file P>  --scope <chain> [--slot k=v]...  # string/file rollup → stdout
@@ -342,7 +357,7 @@ additions); `bin/rollup` is the thin daemon + CLI. Participates in
 so the boring dashboard renders it — the schema exposes no fragment *bodies* and
 no secret surface. Stateless request/response (fragments are in VFS), so rollup
 is `AddressingClass::AnyNode` — any node's daemon can serve any resolve, which is
-what lets ccd on any machine assemble a plugin from the mesh-replicated
+what lets cc on any machine assemble a plugin from the mesh-replicated
 fragments.
 
 ## Relationships / edges
@@ -351,9 +366,9 @@ Contract edges are cross-process WS through the local `:3649` daemon (INTENT
 #29/#58). `types` and `mesh-client` are compiled-in shared libs, NOT contract
 edges.
 
-- **ccd** via `rollup-ccd` — CCD's on-demand plugin/prompt assembly (directory
-  rollup, `OutputSink`), the PRIMARY consumer; ccd is the consumer, rollup
-  authors this side. *(scaffold/contracts/rollup-ccd.md — exists,
+- **cc** via `rollup-cc` — cc's on-demand plugin/prompt assembly (directory
+  rollup, `OutputSink`), the PRIMARY consumer; cc is the consumer, rollup
+  authors this side. *(scaffold/contracts/rollup-cc.md — exists,
   content authored at the contract round.)*
 - **mesh (queues/triggers)** via `rollup-mesh` — rollup's registration
   (`service-lookup` instance) + the resolve surface a trigger's `AssemblyTemplate`
@@ -386,7 +401,7 @@ edges.
 
 ## Nesting
 
-Parent: none | Children: none. Dual-role crate like `db`/`secrets`/`gc`/`ccd`:
+Parent: none | Children: none. Dual-role crate like `db`/`secrets`/`gc`/`cc`:
 `lib/rollup` (`substrate-rollup` — the ported engine: `parser`, `resolver`,
 `plugin`, plus new `store` (FragmentStore seam), `refs` (raw-vs-reference),
 `provenance`) + `bin/rollup` (daemon + `clap` CLI). `FragmentStore` /
@@ -398,7 +413,7 @@ Parent: none | Children: none. Dual-role crate like `db`/`secrets`/`gc`/`ccd`:
 recursion/cycle-detection — working harness code + 67 tests), the `FragmentStore`
 seam (VFS + Local impls), the ScopeChain resolution model, the directory-rollup
 / plugin materialization port, the raw-vs-reference insert axis with the
-unconditional secret-safety invariant, the CCD `OutputSink` assembly surface,
+unconditional secret-safety invariant, the cc `OutputSink` assembly surface,
 the provenance build-manifest, prefix-cache-stability ordering, and the
 daemon+CLI service shape. **approach-sketched** for: the `Reference` rendering of
 non-secret targets (canonical locator vs description-level "See also" — fill-time
@@ -438,7 +453,7 @@ authoritative (including their Reconciliation notes). The detailed proposals
 formerly in this section are superseded by the authored contracts.
 
 - `rollup-mesh` — (rollup ↔ mesh; rollup authors) — registration (`AnyNode` `service-lookup` instance) + the resolve surface callers invoke; the operation is canonically `ResolveRefs` (queues' `ResolveReferences` recorded as the alias). → `scaffold/contracts/rollup-mesh.md`
-- `rollup-ccd` — (ccd → rollup; rollup authors, ccd is the primary consumer) — on-demand plugin assembly; `AssemblePlugin` and `rollup-mesh`'s `Materialize` are ONE operation, one implementation. → `scaffold/contracts/rollup-ccd.md`
+- `rollup-cc` — (cc → rollup; rollup authors, cc is the primary consumer) — on-demand plugin assembly; `AssemblePlugin` and `rollup-mesh`'s `Materialize` are ONE operation, one implementation. → `scaffold/contracts/rollup-cc.md`
 - `rollup-secrets` — (rollup → secrets) — reference-only secret resolution (consumer side). → `scaffold/contracts/rollup-secrets.md`
 - `rollup-vfs` — (rollup → vfs) — fragment/plugin residence (consumer side). → `scaffold/contracts/rollup-vfs.md`
 - `projects-rollup` — (projects → rollup) — stub-track (anticipated, content deferred). → `scaffold/contracts/projects-rollup.md`
@@ -472,7 +487,7 @@ Also a party to (authored elsewhere / cross-cutting): `pubsub-protocol`, `repo-v
   resolution); a stable-marked fragment precedes a volatile slot-driven one, and
   `stable_prefix_len` marks the shared boundary; changing only a volatile slot
   leaves the stable prefix byte-identical.
-- **On-demand plugin assembly (ccd):** `AssemblePlugin` with a `PluginManifest`
+- **On-demand plugin assembly (cc):** `AssemblePlugin` with a `PluginManifest`
   → the Claude-Code layout (`skills/<slug>/SKILL.md`, `agents/<slug>.md`,
   `commands/<slug>.md`, `plugin.json`) materializes with correct `alias_map` →
   `slot_overrides` precedence (ported harness plugin tests); a second identical

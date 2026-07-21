@@ -27,7 +27,7 @@ service-registry, completion-router}.
 > laddered, built into EVERY service from the beginning (concern 13; the exact
 > ladder was "latitude granted, discuss" — **LOCKED at 4 levels round-9**);
 > (3) new internal capability: **queues + dead-letter queues, SQS-modeled**
-> (concern 14; dead-letter escalation hooks into ccd investigation);
+> (concern 14; dead-letter escalation hooks into cc investigation);
 > (4) `locks` gains a **required catchable error type** for lock-threshold-
 > exceeded-on-partition-merge, handled per-application (concern 10).
 
@@ -139,7 +139,7 @@ And, new in the round-6 lock (2026-07-19):
     requests built into EVERY service from the beginning. See concern 13.
 16. **Queues + dead-letter queues** — an internal, SQS-modeled queue
     capability (same internal-lib discipline as `locks`/`cron`); dead-letter
-    escalation hooks into ccd investigation. See concern 14.
+    escalation hooks into cc investigation. See concern 14.
 
 > **SUPERSEDED (2026-07-18): the mesh/gateway sibling split.** This file
 > previously drew a hard boundary: "It does not own the aggregation/
@@ -213,7 +213,7 @@ children is exactly the open internal-layering question in the Charter.)
 - `lib/mesh-client` (**new thin crate**, `substrate-mesh-client`) — a shared
   library candidate I am flagging now rather than letting logic duplicate: the
   `register(slug, endpoint)` / `resolve(slug) -> endpoint` HTTP client that hits
-  the **local** mesh daemon's registry. Every service (`ccd`,
+  the **local** mesh daemon's registry. Every service (`cc`,
   `inference`, `vfs`, `kg`, `projects`, `org`) needs this at boot; if it lived inside `lib/mesh` they would
   all have to depend on the whole mesh (tailscale + router + axum). A ~one-file
   client crate keeps the seam cheap and is exactly the "extract shared logic"
@@ -248,7 +248,7 @@ children is exactly the open internal-layering question in the Charter.)
   slug pointing at its own `:3649`** (port locked rounds 4–5), because the mesh *is* the fleet's
   transparent front door (it load-balances internally via the router's
   `NodeRegistry`, which discovers nodes by Tailscale tag). Singleton services
-  (`db`, `ccd`, `vfs`, `kg`, `projects`, `org`) each register their own slug ->
+  (`db`, `cc`, `vfs`, `kg`, `projects`, `org`) each register their own slug ->
   their own endpoint (the `dashboard` slug is mesh's own surface now — mesh
   serves it directly, no separate registrant). So two discovery mechanisms coexist deliberately: **tag-based
   fleet discovery** (router) and **slug registry** (singletons + the `inference`
@@ -307,7 +307,7 @@ health polling.
 ### 5. Absorbed observability / dashboard plane (from gateway, round-3)
 
 Mesh now hosts what gateway used to: serving `ui/dashboard/dist/` static assets
-from one origin; subscribing to each node's inference / gc / ccd event streams
+from one origin; subscribing to each node's inference / gc / cc event streams
 and multiplexing them into ONE topic-filtered browser WebSocket (`GET /events`,
 envelopes tagged with real `node_id`s); presentation-shaped fleet rollups
 (`/api/nodes`, `/api/mesh/stats`, `/api/nodes/:id/stats`); and the same-origin
@@ -474,7 +474,7 @@ Mind OS directly into your Amazon account and there's a native system to take
 advantage of" — i.e. the queue semantics must be deployable someday straight
 onto real SQS through the `aws` crate (an anticipated someday-SQS adapter in
 the AWS virtualization layer — round-9; see `components/aws.md`). **Dead-letter queues included**, with a
-**dead-letter escalation hook into a ccd agent investigation** (confirmed as
+**dead-letter escalation hook into a cc agent investigation** (confirmed as
 a good guardrail — the same escalation pattern as the shared execution
 engine's loop-depth hook; see `overview.md`'s shared-libraries section).
 
@@ -567,10 +567,10 @@ Edges match the contract graph in `overview.md`. Grouped by which child owns the
   discovery (scaffold/contracts/tailscale-status.md)
 
 **service-registry (the seam):**
-- any device/service (ccd, org, inference, vfs, kg, projects, **and the mesh CLI**)
+- any device/service (cc, org, inference, vfs, kg, projects, **and the mesh CLI**)
   via `service-lookup` — register/resolve; THE wiring seam
   (scaffold/contracts/service-lookup.md)
-- ccd via `service-registration` — CCD as a first-class registrant+resolver
+- cc via `service-registration` — cc as a first-class registrant+resolver
   (scaffold/contracts/service-registration.md)
 - ~~gateway via `mesh-registry-read`~~ — **collapsed** (2026-07-18): the
   gateway->mesh fleet read is now mesh reading its own registry in-process; the
@@ -599,7 +599,7 @@ Edges match the contract graph in `overview.md`. Grouped by which child owns the
 - inference via `inference-events` (mesh <- inference, one subscription per
   node) (scaffold/contracts/inference-events.md)
 - gc via `gc-events` (mesh <- gc daemon) (scaffold/contracts/gc-events.md)
-- ccd via `ccd-events` (mesh <- ccd) (scaffold/contracts/ccd-events.md)
+- cc via `cc-events` (mesh <- cc) (scaffold/contracts/cc-events.md)
 - dashboard via `dashboard-feed` (mesh -> dashboard) — `GET /events` fan-out +
   REST + static hosting (scaffold/contracts/dashboard-feed.md)
 - every service via `surface-schema` — each service publishes its observable-
@@ -609,7 +609,7 @@ Edges match the contract graph in `overview.md`. Grouped by which child owns the
 **network-topology:**
 - tailscale-query via `tailscale-status` — polls/diffs snapshots
   (scaffold/contracts/tailscale-status.md)
-- any subscriber (ccd, org; mesh's own fan-out hub consumes it in-process) via
+- any subscriber (cc, org; mesh's own fan-out hub consumes it in-process) via
   `network-events` — WS topology + self connectivity feed
   (scaffold/contracts/network-events.md)
 

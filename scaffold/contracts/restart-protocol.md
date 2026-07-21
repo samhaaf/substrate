@@ -104,7 +104,7 @@ INTENT #84):
   window → escalate toward L4 + zombie-sweep.
 - `DependencyCycle { slugs }` — cyclic `requires` graph at boot-plan derivation.
 - `CrashLooping { slug, count }` — crash-loop threshold hit; stops restarts,
-  marks `Degraded`, escalates to ccd.
+  marks `Degraded`, escalates to cc.
 
 Non-errors by design:
 - A `Busy` reply **below** `SaveWindow` is a normal outcome (supervision waits /

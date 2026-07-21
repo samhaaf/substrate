@@ -12,7 +12,7 @@ track — INTENT #41.)*
 Let `spend` fold OpenRouter per-key budget/usage into its per-project cost
 tracking. `openrouter-mgmt` owns per-key budget **enforcement**; `spend`
 aggregates and reports and **never sets a budget** — same PULL discipline `spend`
-uses for CCD's usage DB (`spend-ccd`). No push from `openrouter-mgmt`.
+uses for cc's usage DB (`spend-cc`). No push from `openrouter-mgmt`.
 
 ## Rough shape
 A read-only query surface exposing, per runtime key, its budget-vs-actual:
@@ -36,7 +36,7 @@ spend it has pulled from the provider. The mapping of keys → projects/finances
 ## Open questions
 - Key → project/environment mapping: does `openrouter-mgmt` carry a
   project label per key, or does `spend` map externally? (Deferred; likely a
-  label on the key echoing `ccd-projects`' scheme.)
+  label on the key echoing `cc-projects`' scheme.)
 - Units/currency normalization between OpenRouter's figures and `spend`'s
   per-project cost model.
 - Poll cadence + caching so `spend` doesn't hammer OpenRouter's provider API

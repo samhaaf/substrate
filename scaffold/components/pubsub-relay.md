@@ -109,7 +109,7 @@ of the existing surfaces:
 |-------------|-----------------------|---------------|
 | `inference.*` | `inference-events`, per-completion streams | inference/api |
 | `gc.*` | `gc-events` | gc |
-| `ccd.*` | `ccd-events` | ccd |
+| `cc.*` | `cc-events` | cc |
 | `network.*` | `network-events` | network-topology |
 | `queue.*` | queue state changes | queues |
 | `dashboard.*` | the browser fan-out feed | dashboard-serving |
@@ -250,10 +250,10 @@ dependency. Flagged, not decided here.)
   every party. I propose their shape below for the concurrent `types` designer.
 - **Convergence (harmonization-time, owned by other modules):** the existing WS
   surfaces `network-events`, `dashboard-feed`, `inference-events`, `gc-events`,
-  `ccd-events` are all expected to be re-expressed AS `pubsub-protocol` topics
-  (`network.*`, `dashboard.*`, `inference.*`, `gc.*`, `ccd.*`). I do NOT author
+  `cc-events` are all expected to be re-expressed AS `pubsub-protocol` topics
+  (`network.*`, `dashboard.*`, `inference.*`, `gc.*`, `cc.*`). I do NOT author
   those contracts (they belong to network-topology, dashboard-serving, inference,
-  gc, ccd) — I only claim the topic-prefix taxonomy they land on (concern 3), for
+  gc, cc) — I only claim the topic-prefix taxonomy they land on (concern 3), for
   the Contract Harmonizer to reconcile.
 - `network-topology` / `service-registry` — consumed in-process for the peer set
   the relay links to (not a contract edge; sibling mesh libs).
@@ -319,7 +319,7 @@ are superseded by them.
     `mesh-transport` `Frame` (Reconciliation note 6); pub/sub messages are one
     frame kind inside it.
   - Still pending at harmonization (contract note 8): `network-events` /
-    `dashboard-feed` / `inference-events` / `gc-events` / `ccd-events`
+    `dashboard-feed` / `inference-events` / `gc-events` / `cc-events`
     re-express as topic prefixes on this envelope — this module claims only the
     topic-prefix taxonomy (concern 3), not those contracts.
   - The retained-snapshot-per-topic capability `network-events` asks of the

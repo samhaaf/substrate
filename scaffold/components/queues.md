@@ -25,7 +25,7 @@ just a queue* — so Mind OS can someday deploy straight onto real SQS through t
 `aws` crate (INTENT #106). It approximates **exactly-once over at-least-once** by
 composing with `locks`: pulling through a trigger that requests it acquires a
 semaphore keyed by the event ID (INTENT #95), a **per-trigger choice** (INTENT
-#101). Dead-letter exhaustion escalates into a **ccd agent investigation** (INTENT
+#101). Dead-letter exhaustion escalates into a **cc agent investigation** (INTENT
 #70/#89). "The entire contract of the system is basically built off the queueing
 mechanism" — operator, verbatim.
 
@@ -159,7 +159,7 @@ available ──dispatch──▶ in-flight(visibility_deadline) ──ack──
                               │
              receive_count > max_receive_count
                               ▼
-                        dead-letter queue  +  ccd escalation (concern 8)
+                        dead-letter queue  +  cc escalation (concern 8)
 ```
 
 - **Visibility timeout**: on dispatch the `Delivery` becomes in-flight with a
@@ -168,7 +168,7 @@ available ──dispatch──▶ in-flight(visibility_deadline) ──ack──
 - **Redrive**: `max_receive_count` exceeded → the *event* is enqueued onto the
   configured DLQ (itself an ordinary queue, INTENT #95) and the `Delivery` is
   marked dead-lettered. A DLQ has triggers like any queue — including, typically,
-  a trigger that escalates to ccd (concern 8).
+  a trigger that escalates to cc (concern 8).
 - **Ordering**: unordered/standard-SQS by default (boring). FIFO is *not* offered
   in v1 — no operator ask for it; flagged as an open question, not a silent no.
 - **Retention & tombstones**: acked/dead-lettered deliveries and orphaned messages
@@ -204,7 +204,7 @@ The event-ID semaphore is what makes that safe:
   partition-merge error** (`LockError::PartitionMergeThresholdExceeded`, defined
   in `types` per `types.md`). Queues must **surface that error, not silently
   double-dead-letter**: it is delivered as a first-class delivery outcome
-  (`DeliveryOutcome::PartitionConflict`) so the per-application seam (or a ccd
+  (`DeliveryOutcome::PartitionConflict`) so the per-application seam (or a cc
   escalation) handles it. This is the concrete place the operator's "handled per
   application" seam lives.
 
@@ -249,7 +249,7 @@ There is no special dead-letter mechanism. A queue (or per-trigger override)
 declares `Redrive { dlq: QueueName, max_receive_count }`. On exhaustion the *event*
 is `SendEvent`-ed onto `dlq` (an ordinary queue with its own triggers), and the
 original `Delivery` is marked dead-lettered with its `failure_history`. Because the
-DLQ is an ordinary queue, escalation-to-ccd is *itself just a trigger* on the DLQ
+DLQ is an ordinary queue, escalation-to-cc is *itself just a trigger* on the DLQ
 (concern 8) — no bespoke code path. This is the cleanest possible expression of the
 operator's lock: the guardrail reuses the fabric it guards.
 
@@ -265,14 +265,14 @@ conditional-put. This is a faithful-but-not-mechanical mapping; the `aws` design
 (batch 3, someday-only) authors the `aws`-side adapter and I flag the non-1:1 fan-out
 for that pass.
 
-### 8. Dead-letter → ccd escalation, shared with execution-engine's loop-depth hook
+### 8. Dead-letter → cc escalation, shared with execution-engine's loop-depth hook
 
 INTENT #70/#89: dead-letter exhaustion and `execution-engine`'s loop-depth-exceeded
-condition are **the same escalation pattern** — spawn a ccd agent to investigate.
-Queues proposes ONE shared shape (`ccd-escalation`, below) carrying a union of the
-two triggering conditions, so ccd (batch 6) grows one investigation surface, not
+condition are **the same escalation pattern** — spawn a cc agent to investigate.
+Queues proposes ONE shared shape (`cc-escalation`, below) carrying a union of the
+two triggering conditions, so cc (batch 6) grows one investigation surface, not
 two. On the queues side the escalation is fired by an ordinary DLQ trigger whose
-`HandlerRef::Service { slug: "ccd", … }` delivers the `EscalationRequest` — the
+`HandlerRef::Service { slug: "cc", … }` delivers the `EscalationRequest` — the
 guardrail is itself declarative data, consistent with everything else here.
 
 ### 9. Optional observability tee onto `pubsub-relay` (accepting the flagged nudge)
@@ -294,9 +294,9 @@ seams per `mesh-core.md`, **not** contract edges (INTENT #45).
   update/deregister declarative triggers, and the handler-delivery (ack/nack) side.
   Cross-cutting, surface-schema-style (one shared document, every service a party).
   *(authored: scaffold/contracts/queues-api.md)*
-- **mesh.queues(DLQ) / execution-engine → ccd** via `ccd-escalation` — the shared
+- **mesh.queues(DLQ) / execution-engine → cc** via `cc-escalation` — the shared
   dead-letter + loop-depth investigation surface (one union shape).
-  *(authored: scaffold/contracts/ccd-escalation.md)*
+  *(authored: scaffold/contracts/cc-escalation.md)*
 - **mesh.queues(triggers) → rollup** via `rollup-mesh` — a trigger's
   `AssemblyTemplate` resolves declarative `Rollup(RollupRef)` references at assembly
   time; queues calls rollup over mesh. queues is the *consumer*; `rollup` (batch 4)
@@ -334,12 +334,12 @@ they get `register`/`resolve`/`pubsub` from (per `mesh-core.md` and
 trigger data model + subject-generic filter/assembly, the SQS-modeled lifecycle +
 `QueueBackend` seam, the `locks` event-ID-semaphore composition with the
 partition-merge CAP-honesty path, the per-trigger semaphore/idempotency/redrive
-choices, DLQ-is-just-a-queue with ccd escalation as a declarative DLQ trigger, and
+choices, DLQ-is-just-a-queue with cc escalation as a declarative DLQ trigger, and
 the pub/sub tee are all decided and specified. The three proposed contract *wire
-shapes* (`queues-api`, `ccd-escalation` DLQ half, `rollup-mesh` consumer view) are
+shapes* (`queues-api`, `cc-escalation` DLQ half, `rollup-mesh` consumer view) are
 **approach-sketched** — fields authored, reconciled in the per-pair round
 with `locks` (error type), `rollup` (assembly-resolve API), `execution-engine`
-(shared trigger model), and `ccd` (escalation receiver). The queue-ownership fork
+(shared trigger model), and `cc` (escalation receiver). The queue-ownership fork
 is **LOCKED** (replicated-everywhere + semaphore, INTENT #112 — concern 4); FIFO
 remains the one genuine fork left for the operator — see Friction.
 
@@ -387,13 +387,13 @@ are superseded by them.
     round 1, INTENT #112): replicated-everywhere + event-ID semaphore — the
     model the schema assumed is confirmed; single-owner-node-with-failover is
     rejected. See concern 4 for the operator's verbatim rationale.
-- `ccd-escalation` (producers mesh.queues + execution-engine → consumer ccd;
+- `cc-escalation` (producers mesh.queues + execution-engine → consumer cc;
   one union `EscalationRequest` shape) — queues authors the `DeadLetter` arm,
-  fired by an ordinary DLQ trigger. → `scaffold/contracts/ccd-escalation.md`
+  fired by an ordinary DLQ trigger. → `scaffold/contracts/cc-escalation.md`
   - Contract resolution: execution-engine's enriched `LoopDepthExceeded` arm
     won over the thin placeholder once sketched here (kept only as the
     back-compat deserialize floor); `EscalationAck::Investigating` carries
-    ccd's `ThreadId`, not a bare `String`.
+    cc's `ThreadId`, not a bare `String`.
 - `rollup-mesh` (rollup ↔ mesh; queues is the chief resolve-surface caller;
   rollup authors) — a trigger `AssemblyTemplate`'s `Rollup(RollupRef)` nodes
   resolve at assembly time via rollup's resolve surface; `llm_safe`
@@ -427,7 +427,7 @@ observability tee) — see `scaffold/contracts/pubsub-protocol.md`.
   dead-letters and escalates while A completes cleanly; the message is retained
   until both deliveries are terminal, then GC-tombstoned.
 - **DLQ is just a queue:** the dead-lettered event on the DLQ fires the DLQ's own
-  ccd-escalation trigger exactly once (deduped by `escalation_id`); the DLQ itself
+  cc-escalation trigger exactly once (deduped by `escalation_id`); the DLQ itself
   has visibility/retention/triggers like any queue.
 - **Declarative static validation:** `RegisterTrigger` with a malformed `FilterExpr`
   or an `AssemblyTemplate` referencing a non-existent `SubjectPath` shape is rejected
