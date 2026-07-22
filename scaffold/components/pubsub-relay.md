@@ -18,7 +18,12 @@ deliberately **lossy and best-effort**: it favors liveness over completeness and
 drops for slow subscribers rather than blocking publishers. It does **NOT** own
 durability, ordering guarantees, at-least-once delivery, or exactly-once
 de-duplication — that is `queues`' job (INTENT #89/#95); the two are separate
-mesh libs and this boundary is load-bearing (see concern 8). It does **NOT**
+mesh libs and this boundary is load-bearing (see concern 8). As of wave 3
+(INTENT #155) lossiness is **configurable per message**: the broker core stays
+lossy, but a `SaveFailed` envelope tees its would-be-dropped deliveries into a
+*separable* intermediate-response cache and re-offers them on reconnect
+(concern 9) — durability remains a delegation to a swappable seam, never a
+property of the broker itself. It does **NOT**
 define the *payload* types (those are `types`' event/domain structs, compiled
 into publishers and subscribers) — the relay carries the payload **opaque**
 (concern 2). It is **NOT** the byte-transparent completion proxy: forwarding the
@@ -239,6 +244,155 @@ same delivery mechanism and neither is built on the other. (Open nudge for the
 onto a `queue.*` pub/sub topic for observability — a one-way tee, not a
 dependency. Flagged, not decided here.)
 
+### 9. Delivery persistence — the required `delivery` field: LossyDrop vs SaveFailed (INTENT #155)
+
+INTENT #155 makes pub/sub lossiness **configurable per message**: every published
+`Envelope` carries a **required** `delivery: DeliveryPersistence` field
+(`types::delivery`, batch-1 `types` wave 3) — `LossyDrop` or `SaveFailed`. The
+field is *required to author* (derives no `Default`, so a publisher must
+consciously choose) yet decodes on the safe side (`SaveFailed`) for pre-#155
+senders (the guardrail-4 "required to author, safe to decode" nuance, types.md).
+"We can't just be silently dropping things." The relay branches on the field at
+every point concern 6 currently drops.
+
+**`LossyDrop` — today's semantics, untouched.** The wave-2 policy verbatim
+(concern 6): bounded per-subscriber queues, `Lagged` notice on overflow, bounded
+per-peer relay buffer, drop-and-count on peer overflow, no retention, `seq`-gap
+detection for out-of-band re-sync. This is the ONLY behavior wave 2 had and it
+stays the untouched fast path — the choice for pure fan-out (dashboards,
+telemetry, live token streams).
+
+**`SaveFailed` — persist-on-failure + re-offer-on-reconnect, via a separable
+cache seam.** For a `SaveFailed` envelope, a delivery that concern 6 would *drop*
+is instead **teed into an abstract intermediate-response cache** and **re-offered
+when the intended recipient reconnects** — no silent drop. The three drop points
+concern 6 names map to three persist points:
+
+| concern-6 drop | SaveFailed behavior |
+|----------------|---------------------|
+| local subscriber lagged (bounded queue overflow) | the dropped envelopes are written to the cache under that subscriber's recipient key; the subscriber still receives its `Lagged` **notice** (liveness preserved) and drains the saved envelopes on catch-up |
+| registered interest exists but the matching subscriber is momentarily disconnected (no live socket to satisfy it) | envelope written to the cache under the intended recipient key; re-offered on that subscriber's re-subscribe |
+| cross-node relay: an interested peer daemon is unreachable | envelope written to the cache for that peer's interested recipients; re-offered when the peer reconnects and re-snapshots interest (concern 7) |
+
+On subscriber **(re)connect + subscribe** (concern 8's re-announce), the relay
+asks the cache for undelivered `SaveFailed` envelopes matching the new
+subscription's filters and replays them (interleaved with, or ahead of, live
+traffic; ordering and bound are the cache's retention/TTL policy). The subscriber
+dedups by `envelope_id` (concern 1) — at-least-once on the durable path, exactly
+as `queues` is at-least-once.
+
+**The broker itself stays lossy.** `SaveFailed` adds only (a) a *tee* of
+would-be-dropped envelopes into the cache and (b) a *drain* on reconnect. The
+retention lives entirely in the cache seam, never in the in-memory broker — so the
+durable path is a **clearly separable delegation** that could be un-merged with a
+one-line change (ledger §C, OQ-3). This is also how the wave-2 boundary is
+preserved: concern 4 kept a *retained-message/last-value store OUT of the lossy
+transport*, and #155 does **not** put it back into the broker — it moves opt-in
+retention to a separable, abstract cache. The transport is still lossy; durability
+is a delegation.
+
+**The cache seam — interface designed, mechanism OPEN (PARKED OQ-3).** The relay
+calls an abstract seam and does **not** decide where the cache lives or how it
+stores:
+
+```rust
+// internal mesh seam — NOT a cross-service contract edge (kept off the contract
+// graph like chassis's BlessingTarget), swappable with a one-line binding change.
+trait IntermediateCache {
+    /// A SaveFailed delivery that could not reach an intended recipient.
+    async fn save_failed(&self, undelivered: Undelivered);
+    /// On (re)subscribe: undelivered SaveFailed envelopes for this recipient
+    /// matching these filters, for replay. Removal/ack + TTL/eviction/bound are
+    /// the cache's policy, not the relay's.
+    async fn take_for(&self, recipient: RecipientKey, filters: &[TopicFilter]) -> Vec<Envelope>;
+}
+struct Undelivered  { envelope: Envelope, recipient: RecipientKey }
+// intended recipient ACROSS reconnects = the durable service identity the
+// registry already tracks, NOT the volatile socket. Boring provisional:
+struct RecipientKey { service: Slug, node: NodeId }   // topic is implicit in the envelope
+```
+
+- **Boring provisional (INTENT #155 verbatim):** the cache is *"a caching system
+  for intermediate responses that is also distributed, like a KV store"* — a
+  **distributed KV-backed cache** (the same one promise resolutions ride,
+  concern 10). That reading is INTENT's own words and is the default binding.
+- **MUST NOT decide (PARKED OQ-3).** Whether `SaveFailed` deliveries are instead
+  **enqueued into `queues`** (the wave-2 F5 consolidation — "saved pub/sub
+  deliveries just get enqueued into queues") is the operator's parked "didn't seem
+  very boring" question. This file **MARKS that consolidation NEEDS-EXPLANATION**
+  and does **not** adopt it; the `IntermediateCache` seam is written so a `queues`
+  backing OR a standalone distributed-KV backing is a one-line swap, and the two
+  framings stay un-merged (ledger §C OQ-3: "the durable path is a clearly
+  separable delegation to queues that could be un-merged").
+- **Recipient reconstruction is the honest hard edge.** Keying re-offer by durable
+  `(service, node)` is the boring choice — interest is volatile (concern 7), so we
+  cannot re-offer by live socket. The *internal* cache semantics (per-recipient
+  queue vs per-topic retained log with a subscriber cursor; TTL; eviction; bounded
+  size, INTENT #38) are **cache-owned and OQ-3-open**; the relay contracts only the
+  two seam calls above. Flagged, not decided.
+- **Mixed-version relay hop.** A `SaveFailed` envelope relayed through a pre-#155
+  daemon (which lacks the `delivery` header and the persist path) degrades to
+  best-effort on that hop — a transient rolling-update window (surfaced), NOT a
+  designed silent drop. The decode-fallback (`SaveFailed`) covers the reverse:
+  a newer daemon decoding an older sender's fieldless envelope defaults to the
+  safe side.
+
+### 10. Promise-resolution notices ride pub/sub (INTENT #152 / #155)
+
+INTENT #155: *"Promise resolution notices ride this too."* When a mesh promise
+(INTENT #152 — a service could not answer instantly; `types::transport`) elects
+**push** delivery on a pub/sub topic (`PromiseDelivery::Push { topic }`,
+`types::transport`), the later resolution is published as an ordinary `Envelope`
+on that topic and relayed by this module like any other message — with one
+binding: it inherits the promise ticket's `DeliveryPersistence` (types.md: the
+ticket's `persistence` field), which for a value the caller must not miss is
+`SaveFailed`. So a caller that disconnected before its promise resolved
+**collects the resolution on reconnect** from the SaveFailed cache (concern 9) —
+never a silent drop, exactly #155's resiliency requirement, reusing concern 9's
+machinery with no new mechanism.
+
+- **No new contract file** — this is a documented *use* of `pubsub-protocol` (the
+  carrier) + `mesh-transport` (the promise-ticket / resolution vocabulary). The
+  pub/sub `Envelope.payload` is a `PromiseResolution<..>` (types.md, `transport.rs`);
+  the relay stays payload-opaque (concern 2) — it neither knows nor cares that the
+  payload is a resolution.
+- **Two delivery channels for a resolution — reconciliation flagged, NOT resolved
+  here.** `mesh-transport` (batch 1) also defines a transport-frame
+  `PromiseFulfillment { promise, outcome }` correlated by promise id (the RPC-return
+  channel on the caller's own connection), while types.md's `PromiseDelivery::Push
+  { topic }` routes the resolution over a pub/sub topic (fan-out / observability, or
+  a caller that prefers a topic). Which channel a given promise uses is the ticket's
+  `PromiseDelivery`. Harmonizing the two representations — and confirming the
+  `types::transport` `PromiseTicket`/`PromiseResolution` naming against
+  mesh-transport's `ResponseOutcome::Promise`/`PromiseFulfillment` — is the
+  **mesh-transport / chassis / types** harmonizer's call. This file guarantees only
+  that *when* a resolution rides pub/sub, it rides as a normal, SaveFailed-capable
+  `Envelope`.
+
+### 11. Producer-side snapshot republish stays the retention answer for topology (wave 2, reaffirmed)
+
+Reaffirming the wave-2 position (concern 4) against the wave-3 fold: the relay does
+**NOT** grow a retained-message / last-value store for late subscribers. A
+publisher that needs a newcomer to see current state (network-topology's
+snapshot-then-delta, the registry's anti-entropy, dashboard bring-up)
+**republishes its current state as normal publishes** to the new subscriber —
+producer-side snapshot-on-connect, unchanged. This stays distinct from #155
+`SaveFailed`:
+
+- **Snapshot republish** answers *"a subscriber that connects LATE should see
+  current state"* — a producer concern; the value is whatever is current,
+  reconstructed by the producer.
+- **`SaveFailed` (concern 9)** answers *"a specific message must not be silently
+  dropped on a failed delivery"* — a per-message durability opt-in; the value is
+  the exact undelivered envelope, held in the separable cache.
+
+Both keep retention **out of the lossy broker**: one lives in the producer, the
+other in the abstract cache. The relay core stays the boring lossy fan-out it was.
+This closes the wave-2 open item ("the retained-snapshot-per-topic capability
+`network-events` asks of the relay"): the answer is **producer-side snapshot
+republish**, not a relay retained store — network-topology already owns that
+publish.
+
 ## Relationships / edges
 
 - every service ↔ mesh via `pubsub-protocol` — the standard WS pub/sub envelope +
@@ -257,6 +411,16 @@ dependency. Flagged, not decided here.)
   the Contract Harmonizer to reconcile.
 - `network-topology` / `service-registry` — consumed in-process for the peer set
   the relay links to (not a contract edge; sibling mesh libs).
+- `types::delivery::DeliveryPersistence` — **library dependency**: the required
+  `delivery` field on the pub/sub `Envelope` (INTENT #155) is homed in `types`
+  (batch-1 wave 3), compiled into every publisher and this relay. The relay OWNS
+  the *behavior* per mode (concern 9); `types` owns only the yes/no flag.
+- **`IntermediateCache` seam (PARKED OQ-3, kept OFF the contract graph on
+  purpose).** The `SaveFailed` retention target (concern 9) is an internal,
+  swappable mesh seam — mirroring chassis's `BlessingTarget` treatment — defaulted
+  (provisionally) to a distributed KV-backed cache and MARKED NEEDS-EXPLANATION for
+  the queues-vs-pubsub consolidation. No `intermediate-cache` contract family, no
+  `queues` dependency threaded here, until the operator un-parks OQ-3.
 
 ## Nesting
 
@@ -270,14 +434,21 @@ get `register`/`resolve` from (mesh.md concern 0). Confirmed at skeleton time.
 
 **implementation-ready** — envelope header, opaque-payload relay, topic taxonomy,
 the three subscription filter kinds, the two-addressing-class → scope mapping, the
-lossy backpressure policy, and the one-hop interest-routed loop-free relay are all
-decided and grounded in the live V1 gateway code. What remains open is genuinely
-downstream: (a) the exact interest-coarsening heuristic (how aggressively to
-collapse many exact filters into prefixes) — a fill-time tuning knob, not a design
-fork; (b) reconciling the five existing `*-events` contracts onto the topic
-prefixes — Contract Harmonizer work; (c) the `types` `pubsub.rs`/`event.rs` field
-sets — authored, reconciled in the per-pair round with the concurrent
-`types` designer.
+lossy backpressure policy, the one-hop interest-routed loop-free relay, and — new
+in wave 3 — the per-message `delivery` branch (LossyDrop unchanged; SaveFailed
+tee-and-re-offer), the promise-resolution-rides-pubsub binding, and the reaffirmed
+producer-side snapshot answer are all decided and grounded in the live V1 gateway
+code. What remains open is genuinely downstream or deliberately PARKED: (a) the
+exact interest-coarsening heuristic (fill-time tuning knob, not a design fork);
+(b) reconciling the five existing `*-events` contracts onto the topic prefixes —
+Contract Harmonizer work; (c) the `types` `pubsub.rs`/`event.rs` field sets —
+authored, reconciled in the per-pair round; (d) **PARKED OQ-3** — the
+`IntermediateCache` mechanism (distributed KV vs enqueue-into-`queues`) and its
+internal retention semantics (per-recipient queue vs per-topic retained log +
+cursor, TTL, eviction): the relay-side **seam** is designed and marked
+NEEDS-EXPLANATION; the mechanism is the operator's to settle; (e) the two
+promise-resolution delivery channels (pub/sub Push topic vs transport
+`PromiseFulfillment`) — mesh-transport/types harmonizer's reconciliation.
 
 ## Assigned design-depth
 
@@ -323,4 +494,41 @@ are superseded by them.
     re-express as topic prefixes on this envelope — this module claims only the
     topic-prefix taxonomy (concern 3), not those contracts.
   - The retained-snapshot-per-topic capability `network-events` asks of the
-    relay is the one open design ask pushed to this pair.
+    relay is the one open design ask pushed to this pair. **RESOLVED (wave 3,
+    concern 11):** the relay grows **no** retained store; `network-events` gets
+    current-state to late subscribers by **producer-side snapshot republish**
+    (network-topology's own publish), and the distinct #155 `SaveFailed` durability
+    rides the separable `IntermediateCache` seam — neither is a relay retained store.
+
+---
+
+## Proposed contracts (wave 3)
+
+This unit owns the **relay-side** of the #155 delivery-persistence fold. The
+struct half (`DeliveryPersistence`) is `types`' (batch 1); the **contract-file
+amendment** and the **relay behavior** are this unit's.
+
+- **`pubsub-protocol` (amendment — this unit authors it).** Add the REQUIRED
+  `delivery: DeliveryPersistence` field to the published `Envelope` and to the
+  `Publish` client frame (grounded by `types::delivery`, INTENT #155). Guarantees
+  bound at this contract: (a) required-to-author / safe-to-decode (no `Default`;
+  `SaveFailed` serde fallback) — never a silent-drop default; (b) the relay
+  branches per mode — `LossyDrop` = the wave-2 lossy policy verbatim, `SaveFailed`
+  = tee-failed-into-cache + re-offer-on-reconnect (concern 9); (c) `types` names
+  only the yes/no flag — the persistence **mechanism** (distributed KV cache;
+  whether saved deliveries enqueue into `queues`) stays with pubsub-relay/mesh and
+  is **MARKED NEEDS-EXPLANATION** (PARKED OQ-3), so flag and mechanism un-merge
+  independently. → `scaffold/contracts/pubsub-protocol.md` (updated by this unit).
+
+- **Promise-resolution notice (rides `pubsub-protocol`, no new file).** A pushed
+  promise resolution (`PromiseDelivery::Push { topic }`, `types::transport`) is
+  delivered as an `Envelope<PromiseResolution<..>>` on the ticket's topic,
+  inheriting the ticket's `DeliveryPersistence` (INTENT #152/#155). A documented
+  use of `pubsub-protocol` + `mesh-transport`; the relay stays payload-opaque
+  (concern 10). The pub/sub-vs-transport channel reconciliation is flagged for the
+  mesh-transport/types harmonizer, not decided here.
+
+- **`IntermediateCache` seam — deliberately NOT a contract (PARKED OQ-3).** The
+  `SaveFailed` retention target is an internal, one-line-swappable mesh seam
+  (concern 9), off the contract graph like chassis's `BlessingTarget`. No
+  `intermediate-cache` contract family, no `queues` edge, until OQ-3 is un-parked.

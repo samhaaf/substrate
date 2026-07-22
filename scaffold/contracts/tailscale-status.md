@@ -1,21 +1,34 @@
 # Contract: tailscale-status
 
-## Parties
-`tailscale-query` (crate `substrate-tailscale`, L0) → **`mesh.network-topology`**
-(sole consumer).
-*(completion-router DROPPED as a co-consumer, wave-2 — see Reconciliation
-notes; the wave-1 party list `{network-topology, completion-router}` and
-wave2-plan §3a are updated by this file.)*
+> **⚠ WAVE-3 UPDATE (ledger F9a / D5) — this is now a NETWORK-TOPOLOGY-INTERNAL
+> module boundary, no longer a cross-crate edge.** `tailscale-query` has been
+> absorbed as `network-topology`'s internal `query` submodule
+> (`lib/mesh/src/topology/query/`); the old `substrate-tailscale` crate is gone
+> (see `scaffold/components/tailscale-query.md` tombstone). Producer and consumer
+> are now the **same component** — the `query` submodule → the topology state
+> machine. This file is retained as the record of that submodule's public
+> trait+struct surface (the extraction seam) and the load-bearing error taxonomy;
+> the schema below is unchanged in substance, only re-scoped from a crate API to
+> an intra-`mesh` module API.
 
-**Nature flag (for the harmonizer).** This is a **compiled-in Rust API
-contract**, not a mesh WS / `:3649` data contract — no bytes cross the mesh
-port for this edge. wave2-plan §3a lists it as a mesh-internal contract stub,
-while §3's closing note says shared-lib consumption is "deliberately NOT
-contract edges." Those lines conflict; the adopted resolution (from
-`tailscale-query.md`) keeps the stub but scopes it to document the crate's
-**public trait + struct surface** — a shared lib's public API *is* its
-contract. Authored from `tailscale-query.md` (producer/owner) reconciled with
-`network-topology.md`'s consumer reads.
+## Parties
+**`mesh.network-topology::query` submodule** (producer, `lib/mesh/src/topology/
+query/`) → **`mesh.network-topology`** topology state machine (consumer). Both
+halves are the same component (intra-`mesh`, compiled-in) since wave-3 F9a.
+*(History: this was `tailscale-query` (crate `substrate-tailscale`, L0) →
+`mesh.network-topology`. Earlier still, completion-router was a second consumer
+— DROPPED wave-2, see Reconciliation notes. The wave-1 party list
+`{network-topology, completion-router}` and wave2-plan §3/§3a are both
+superseded by this file.)*
+
+**Nature flag (for the harmonizer).** Always a **compiled-in Rust API surface**,
+never a mesh WS / `:3649` data contract — no bytes cross the mesh port. As of
+wave-3 it is not even a cross-crate edge: it is an **intra-component module
+boundary** inside `mesh` (the `query` submodule's public API). A shared/internal
+lib's public API *is* its contract, so the surface is still worth documenting —
+it is the seam that keeps `query` one `cargo new` away from re-promotion to a
+standalone crate if the operator objects to the fold. Authored from the (now
+absorbed) `tailscale-query.md` reconciled with `network-topology.md`'s reads.
 
 ## Purpose
 Hand `network-topology` one stable, typed view of Tailscale self+peer status

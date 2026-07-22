@@ -36,6 +36,12 @@ struct Envelope {
     topic: Topic,
     event_type: String,             // "domain.noun.verb" — routable WITHOUT decoding payload
     provenance: Provenance,
+    // REQUIRED (INTENT #155): the publisher's save-failed-deliveries choice.
+    // Type derives NO `Default` (required to author); serde decode-fallback is the
+    // SAFE side (SaveFailed) for pre-#155 senders — never a silent-drop default.
+    // The relay BRANCHES on this (see "Delivery persistence" below).
+    #[serde(default = "delivery::DeliveryPersistence::save_failed")]
+    delivery: delivery::DeliveryPersistence,   // LossyDrop | SaveFailed  (types::delivery)
     causal_parent: Option<Uuid>,     // envelope_id of the causing message
     payload: Box<serde_json::value::RawValue>,  // OPAQUE at the relay boundary
 }
@@ -72,6 +78,7 @@ enum PubSubClientMsg {
     Publish {
         topic: Topic,
         event_type: String,
+        delivery: delivery::DeliveryPersistence, // REQUIRED (#155): per-message LossyDrop | SaveFailed
         causal_parent: Option<Uuid>,
         payload: Box<RawValue>,      // daemon stamps envelope_id + provenance.{node_id,emitted_at,seq}
     },
@@ -101,6 +108,40 @@ enum RelayFrame {
                        add: Vec<TopicFilter>, remove: Vec<TopicFilter> },
 }
 ```
+
+### Delivery persistence — LossyDrop vs SaveFailed (INTENT #155)
+
+The `Envelope.delivery` field makes lossiness a **per-message publisher choice**;
+`pubsub-relay` branches on it (mechanics: `components/pubsub-relay.md` concern 9).
+The wire guarantee this contract binds:
+
+- **`LossyDrop`** — the best-effort/lossy default of this protocol, verbatim: a
+  lagged subscriber gets a `Lagged` notice and misses events; a `Scope::Node(N)`
+  publish to an offline N is a silent best-effort drop; no retention. This is the
+  ONLY behavior before #155 and stays unchanged.
+- **`SaveFailed`** — a delivery that `LossyDrop` would drop (subscriber lagged,
+  interest registered but subscriber momentarily disconnected, interested peer
+  daemon unreachable) is instead **persisted into a distributed intermediate-
+  response cache and re-offered on the intended recipient's reconnect** — "no
+  silent drops" (#155). The subscriber still receives its `Lagged` **notice** for
+  liveness and dedups the replayed envelopes by `envelope_id` (at-least-once on the
+  durable path). Replay happens on `Subscribe`: the relay returns undelivered
+  `SaveFailed` envelopes matching the new filters.
+
+The cache is a **distributed KV-backed store** (INTENT #155 verbatim — "a caching
+system for intermediate responses… distributed, like a KV store"). **Whether
+saved deliveries are instead enqueued into `queues`** (the F5 consolidation) is
+**PARKED (OQ-3)** and MARKED **NEEDS-EXPLANATION** — this contract names only the
+yes/no flag and the delivered guarantee, never the mechanism; pubsub-relay holds
+the seam so the flag and its backing un-merge independently.
+
+**Promise-resolution notices ride this** (#152/#155): a pushed promise resolution
+(`PromiseDelivery::Push { topic }`, `mesh-transport`/`types::transport`) is an
+`Envelope` on the ticket's topic that inherits the ticket's `DeliveryPersistence`
+(`SaveFailed` for a value the caller must not miss) — so it survives a caller
+reconnect via the same cache. See `mesh-transport` for the transport-frame
+(`PromiseFulfillment`) channel; which channel a promise uses is its ticket's
+`PromiseDelivery`.
 
 ## Error cases
 
@@ -154,6 +195,16 @@ fleet, INTENT #66). `Envelope.v` is the anchor.
   subscribers must read a backward `seq` jump as "publisher restarted," not
   corruption. The daemon folds the registry lease generation into provenance so
   restart is detectable.
+- **`Envelope.delivery` — the sanctioned "required to author, safe to decode"
+  exception (INTENT #155).** The field derives **no `Default`** (a publisher must
+  choose LossyDrop or SaveFailed), yet its serde attribute
+  (`#[serde(default = "…save_failed")]`) decodes a **pre-#155 sender's fieldless
+  envelope to `SaveFailed`** — the resilient side, never a silent-drop default.
+  This is the one place the additive-optional rule bends, and it bends toward
+  resiliency exactly as #155 asks. A `SaveFailed` envelope **relayed through a
+  pre-#155 daemon** (which lacks the field and the persist path) degrades to
+  best-effort on that hop — a transient rolling-update window, surfaced, **not** a
+  designed silent drop.
 
 ## Reconciliation notes
 
@@ -223,6 +274,17 @@ opaque-payload / open-identifier philosophy). Point by point:
    independent wire formats. Their example data should be authored as `Envelope`s
    on the reserved prefixes in this one example world.
 
+9. **`delivery` field added (wave 3, INTENT #155).** The required
+   `delivery: DeliveryPersistence` field lands on `Envelope` + `Publish` (homed in
+   `types::delivery`, batch-1 wave 3). `types.md` proposed it; `pubsub-relay` (this
+   contract's owner) binds it and owns the per-mode relay behavior. The persistence
+   **mechanism** (distributed KV cache vs enqueue-into-`queues`) is **PARKED OQ-3**
+   and MARKED NEEDS-EXPLANATION — this file names only the flag and the delivered
+   guarantee. The wave-2 open ask "retained-snapshot-per-topic for the relay" is
+   **RESOLVED**: it is answered by **producer-side snapshot republish**
+   (network-topology's own publish), NOT a relay retained store; #155 `SaveFailed`
+   is the distinct, separable per-message durability path (pubsub-relay concern 11).
+
 ## Example data
 
 `inference` on node **pi** publishes a token event for completion `c-8f3`
@@ -234,6 +296,7 @@ Client → daemon (on pi):
 { "type": "Publish",
   "topic": { "scope": "Fleet", "path": "inference.completion.c-8f3" },
   "event_type": "inference.completion.token",
+  "delivery": "LossyDrop",
   "causal_parent": null,
   "payload": { "completion_id": "c-8f3", "model": "qwen3-4b",
                "token": " world", "index": 12 } }
@@ -247,6 +310,7 @@ Daemon → subscriber (on macbook):
     "envelope_id": "b1e0c3a2-0000-0000-0000-000000000001",
     "topic": { "scope": "Fleet", "path": "inference.completion.c-8f3" },
     "event_type": "inference.completion.token",
+    "delivery": "LossyDrop",
     "provenance": { "service": "inference", "node_id": "pi",
                     "emitted_at": "2026-07-19T18:20:00.123Z", "seq": 4471,
                     "correlation_id": null, "causation_id": null },
