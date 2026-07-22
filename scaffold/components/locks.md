@@ -201,6 +201,18 @@ deliberately rejected until a real consumer needs it.
 
 ### 6. Merge reconciliation + `PartitionMergeExceeded` (INTENT #84 — the required error, first-class)
 
+> **Re-spoken-round note (2026-07-21/22, INTENT #163):** the
+> "authority node" conclusion from the coordinator round is **WITHDRAWN
+> pending a dedicated discussion** (see overview.md's re-spoken section).
+> The operator's alternative paradigm lands closest to THIS concern:
+> single-node write-blessing **via semaphore within the mesh**, and on
+> partition-merge **one node in the newly-joined network steps through the
+> merge and asks each affected application how to resolve** — merge
+> resolution pushed back to services, "no need for a central authority
+> node ever." Nothing below is redesigned now; this concern's
+> deterministic reconciler + `PartitionMergeExceeded` surface is where
+> that discussion will attach.
+
 Every daemon's locks lib subscribes to the `locks/` keyspace
 (`KvHandle::subscribe`). When resync after a rejoin (bidirectional, both sides
 learning — INTENT #71) converges the KV, each daemon independently runs the same

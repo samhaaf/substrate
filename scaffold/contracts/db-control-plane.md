@@ -7,8 +7,20 @@ migrations+queries; any service that drives the DB control plane). Reached
 `db serve` daemon over WS — NEVER by linking `substrate-db`** (INTENT #29).
 Authored from `db.md` (authoritative; owns `lib/db`/`bin/db`).
 
-> **The `db serve` WS bearer is [ACCEPTED — friction-round 3, INTENT #128,
-> resolving the INTENT #115 drift flag].** The operator accepts "a session
+> **SUPERSEDED (re-spoken round, 2026-07-21/22, INTENT #167): the `db serve`
+> WS bearer is GONE — db is a pure CLI tool with no daemon; sessions live
+> in vdb.** The session-home call was delegated to AUI ("just pick one")
+> and picked for simplicity: vdb already owned statement tracking/cleanup/
+> session management (INTENT #128), so the sessions and warm connections
+> move into the vdb daemon, and this contract's ONE remaining bearer is the
+> **`bin/db` CLI subprocess** (`--format json`), standalone and mesh-free —
+> which honors the operator's original instinct that daemons are services
+> and db is a tool (INTENT #115). The noun-verb vocabulary below is
+> unchanged; read "WS surface" as historical. See `db.md` header note,
+> `vdb.md` concern 7, `vdb-db.md`.
+
+> **[Previously: the `db serve` WS bearer ACCEPTED — friction-round 3,
+> INTENT #128, resolving the INTENT #115 drift flag].** The operator accepts "a session
 > concept with a headless stateful daemon running as part of db"; VDB is the
 > virtualization layer that delegates to db (so the same tools aren't
 > defined twice) and owns statement tracking / cleanup / session management

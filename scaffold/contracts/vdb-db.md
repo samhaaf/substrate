@@ -1,7 +1,30 @@
 # Contract: vdb-db
 
-> **[UNFROZEN — ACCEPTED (friction-round 3, 2026-07-20, INTENT #128;
-> resolves the friction-round-1 INTENT #115 drift flag).]** The operator
+> **⚠ SESSION HOME DECIDED — `db serve` SUPERSEDED (re-spoken round,
+> 2026-07-21/22, INTENT #167: the operator delegated the db-vs-vdb
+> session-home call — "just pick one").** The pick, for simplicity:
+> **sessions live in VDB; db returns to a pure CLI tool with no daemon.**
+> Rationale in one paragraph: INTENT #128 had already made vdb the owner of
+> statement tracking, cleanup, and session management — leaving the session
+> daemon in db split one concern across two co-located processes and cost
+> two local WS hops per handler action; collapsing sessions (and the warm
+> driver connections they key) INTO the vdb daemon gives the concept one
+> home, returns db to the operator's original instinct (INTENT #115: "db =
+> a standalone crate you call as a tool; VDB = the mesh-accessed service"
+> — daemons are services, db is a tool), and deletes a public surface
+> instead of adding one. **This contract is no longer a cross-app wire
+> protocol.** Its session-verb vocabulary (OpenSession/ApplySql/
+> InstallChangelog/promotion primitives/provenance-atomicity, below)
+> survives as the shape of vdb's INTERNAL session surface; db's side of
+> the reconciliations (provenance threading, the write gate, `ContentHash`)
+> survives as CLI/lib capability requirements. vdb reaches db as a CLI
+> subprocess for cold-path actions (db-control-plane path (a)); the
+> warm-path driver mechanism is fill-time latitude recorded in vdb.md
+> concern 7. Retained below as record. → `db.md` header note, `vdb.md`
+> concern 7.
+
+> **[Previously UNFROZEN — ACCEPTED (friction-round 3, 2026-07-20, INTENT
+> #128; resolves the friction-round-1 INTENT #115 drift flag).]** The operator
 > accepts the `db serve` daemon mode this contract rides, verbatim: "Now
 > that you mention there are drivers for sessions that need to run, it
 > actually does make sense to have a session concept with a headless

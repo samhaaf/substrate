@@ -14,6 +14,38 @@ anticipated data contracts only.** **Nesting:** top-level app-crate
 > (INTENT #107). Everything below is a placeholder with a real design note;
 > content lands when `spend` leaves the stub track.
 
+## Re-spoken round update (2026-07-21/22, INTENT #166 Q10 + #170) — CONFIRMED, anchored to the LANDSCAPE
+
+`spend` is **confirmed** — and its attribution anchor is upgraded from
+"per-project rollups" to **landscape topological nodes** (see overview.md's
+vocabulary block; projects are the primary topological node, so this
+generalizes rather than replaces the framing below):
+
+- **Anchored to landscape topological nodes: per-REGION spend rollups.**
+  Cost attaches to the topological node responsible for it; a node's spend
+  rolls up over the region of the landscape it owns (the same
+  targeted-rollup discipline everything in the landscape gets — INTENT
+  #165). Where the text below says "per-project," read "per topological
+  node, projects primary."
+- **Sources, restated:** (1) **OpenRouter key usage** — keys are
+  **attachable to topological nodes or node+environment combos**, so
+  per-key usage IS per-region usage by construction; (2) **Claude Code
+  usage via cc** (the `spend-cc` pull, unchanged).
+- **`openrouter-mgmt` is ABSORBED INTO spend** (the L6 consolidation): key
+  lifecycle/budget administration and the usage pull become spend's own
+  OpenRouter source adapter rather than a separate crate. The
+  enforcement/aggregation split below SURVIVES the merge as an internal
+  line: OpenRouter still enforces key budgets provider-side at call time;
+  spend's OpenRouter adapter sets budgets and reads back usage — spend
+  still never gates a call. See `openrouter-mgmt.md` (absorbed note); the
+  `openrouter-secrets` edge re-parties onto spend.
+- **LOOSE END, recorded honestly (INTENT #170):** Claude Code reports
+  per-run costs, **but on the Max plan runs are effectively free** — spend
+  must represent that honestly somewhere (e.g. nominal/metered cost vs
+  actual marginal cost as distinct measures), not report Max-plan token
+  "costs" as money spent. Unresolved; joins open question 3
+  (unit normalization) for the real design pass.
+
 ## Charter (requirements)
 
 `spend` is Mind OS's **finance component** — cost tracking across every

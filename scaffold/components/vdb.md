@@ -398,8 +398,29 @@ which is why the upgrade target is only ever cloud (round-9 lock).
 
 ### 7. `db` as the execution arm — the call mechanism (co-designed with db, batch 4; ACCEPTED)
 
-> **[UNFROZEN — ACCEPTED (friction-round 3, 2026-07-20, INTENT #128;
-> resolves the INTENT #115 drift flag).]** The operator accepts the `db serve`
+> **SESSION HOME DECIDED — re-spoken round (2026-07-21/22, INTENT #167):
+> sessions live HERE, in vdb; `db` returns to a pure CLI tool with NO
+> daemon. `db serve` is SUPERSEDED.** The operator delegated the pick
+> ("just pick one"); the simplest shape wins: vdb already owns "statement
+> tracking, cleanup, and session management" (INTENT #128), so vdb now
+> also OWNS the sessions themselves — the warm driver connections keyed by
+> hosted database live inside the vdb daemon, not in a second co-located
+> daemon reached over two WS hops per handler action (the performance flag
+> below dissolves with the hop). This honors the operator's original
+> instinct (INTENT #115: db is a tool you call, VDB is the mesh-accessed
+> service — daemons are services). db is invoked as a **CLI subprocess**
+> for cold-path actions (migrations, promotion legs, bootstrap — db.md
+> path (a), unchanged); for the warm hot path, how vdb obtains driver
+> capability without violating INTENT #29 (never import db's internals) is
+> fill-time latitude: the sanctioned shape mirrors the note below — a
+> db-OWNED lib piece (db compiles its drivers as a lib db itself owns;
+> exposing it for embedding is a db-side decision) or vdb-owned driver
+> code; the `vdb-db` contract's verb vocabulary survives as the internal
+> session-surface shape either way. The `db serve` framing below is
+> retained as record.
+
+> **[Previously UNFROZEN — ACCEPTED (friction-round 3, 2026-07-20, INTENT
+> #128; resolves the INTENT #115 drift flag).]** The operator accepts the `db serve`
 > headless stateful session daemon as part of db, with the division
 > clarified, verbatim: "VDB is basically just a virtualized layer to our
 > databases that allows the same access regardless of environment or

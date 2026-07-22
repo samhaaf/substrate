@@ -1,5 +1,13 @@
 # Contract: openrouter-spend
 
+> **⚠ ABSORBED (re-spoken round, 2026-07-21/22): `openrouter-mgmt` folded
+> INTO `spend`** (see spend.md's re-spoken update and openrouter-mgmt.md's
+> tombstone). Both parties below are now the same crate — this edge
+> collapses to **spend's internal OpenRouter source adapter**. Retained as
+> the record of that adapter's shape. Note also (INTENT #166 Q10): keys are
+> attachable to landscape topological nodes or node+environment combos, so
+> per-key usage maps to per-region spend.
+
 ## Parties
 - `spend` (L6 stub) `->` `openrouter-mgmt` (L6 stub) — **pull-shaped;
   `openrouter-mgmt` is the SOURCE.**

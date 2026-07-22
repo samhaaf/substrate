@@ -1,5 +1,10 @@
 # Contract: openrouter-secrets
 
+> **Party change (re-spoken round, 2026-07-21/22): `openrouter-mgmt` was
+> absorbed into `spend`** — the consumer side of this edge is now `spend`'s
+> OpenRouter adapter. Substance unchanged (use-without-seeing, resolve-
+> into-sink, existing key hierarchy). See openrouter-mgmt.md's tombstone.
+
 ## Parties
 - `openrouter-mgmt` (L6 stub) `->` `secrets` (L3).
 

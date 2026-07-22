@@ -14,6 +14,15 @@ organization plane. **Nesting:** top-level app-crate (crate=app, INTENT #22) —
 daemon/CLI entry point when it is eventually built, never a library others link
 (INTENT #29). **Track:** STUB. **Model tier:** Opus.
 
+> **Re-spoken round (2026-07-21/22, INTENT #168):** the operator has
+> ALREADY refactored the harness AUI into **ui-server + aui-client** (with
+> a layered state-machine library between them; the walk-along Pi runs
+> aui-client), though he still runs the old version. Two L6 placeholder
+> stubs now carry that split — `components/ui-server.md` and
+> `components/aui-client.md` (data-contract placeholders only). This file
+> remains the design node for the AUI-over-the-mesh intent; how its
+> single-crate framing splits across the pair is deferred to the port.
+
 **Provenance note (not this pass's scope).** The AUI already exists as the
 operator's working audio interface in the harness (`~/code/harness/apps/aui`) —
 this very interface, which captured INTENT and drives the whole project by voice

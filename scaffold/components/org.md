@@ -15,6 +15,19 @@
 > restated below. The `org-on-cc` contract stub survives as the
 > shaped-for-a-broad-consumer record only (see that file's tombstone note).
 
+> **Vocabulary update (re-spoken round, 2026-07-21/22, INTENT #146–#162):**
+> the coordinator/owner concept this file holds has evolved into the
+> **topological node on the LANDSCAPE** — an org-chart seat owning its
+> region of the one open-world graph; an agent spins up FROM the node's
+> **seed** (its persistent shared memory ONLY — not the node itself, INTENT
+> #161) into a per-thread ephemeral **workspace**; threads start
+> interactive or headless; the node's **bundle** (role prompt + plugins,
+> the rollup of the seed) initializes each thread. Concept name OPEN —
+> **"keeper" leading** (bishop/deva/coordinator/owner superseded as names;
+> Jester dropped). See overview.md's canonical vocabulary block; the full
+> arc is INTENT #146–#162. Where the text below says coordinator/owner,
+> read topological node / keeper-concept.
+
 ## What org IS (emergent, not built)
 
 - **An org is a bunch of coordinators.** No crate builds it; it emerges from

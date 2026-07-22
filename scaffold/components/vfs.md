@@ -212,6 +212,26 @@ pub enum ReplicaKind { Durable, Cache }
 
 ### 5. Per-directory policies + the gc relationship (the STANDING-OPEN question, with a recommendation)
 
+> **SUPERSEDED at the re-spoken round (2026-07-21/22, INTENT #166, Q9):
+> the operator resolved the rolled-in-vs-called-as-tool question the OTHER
+> way — gc is ABSORBED INTO vfs.** Verbatim: "garbage collection is
+> actually a spectrum — mark-for-removal, move to another device, cold
+> storage; maybe take it apart and reuse pieces." So gc becomes an
+> **internal vfs module/spectrum** (mark-for-removal, move-between-devices,
+> cold-storage) — the recommendation below (distinct crate, called-as-tool
+> over WS) is superseded, though its substance survives inverted: the same
+> policy-above/mechanism-below split now lives INSIDE vfs, the built
+> `lib/gc` pieces are reused rather than rewritten, and the `vfs-gc`
+> command vocabulary becomes the internal module surface (that contract
+> file is retained as its record). Notably the absorption makes the
+> "spectrum" explicit: mark-for-removal (today's evict/delete), move-
+> between-devices (the `Migrate` reclaimer hand-back this file already
+> assigned to vfs), and cold-storage (the S3/cold tier, concern 8) are one
+> continuum owned by one component — which is precisely why the operator
+> folded it in. Residual to resolve in vfs's next pass: how inference's
+> embedded `lib/gc` consumers (`gc-managed-dirs`) converge with vfs's
+> internal store. The text below stands as the design record.
+
 Per-directory policy is fully-replicated data:
 
 ```rust

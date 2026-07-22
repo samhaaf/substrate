@@ -1,5 +1,28 @@
 # db
 
+> **SESSION HOME DECIDED — re-spoken round (2026-07-21/22, INTENT #167):
+> sessions live in VDB; `db` returns to a PURE CLI TOOL with NO DAEMON.
+> `db serve` is SUPERSEDED.** The operator delegated the db-vs-vdb
+> session-home call ("just pick one" — stop re-raising), and this is the
+> pick, taken as the simplest shape: INTENT #128 already gave vdb
+> "statement tracking, cleanup, and session management," so putting the
+> session/daemon concept in db too split one concern across two processes
+> on the same node; collapsing it into vdb gives the session concept ONE
+> home, deletes db's second public surface (one crate, one noun-verb CLI —
+> maximally boring), and honors the operator's original instinct (INTENT
+> #115: "db = a standalone crate you call as a tool; VDB = the
+> mesh-accessed service" — daemons are services, db is a tool). vdb holds
+> the warm driver connections itself (see vdb.md concern 7's superseding
+> note for the mechanism latitude); db stays exactly what it is today — a
+> boring CLI action-runner invoked as a subprocess (path (a) below), used
+> by vdb for cold-path actions, by inference bootstrap, by CI, and by mesh
+> for its own database. The `db serve` design below (concern 1 path (b),
+> and the INTENT #128 acceptance notes) is retained as record; the
+> capability extensions the daemon motivated (changelog codegen,
+> copy/verify verbs, outbox parity) survive as CLI/lib capabilities.
+> → `contracts/vdb-db.md` (superseded-as-daemon-protocol note), `vdb.md`
+> concern 7.
+
 **Status:** EXISTING app-crate (`lib/db` = `substrate-db`, `bin/db`), substantial
 real code. **FULL DESIGN — wave 2, batch 4 (L4).** This pass SUPERSEDES the prior
 Sonnet `approach-sketched` file, which is now stale in two load-bearing ways: (1)
@@ -77,8 +100,10 @@ call-frequency and boot-safety — never linking:**
   command-line tool" — explicitly blessed by #29.
 
 - **(b) `db serve` — a thin daemon over the mesh (warm, hot-path).**
-  **[UNFROZEN — ACCEPTED by the operator (friction-round 3, 2026-07-20,
-  INTENT #128; resolves the INTENT #115 drift flag).]** The operator,
+  **[SUPERSEDED at the re-spoken round (INTENT #167): the session home is
+  VDB and db has NO daemon — see the header note. Retained as record.]**
+  **[Previously UNFROZEN — ACCEPTED by the operator (friction-round 3,
+  2026-07-20, INTENT #128; resolves the INTENT #115 drift flag).]** The operator,
   verbatim: "Now that you mention there are drivers for sessions that need
   to run, it actually does make sense to have a session concept with a
   headless stateful daemon running as part of db... VDB is basically just a

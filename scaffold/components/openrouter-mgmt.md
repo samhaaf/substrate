@@ -1,4 +1,18 @@
-# openrouter-mgmt
+# openrouter-mgmt — ABSORBED INTO SPEND (tombstone-with-content)
+
+> **⚠ TOMBSTONE — `openrouter-mgmt` IS NO LONGER A SEPARATE CRATE
+> (re-spoken round, 2026-07-21/22; the L6 consolidation confirmed with
+> spend's re-anchoring, INTENT #166 Q10).** OpenRouter account management —
+> key create/rotate/revoke, per-key budgets, usage pulls — becomes
+> **spend's own OpenRouter source adapter**. The re-anchoring made the
+> merge natural: OpenRouter keys are **attachable to landscape topological
+> nodes or node+environment combos**, so key administration and per-region
+> spend attribution are one concern. What carries over intact from the
+> design notes below: the two-tier key model, enforce-there/set-here
+> budgets, use-without-seeing secrets handling (`openrouter-secrets`
+> re-parties onto spend), and the pull-shaped usage read (`openrouter-spend`
+> collapses to an internal adapter). See `spend.md`'s re-spoken update.
+> The stub is retained below as the record of the absorbed scope.
 
 > **⚠ STUB TRACK — NOT IMPLEMENTING NOW.** This file is DESIGN NOTES +
 > ANTICIPATED DATA CONTRACTS only, per the wave-2 batch-8 plan and INTENT #41.

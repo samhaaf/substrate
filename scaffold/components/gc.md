@@ -1,4 +1,32 @@
-# gc
+# gc — ABSORBED INTO VFS (tombstone-with-content)
+
+> **⚠ TOMBSTONE — `gc` IS NO LONGER A STANDALONE CRATE (re-spoken round,
+> 2026-07-21/22, INTENT #166, Q9).** The operator, verbatim: "garbage
+> collection is actually a spectrum — mark-for-removal, move to another
+> device, cold storage; maybe take it apart and reuse pieces." `gc` rolls
+> INTO `vfs` as an **internal module/spectrum**: mark-for-removal,
+> move-between-devices, cold-storage. There is no separate `bin/gc` daemon,
+> no `gc` registry slug, no L3 seat in the tree. Consequences:
+>
+> - **`vfs.md` concern 5's called-as-tool recommendation (and the `vfs-gc`
+>   contract's called-as-tool resolution) are SUPERSEDED** — the operator
+>   answered the standing rolled-in-vs-called-as-tool question (INTENT
+>   #27/#48) the OTHER way: rolled in.
+> - **The pieces may be reused.** The built, tested `lib/gc` core
+>   (`GcService`/`GcStore`/`.gc` config/`Reclaimer`/`GcEvent`) survives as
+>   reusable material — vfs's internal gc module is expected to be
+>   assembled FROM it, and inference's embedded consumers
+>   (`gc-managed-dirs`) keep `lib/gc` as a library piece. "Take it apart
+>   and reuse pieces" is the instruction, not rewrite-from-scratch.
+> - The command/event vocabulary designed below becomes the internal
+>   surface between vfs's placement brain and its own gc module; the
+>   `vfs-gc` contract file is retained as the record of that internal
+>   surface (see its absorbed note).
+> - How inference's embedded gc converges with vfs's internal store is now
+>   a **vfs design question**, carried into vfs's next pass.
+>
+> The design below is retained as the record of the absorbed module —
+> read "the gc daemon" as "vfs's internal gc module" throughout.
 
 ## Charter
 

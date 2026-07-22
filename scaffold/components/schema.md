@@ -50,6 +50,31 @@ general.
   means inheriting at a version and applying migrations forward.
 - **Must be boring.** Stated explicitly by the operator.
 
+## Re-spoken round settlements (2026-07-21/22, INTENT #150/#166)
+
+- **Multiple inheritance is IN SCOPE** (INTENT #150 beat 14): "dual
+  inheritance — merge two branches of child seeds into a new child seed;
+  the schema tool must support graphical inheritance from multiple
+  parents." The open chain-vs-DAG question (open question 3 below) is
+  answered at least this far: the model must support multiple parents.
+- **Multiple-inheritance conflict rule — LOCKED (INTENT #166, Q16):**
+  when two parent schemas conflict, resolution is **explicit and manual at
+  schema initialization — no quiet overwrites.** Neither parent silently
+  wins; the initializer must state the resolution or initialization fails.
+- **The gravity-well worry — BLESSED AWAY (INTENT #166, F-2):** the
+  operator is comfortable with schema accumulating surfaces — "it's okay
+  that schema is getting big; **simple boring thing, many surfaces**." The
+  guardrail that stands instead is the **two-engines rule: rollup composes
+  TEXT; schema migrates STRUCTURE.** Neither engine grows the other's job —
+  rollup never becomes a structure migrator, schema never becomes a prompt
+  composer.
+- Downstream consumers now leaning on schema (recorded, designs pending
+  their rounds): seed/workspace structures per topological-node type
+  (INTENT #149), artifact TYPES as schemas (INTENT #165 — artifacts.md),
+  schema→Rust codegen as versioned struct libraries (INTENT #150 beat 16),
+  and the data-contracts-emergent-from-chassis+schema+rust-libs resolution
+  (INTENT #166, Q11 — no DC service).
+
 ## The BIG unification direction (friction-round 3, INTENT #139 — recorded, NOT applied)
 
 The operator's verbatim-grade extension: "Onion [schema] might handle the

@@ -15,6 +15,18 @@ eventually built (crate=app, INTENT #22) — a daemon/CLI entry point, never a
 library others link (INTENT #29). **Track:** STUB. **Relationship to cc:**
 layered strictly ON TOP; **never absorbs it** (INTENT #49, LOCKED).
 
+> **Re-spoken round (2026-07-21/22, INTENT #167): `agents` STAYS as a
+> crate — a conceptual placeholder for CUSTOM agent harnesses** (OpenRouter
+> + inference data contracts; the custom-agent row of the table below).
+> And a hard scope line, so no future pass conflates them: **`agents` is
+> explicitly NOT the thread-from-seed mechanism.** Agents-as-in-this-crate
+> ≠ threads spinning up from a topological node's seed — that is the
+> **topological-node (bishop/keeper) concept** (see overview.md's
+> vocabulary block and org.md). This crate is only the harness/data-contract
+> layer for custom (non-Claude-Code) agent runtimes; open question 1 below
+> (crate vs facet-of-cc) is resolved to the extent that the crate stays,
+> as a conceptual placeholder.
+
 ## Charter
 
 `agents` is the **future generalization umbrella over agent TYPES** — the

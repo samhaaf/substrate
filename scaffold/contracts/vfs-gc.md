@@ -1,5 +1,16 @@
 # Contract: vfs-gc
 
+> **⚠ ABSORBED — THIS IS NO LONGER A CROSS-APP CONTRACT (re-spoken round,
+> 2026-07-21/22, INTENT #166, Q9).** `gc` rolled INTO `vfs` as an internal
+> module/spectrum (mark-for-removal, move-between-devices, cold-storage);
+> both parties below are now the same component. The Reconciliation-note-6
+> "RESOLVED called-as-tool" is **superseded** — the operator answered
+> rolled-in. This file is retained as the record of the **internal surface**
+> between vfs's placement brain and its gc module (the command vocabulary
+> and policy-translation rules still hold, minus the wire/mesh framing);
+> the `lib/gc` pieces are reused, not rewritten. See `components/gc.md`
+> (tombstone) and `components/vfs.md` concern 5.
+
 ## Parties
 
 `vfs` (`bin/vfs`, per node — a `GcHandle::Remote` client)  ↔  `gc` daemon
