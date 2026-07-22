@@ -1,5 +1,11 @@
 # Mind OS — Wave-2 Fine-Grained Decompose (module inventory · contract pairs · batch plan)
 
+> **Historical document — pre-rename vocabulary preserved.** Written before
+> the wave-3 re-spoken vocabulary lock (INTENT #146–#172): `coordinator`/
+> `owner`/`deva`/`bishop`/`seed`(-as-shared-memory) below are the terms of the
+> time, superseded by `keeper`/`bundle`/`landscape`/`workspace`/`chassis`/
+> `threads`. Left otherwise untouched; do not edit further for vocabulary.
+
 **Status:** AUTHORITATIVE module inventory for the second design wave
 (authorized round-9, INTENT #107: "super fine-grained... including all the
 layers within the mesh, the services within inference, and the data contracts

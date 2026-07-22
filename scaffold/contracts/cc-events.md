@@ -7,7 +7,8 @@
   EventType catalog.
 - **Consumer:** `mesh` (`dashboard-serving`, L2) — the observability plane that
   subscribes per-node and folds the stream into the browser `dashboard-feed`.
-  Any other mesh client (e.g. `org`) may also subscribe.
+  Any other mesh client (e.g. the emergent **keeper** layer, historically
+  "org") may also subscribe.
 
 *(was `gateway <- cc`; gateway merged into mesh, 2026-07-18)*
 

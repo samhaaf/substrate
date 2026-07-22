@@ -2,13 +2,13 @@
 
 ## Parties
 
-- **every service** (via `mesh-client`) — publishes a `SurfaceSchema` describing its observable surface
+- **every service** (via `chassis`, formerly `mesh-client`) — publishes a `SurfaceSchema` describing its observable surface
 - **mesh** (`dashboard-serving`, the L4 internal library) — aggregates schemas into the render manifest and serves the dashboard
 
 Cross-cutting: ONE shared document, every service is a party (the original
 round-3 pattern this whole style is named after). Struct vocabulary is homed in
 `types::surface`; the aggregation/serving behavior is `dashboard-serving`'s; the
-publication path is `mesh-client`'s (a pass-through).
+publication path is `chassis`'s (formerly `mesh-client`'s; a pass-through).
 
 ## Purpose
 
@@ -61,7 +61,7 @@ pub enum Honesty    { Exact, Estimate { note: String } }
 pub enum SectionKind { KeyValue, Table, TimeSeries, Custom { renderer: String }, #[serde(other)] Unknown }
 ```
 
-### Publication (client half — `mesh-client`, pass-through)
+### Publication (client half — `chassis`, formerly `mesh-client`, pass-through)
 
 ```rust
 struct PublishSurface { schema: SurfaceSchema }
@@ -71,7 +71,7 @@ struct PublishSurface { schema: SurfaceSchema }
 
 ### Aggregation + serving (`dashboard-serving`)
 
-- **Publish:** a service calls `mesh-client`'s surface-publication method → the
+- **Publish:** a service calls `chassis`'s (formerly `mesh-client`'s) surface-publication method → the
   local daemon writes `replicated-kv["surface/<slug>"] = SurfaceSchema` (LWW,
   slug-keyed). Republishing on a version change is a plain LWW `put`.
 - **Aggregate:** `dashboard-serving` joins `service-registry.list()` × `surface/*`
@@ -126,8 +126,9 @@ enum   NavKind  { MeshCore, Service, Project }
 
 - **Three concordant proposers, no disagreement.** `types` owns the struct
   (`SurfaceSchema` … with stable ids and honesty markers); `dashboard-serving`
-  owns aggregation + serving; `mesh-client` owns the pass-through publication.
-  Each proposed only its own half and they compose cleanly — merged as-is.
+  owns aggregation + serving; `chassis` (formerly `mesh-client`) owns the
+  pass-through publication. Each proposed only its own half and they compose
+  cleanly — merged as-is.
 - **Replaces the round-3 requirements-only stub.** The prior stub deferred schema
   and example ("Schema/example deferred. requirements-only."); this file supplies
   both. The stub's still-relevant framing (boring surface schema; projects reuse

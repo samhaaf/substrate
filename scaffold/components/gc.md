@@ -106,7 +106,7 @@ model/cache/backend management) and because the wave-2 centralization changes
    ```rust
    enum GcHandle {
        Embedded(Arc<GcService>),   // in-process: standalone / tests — today's behaviour, unchanged
-       Remote(GcClient),           // WS to the local gc daemon via mesh-client — the normal mesh world
+       Remote(GcClient),           // WS to the local gc daemon via chassis — the normal mesh world
    }
    ```
    Both expose the same async command methods (the embedded variant wraps the
@@ -209,7 +209,7 @@ model/cache/backend management) and because the wave-2 centralization changes
   rollups. gc-events is **read/observe**; the mutating remote-update path rides
   `vfs-gc`'s command vocabulary (same daemon, distinct contract intent).
 - **`mesh` via the cross-cutting service protocols (consumed via
-  `mesh-client`, not authored here):**
+  `chassis`, not authored here):**
   - `service-lookup` — gc registers slug `gc` → `{scheme, 127.0.0.1, port
     (8430 preferred, dynamic per INTENT #36), health_path:/health}`, per-node.
   - `restart-protocol` — gc participates in the LOCKED 4-level ladder; reports
@@ -247,7 +247,7 @@ VFS tiering later — not this pass).
 
 Opus, single Component-Designer pass. Grounded on the full `lib/gc` + `bin/gc`
 source and every real call site (`lib/{inference,models,cache,engine}/src/*.rs`),
-the batch-1/2 designs (`mesh-client.md` for the client-half registration/restart/
+the batch-1/2 designs (`chassis.md` for the client-half registration/restart/
 pubsub protocols, `service-registry.md`, `supervision.md`, `pubsub-relay.md`,
 `types.md`), the concurrently-designed `vfs.md` (still requirements-only —
 hence the explicit own-recommendation on the rolled-in question), and INTENT

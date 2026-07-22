@@ -17,7 +17,7 @@ published dashboards are navigable from the main mesh dashboard (INTENT #51;
 ## Rough shape
 No new mechanism — three existing edges bound together:
 - **`service-lookup` instance:** `register(slug="projects", host:port)` /
-  `resolve(..)` via `mesh-client`, like every service.
+  `resolve(..)` via `chassis` (formerly `mesh-client`), like every service.
 - **Centralized registry push:** a `projects/` keyspace in `replicated-kv`
   (flagged) holding project + dashboard registrations, so any node can enumerate
   registered projects and their dashboards.

@@ -210,8 +210,10 @@ children is exactly the open internal-layering question in the Charter.)
   Substrate). This is the confirm-and-strengthen of the decompose pass's call to
   nest it: it stays a child of mesh in the tree, but as a sibling *crate*, not a
   module.
-- `lib/mesh-client` (**new thin crate**, `substrate-mesh-client`) — a shared
-  library candidate I am flagging now rather than letting logic duplicate: the
+- `lib/mesh-client` (**new thin crate**, `substrate-mesh-client`) — **superseded:
+  absorbed wholesale into the `chassis` daemon-wrapper lib (wave-3 ledger D1,
+  INTENT #156); see `components/chassis.md` and the `mesh-client.md` tombstone.**
+  A shared library candidate I am flagging now rather than letting logic duplicate: the
   `register(slug, endpoint)` / `resolve(slug) -> endpoint` HTTP client that hits
   the **local** mesh daemon's registry. Every service (`cc`,
   `inference`, `vfs`, `kg`, `projects`, `org`) needs this at boot; if it lived inside `lib/mesh` they would
@@ -219,7 +221,8 @@ children is exactly the open internal-layering question in the Charter.)
   client crate keeps the seam cheap and is exactly the "extract shared logic"
   target a later pass would create anyway — cheaper to seed it here. (Final
   crate-vs-`types`-module boundary is the Skeleton Builder's to confirm; the
-  *contract* is `service-lookup`.)
+  *contract* is `service-lookup`. This whole boundary question is now moot —
+  the crate is `chassis`, not a standalone `mesh-client`.)
 
 ### 1. service-registry — the wiring seam and the hardest new sub-problem
 
@@ -421,7 +424,15 @@ Consumers already known: the shared handler/execution engine's distributed
 trigger execution (kg + stack) coordinates via `locks` — see `overview.md`'s
 shared-libraries section and `components/kg.md`.
 
-### 11. Internal lib: `cron` (LOCKED rounds 4–5, requirements-only)
+### 11. Internal lib: `cron` — SUPERSEDED (wave-3: folded into `queues`)
+
+> **⚠ WAVE-3 FOLD (ledger D2; INTENT #56/#91/F6b).** `cron` is **no longer a
+> standalone mesh lib** and no longer a Ring-4 module. Scheduling is now a
+> **`Schedule` trigger source inside `queues`** (`lib/mesh::queues`, Ring 3) —
+> "a cron firing is just a scheduled trigger." `components/cron.md` and
+> `contracts/cron-api.md` are tombstones; the design lives in `queues.md`
+> concern 10. The requirements below are retained as the historical lock
+> record; read them through the queues fold.
 
 Scheduled tasks as an internal mesh lib, in two flavors matching the
 addressing classes: **"run on node N"** and **"run anywhere"** ("Tasks that
@@ -627,8 +638,8 @@ service-registry, completion-router]
   explicit ask + reuse (see Concern 0).
 - `service-registry` is a child by containment but its client half
   (`service-lookup`) is the whole system's seam — the one edge every top-level
-  component touches. The proposed `substrate-mesh-client` crate is the shared
-  handle to it.
+  component touches. The shared handle to it is now `chassis` (the proposed
+  `substrate-mesh-client` crate was absorbed into it — see `components/chassis.md`).
 - `completion-router` = the original `lib/mesh` core, RESHAPEd per the synthesis.
 
 ## Thoroughness level
@@ -638,9 +649,10 @@ service-registry, completion-router]
 signatures). `service-registry`, `network-topology`, `tailscale-query`, and the
 CLI are **approach-sketched** — the consistency model, lease/tombstone rules,
 extensibility shape, self-offline detection, and subcommand tree are all decided,
-but the replication wire format, exact LWW merge/GC parameters, and the
-`mesh-client` crate boundary are deliberately left for the Contract Harmonizer
-(step 3) and Skeleton Builder, and several open questions remain.
+but the replication wire format and exact LWW merge/GC parameters are
+deliberately left for the Contract Harmonizer (step 3) and Skeleton Builder,
+and several open questions remain. (The `mesh-client` crate boundary this once
+named is resolved — that surface is `chassis`.)
 
 Round-3 additions differ again: the absorbed observability/dashboard plane
 (concern 5) inherits gateway's **implementation-ready** design content, but the

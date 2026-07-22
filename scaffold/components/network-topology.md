@@ -289,7 +289,7 @@ standard estimators:
 **Timestamps "acquired FROM the local mesh daemon."** In-process Ring-0 consumers
 read `MeshClock` directly (compiled-in — that already satisfies "from the daemon"
 for the libs that matter to race-conditions). Whether **out-of-process** services
-also get daemon-issued timestamps via a `mesh.now_utc()` chassis/mesh-client call,
+also get daemon-issued timestamps via a `mesh.now_utc()` chassis call,
 or just read their own node's `MeshClock`, is a **fill-time OPEN nuance** (OQ-13;
 mesh-core §9 defers it identically).
 
@@ -454,7 +454,7 @@ each is a one-knob change:
    see nuance 5.)
 2. **Daemon-issued timestamps for out-of-process services.** In-process Ring-0
    libs read `MeshClock` directly. Whether external services get timestamps via a
-   `mesh.now_utc()` chassis/mesh-client RPC, or just read their own node's clock,
+   `mesh.now_utc()` chassis RPC, or just read their own node's clock,
    is deferred (mesh-core §9 defers it identically).
 3. **The drift refuse-policy.** Past a *hard* offset threshold, does a node
    **refuse** timestamp-sensitive operations, or only raise a dashboard alarm?

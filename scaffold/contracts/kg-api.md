@@ -5,7 +5,8 @@ Any service ↔ `kg`. The **consumer surface** of the Knowledge Graph service,
 spoken over the local mesh daemon `:3649` (`AnyNode { slug: "kg" }` — the local
 leg relays to the graph's home transparently; callers never know which node).
 Modeled **surface-schema-style: one shared document, every consumer a party**
-(projects, org-future, cc-driven agents, dashboard). Authored from `kg.md`
+(projects, the emergent keeper layer, cc-driven agents, dashboard). Authored
+from `kg.md`
 concerns 3/4/6/7/10 and its `kg-api` proposal.
 
 **NEW pair — not named in the wave2-plan §3 inventory.** kg.md surfaces it

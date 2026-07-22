@@ -27,7 +27,7 @@ conceptual/contract-level refresh.
 ## Charter
 
 The **AWS virtualization-layer crate** — the single aggregation point for
-**every** AWS-facing surface Mind OS uses. When a Mind OS service needs to do
+**every** AWS-facing surface Substrate uses. When a Substrate service needs to do
 something in AWS, it does it through `aws`, over the mesh, never against boto3
 or Terraform directly. Operator, verbatim (INTENT #106): "a place to aggregate
 our adapters, with a WebSocket interface for pushing to, reading from, and
@@ -64,7 +64,7 @@ What `aws` owns:
 **Boundary — what `aws` does NOT own / is NOT:**
 - **NOT a boto3 or Terraform replacement.** No general-purpose AWS SDK
   ambitions, no infrastructure-as-code, no service catalog. `aws` exposes
-  **only** the specific operations a Mind OS service actually consumes, and
+  **only** the specific operations a Substrate service actually consumes, and
   new operations are added **as they are needed**, never speculatively
   (INTENT #38 no-tech-debt: a narrow surface stays boring).
 - **NOT a credential store.** It reads AWS account creds from `secrets` and
@@ -197,7 +197,7 @@ ever sees the bytes**, using a data key the consumer fetches from `secrets`
 - `aws` sees only ciphertext (Path A) or not even that (Path B, presigned) —
   it never sees plaintext and never sees the data key.
 - This is **client-side encryption** in the S3 sense (the client, i.e. the
-  Mind OS consumer, encrypts; not S3 server-side/SSE), giving encryption in
+  Substrate consumer, encrypts; not S3 server-side/SSE), giving encryption in
   transit *and* at rest under a key Amazon never holds.
 - `aws` still sets S3's own server-side options (bucket policy, storage class,
   object lock) as defense-in-depth, but security does not depend on them.

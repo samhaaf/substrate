@@ -10,7 +10,7 @@ the on-the-wire structs it emits carry `types`' guardrail-4 wire discipline;
 (2) the documented **token-streaming gap** in `ws.rs` (the 100 ms poll loop) is
 finally closed by subscribing to the engine/scheduler's **new per-completion
 token broadcast seam**; (3) a **surface-schema endpoint** (`GET /v1/surface`,
-INTENT #46) is added and published through `mesh-client`; (4) the gateway-era
+INTENT #46) is added and published through `chassis`; (4) the gateway-era
 event/aggregation leftovers are reconciled (pub/sub becomes the primary
 `inference-events` path; the raw `/events` WS demotes to standalone-only; the
 `benchmark_kernel` local recompute is deleted in favor of telemetry's real
@@ -29,12 +29,12 @@ plane (submit / status / cancel / priority / result / stream), `/v1/collections`
 node-side **terminus** of both the client-facing `v1-completion-api` (which the
 mesh forwards byte-transparently) and the mesh's read-only `node-state-poll`, it
 publishes the node's **surface schema** and its typed **lifecycle/throughput
-events** onto pub/sub through `mesh-client`, and it exposes the per-completion
+events** onto pub/sub through `chassis`, and it exposes the per-completion
 token stream over the `/v1/completions/:id/stream` WebSocket. Its boundary: it is
 **pure HTTP/WS translation + dispatch and holds NO business logic** — every route
 dispatches into `scheduler`/`store`/`telemetry`/`benchmark` via `api-dispatch`,
 and every cross-mesh interaction (registration, pub/sub publish, surface
-publication, restart participation) rides the `mesh-client` handle. It does NOT
+publication, restart participation) rides the `chassis` handle. It does NOT
 own: cross-node routing/affinity (`completion-router`), the pub/sub relay or
 envelope (`pubsub-relay`/`types`), fleet aggregation/dashboard rendering
 (`dashboard-serving`), the token *source* (the engine/scheduler broadcast seam —
@@ -93,7 +93,7 @@ catch-all**, so an older subscriber hard-fails on a newer node's new variant.
 Adding the catch-all is a `types` change, not an api change — flagged to the
 `types` refit (friction below). The raw `/v1` REST bodies themselves are NOT
 version-critical for the router (it never parses them), but ARE for typed
-consumers (`cc`/`org`/dashboard), so additive-only still governs them.
+consumers (`cc`/keeper/dashboard), so additive-only still governs them.
 
 ### 2. Close the token-streaming gap — subscribe to the engine/scheduler broadcast seam
 
@@ -146,13 +146,13 @@ the `pubsub-relay` boundary (its concern 4/8: pub/sub is NOT the byte-transparen
 completion proxy; that is the router's `forward()`/WS-relay) — they are served by
 two mechanisms, never conflated:
 
-- **The client token stream** (a caller, or `cc`/`org` via `llm-calls`, wanting
+- **The client token stream** (a caller, or `cc`/keeper via `llm-calls`, wanting
   the generated tokens): the `/v1/completions/:id/stream` **WebSocket**, relayed
   byte-transparently by the router (completion-router.md concern 7, a separate
   path from `forward()`). This is the primary, and only always-on, token path.
 - **Coarse fleet observability** (the dashboard showing live throughput +
   lifecycle across nodes): api **publishes typed events onto pub/sub** through
-  `mesh-client` — the `inference.<node>.*` topics. This carries **lifecycle +
+  `chassis` — the `inference.<node>.*` topics. This carries **lifecycle +
   throughput**, deliberately **not every token** (matching the live
   `is_external_event` filter, which already excludes per-completion token/state
   events from the node `/events` feed and forwards model/backend/queue lifecycle
@@ -181,7 +181,7 @@ is the live-primary load feed, riding `pubsub-protocol` on topic
 - **Primary (mesh mode):** api subscribes to its own in-process
   `event_tx: broadcast::Sender<LifecycleEvent>` and **publishes** the external
   subset (the `is_external_event` set — model/backend/queue lifecycle +
-  `CompletionMetricsRecorded` throughput) onto pub/sub via `mesh-client`, each as
+  `CompletionMetricsRecorded` throughput) onto pub/sub via `chassis`, each as
   a `types::event::Event<P>` on an `Envelope`, topic `inference.<node>.<kind>`.
   The **`LifecycleEvent`-variant → `EventType`-string + payload mapping is api's
   to own** (the inference event catalog is api's, not `types`' — event kinds are
@@ -228,7 +228,7 @@ service registry, never a guessed/baked URL; types.md deprecates
 
 | Class | Routes | Who reaches it | In the mesh era |
 |---|---|---|---|
-| **Fleet-facing** (forwarded byte-transparently via `:3649`) | all `/v1/completions*`, `/v1/collections*`, `/v1/models*`, `/v1/estimate`, `/v1/benchmark/run`, the `/v1/completions/:id/stream` WS | clients, `cc`/`org` (`llm-calls`) | reached ONLY through the router's `forward()`/WS-relay |
+| **Fleet-facing** (forwarded byte-transparently via `:3649`) | all `/v1/completions*`, `/v1/collections*`, `/v1/models*`, `/v1/estimate`, `/v1/benchmark/run`, the `/v1/completions/:id/stream` WS | clients, `cc`/keeper (`llm-calls`) | reached ONLY through the router's `forward()`/WS-relay |
 | **Mesh-internal reads** (off the request path) | `GET /v1/system/state` (+`/metrics`), `GET /v1/models`, `GET /health`, `GET /v1/benchmark/kernel` | `completion-router` (`node-state-poll`), health probes, dashboard | primary consumer is the mesh; cheap, never on the submit path (api.md wave-1 concern 2, re-affirmed) |
 | **Surface self-description** | `GET /v1/surface` (NEW, concern 6) | `dashboard-serving`'s surface pipeline (via registry) | mesh-internal pull; also pushed at registration |
 | **Standalone/dev-only** | the raw `/events` WS | a no-mesh dev browser | superseded by pub/sub in mesh mode (concern 4) |
@@ -238,7 +238,7 @@ daemon** (it forwards to it and polls it); external addressing is always
 `resolve("inference")` → `:3649`. The route *set* is the byte-transparency
 contract and stays forward-proxy-clean (concern 1); the *binding* is the
 `inference` composition root's job (port acquisition + fallback + registration
-via `mesh-client`), not api's — api only builds the `Router` and hands the
+via `chassis`), not api's — api only builds the `Router` and hands the
 `SurfaceSchema` to publish. This is the precise "internal `/v1` routes" the old
 convention protected, now expressed as an addressing rule instead of a
 don't-touch note.
@@ -254,9 +254,9 @@ is the module that knows the `/v1` surface) and exposes it two ways, both boring
 - **`GET /v1/surface` → `SurfaceSchema`** — the pull endpoint `dashboard-serving`
   discovers via the registry and fetches (dashboard-serving.md's surface pipeline:
   registry → fetch each service's surface → feed the dashboard).
-- **Push at registration** — the schema is handed to `mesh-client` at `Register`
-  (`Register.surface`, mesh-client.md `service-lookup`) and **re-published on
-  every reconnect** (mesh-client re-announce), so mesh always has it fresh.
+- **Push at registration** — the schema is handed to `chassis` at `Register`
+  (`Register.surface`, chassis.md `service-lookup`) and **re-published on
+  every reconnect** (chassis re-announce), so mesh always has it fresh.
 
 Inference's schema (stable semantic ids on every section/field/action — INTENT
 #16, agents drive the same markup; honest-estimate markers — INTENT #9):
@@ -339,34 +339,34 @@ node-to-node data path is the router's / the mesh's):
   `GET /v1/models`), strictly off the request path (concern 5)
   (see scaffold/contracts/node-state-poll.md).
 - **mesh ← inference (api)** via `inference-events` — api **publishes** the
-  external lifecycle+throughput subset onto pub/sub via `mesh-client`
+  external lifecycle+throughput subset onto pub/sub via `chassis`
   (`inference.<node>.*`); the router (concern 3) and dashboard are consumers
   (concern 4) (see scaffold/contracts/inference-events.md).
 - **inference (api) → mesh dashboard** via `surface-schema` — api constructs and
   publishes inference's `SurfaceSchema` (concern 6); cross-cutting,
-  surface-schema-style, client half in `mesh-client`
+  surface-schema-style, client half in `chassis`
   (see scaffold/contracts/surface-schema.md).
 - **api → {scheduler, store, telemetry, benchmark}** via `api-dispatch` — the
   node-internal dispatch of the `/v1` surface, extended in wave-2 with
   `scheduler.subscribe_tokens` (concern 2) and the telemetry-kernel dispatch
   (concern 7) (see scaffold/contracts/api-dispatch.md).
 
-Cross-cutting protocols api participates in **through `mesh-client`** (client half
-owned by mesh-client; api is a producer/participant, not the author):
+Cross-cutting protocols api participates in **through `chassis`** (client half
+owned by chassis; api is a producer/participant, not the author):
 
 - **every service ↔ mesh** via `pubsub-protocol` — api publishes its
   `inference.<node>.*` events (concern 4) and (deferred) could publish
-  per-completion token topics (concern 3). Carried by mesh-client.
+  per-completion token topics (concern 3). Carried by chassis.
 - **mesh ↔ every service** via `restart-protocol` — the `inference` crate
-  supplies the `on_restart`/interruptibility callback to `mesh-client`; api's
+  supplies the `on_restart`/interruptibility callback to `chassis`; api's
   only stake is that **`Interruptibility::CriticalSection` covers an in-flight
   completion/benchmark** so the node isn't torn down mid-generation (the
   interruptibility state is fed from scheduler's admission view, not api). Noted,
-  authored by supervision/mesh-client.
+  authored by supervision/chassis.
 
 Internal-lib seams (compiled-in, NOT contract edges — INTENT #29/#45): api
 consumes `Arc<Scheduler>`, `Store`, `Arc<Telemetry>`, `BenchmarkOrchestrator`,
-the node `broadcast::Sender<LifecycleEvent>`, and a `mesh-client` handle — all via
+the node `broadcast::Sender<LifecycleEvent>`, and a `chassis` handle — all via
 `ApiState`; imports `substrate-types` (completion/collection/model/stream/system +
 the new `pubsub`/`event`/`surface`/`node` vocabulary).
 
@@ -402,7 +402,7 @@ map (`err_response`), and handler bodies carry forward unchanged under these.
 `lib/api/src/{lib,rest,ws,wiki}.rs` (the route table, `ApiState`, the 281-line
 `ws.rs` poll-loop gap, the `benchmark_kernel` local fit) and
 `lib/types/src/stream.rs` (`StreamEvent`/`LifecycleEvent`), plus the batch-1
-`types`/`mesh-client`/`pubsub-relay`, batch-3 `completion-router`, batch-2/3
+`types`/`chassis`/`pubsub-relay`, batch-3 `completion-router`, batch-2/3
 `supervision`/`service-registry`, and batch-5 `inference`/`engine` designs, and
 INTENT #9/#12/#16/#22/#36/#37/#45/#46/#53/#58/#66.
 
@@ -438,25 +438,25 @@ are superseded by them.
   `GET /v1/models`), strictly off the request path.
   → `scaffold/contracts/node-state-poll.md`
 - `inference-events` (mesh ← inference.api; api publishes) — external
-  lifecycle+throughput events on `inference.<node>.*` via mesh-client; router
+  lifecycle+throughput events on `inference.<node>.*` via chassis; router
   and dashboard consume. → `scaffold/contracts/inference-events.md`
   - Resolved at the pair round: the router's running-count feed rides
     `inference.queue.depth_changed` (the authoritative `(pending, running)`
     snapshot); `completion.started/finished` remain observability-only.
 - `surface-schema` (inference.api → mesh dashboard; cross-cutting) — api
   constructs and publishes inference's `SurfaceSchema` via `GET /v1/surface` +
-  mesh-client push at register/reconnect.
+  chassis push at register/reconnect.
   → `scaffold/contracts/surface-schema.md`
 - `api-dispatch` (api → {scheduler, store, telemetry, benchmark}; in-process
   seam, not a wire contract) — the node-internal dispatch surface with its
   wave-2 extensions (`scheduler.subscribe_tokens`, the telemetry-kernel
   dispatch, benchmark's reconciled method surface).
   → `scaffold/contracts/api-dispatch.md`
-- `pubsub-protocol` (every service ↔ mesh; api participates via mesh-client) —
+- `pubsub-protocol` (every service ↔ mesh; api participates via chassis) —
   the carrier for api's `inference.<node>.*` publishes.
   → `scaffold/contracts/pubsub-protocol.md`
 - `restart-protocol` (mesh ↔ every service; participation note) — the
-  `inference` crate supplies the interruptibility callback via mesh-client.
+  `inference` crate supplies the interruptibility callback via chassis.
   → `scaffold/contracts/restart-protocol.md`
   - Component-side note (not in the contract file): api's stake is that
     `CriticalSection` covers an in-flight completion so the node isn't torn

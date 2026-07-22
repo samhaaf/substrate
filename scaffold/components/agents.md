@@ -60,7 +60,7 @@ layered strictly ON TOP; **never absorbs it** (INTENT #49, LOCKED).
 ## Charter
 
 `agents` is the **future generalization umbrella over agent TYPES** — the
-interface that would let Mind OS drive Claude Code and other, custom agents
+interface that would let Substrate drive Claude Code and other, custom agents
 through one addressable surface. The operator's framing, verbatim (INTENT #40):
 
 > "there may be a greater umbrella we create at some point called cc — agents

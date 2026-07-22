@@ -12,7 +12,8 @@
 ## Parties (superseded)
 
 Was: **any service** (via `mesh-client`) ↔ **mesh** (`mesh.cron`). Now: **any
-service** (via `mesh-client`) ↔ **mesh** (`mesh.queues`) over `queues-api` — the
+service** (via `chassis`, formerly `mesh-client`) ↔ **mesh** (`mesh.queues`)
+over `queues-api` — the
 same cross-cutting, surface-schema-style single shared document. A schedule is
 registered exactly like any other trigger; only its `source` differs.
 

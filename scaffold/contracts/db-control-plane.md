@@ -1,7 +1,8 @@
 # Contract: db-control-plane
 
 ## Parties
-`db` ↔ consumers (operators / CI; `org`'s self-restructuring KG as ordinary
+`db` ↔ consumers (operators / CI; the emergent **keeper** layer's
+self-restructuring KG (historically "org's," INTENT #132) as ordinary
 migrations+queries; any service that drives the DB control plane). Reached
 **two boring ways — a `bin/db` CLI subprocess (standalone, mesh-free) OR the
 `db serve` daemon over WS — NEVER by linking `substrate-db`** (INTENT #29).
@@ -84,9 +85,9 @@ struct Rows { columns: Vec<String>, rows: Vec<Vec<Option<String>>> }
 
 **Structured output:** the CLI form takes `--format json` and returns the same
 typed shapes (`Rows`, `MigrateReport`, `DrainReport`, …); the WS form returns
-them directly. `org`'s metacognitive KG (INTENT #19) is ordinary migrations +
-queries against `org`-owned schema over this edge — `db` does not model the
-graph; `org`/`kg` do.
+them directly. The keeper layer's metacognitive KG (historically "org's,"
+INTENT #19) is ordinary migrations + queries against keeper-owned schema
+over this edge — `db` does not model the graph; keeper/`kg` do.
 
 ## Error cases
 - `DbError::ProtectedRefused { op, env }` — a mutating migrate on a protected
@@ -109,8 +110,8 @@ effectively frozen.
 
 ## Reconciliation notes
 - **Only `db` proposed this edge; no cross-party disagreement.** Consumers
-  (operators, CI, `org`) do not author a counter-shape — they consume the
-  noun-verb surface.
+  (operators, CI, the keeper layer) do not author a counter-shape — they
+  consume the noun-verb surface.
 - **Deviation from the stub (the required rewrite):** the wave-1 stub's
   "library dependency / programmatic access" framing is replaced with the
   **wire-only** access model (CLI subprocess OR `db serve` WS), per INTENT #29.
@@ -129,9 +130,9 @@ effectively frozen.
 ## Example data
 World: nodes **macbook** and **pi**; project **demo**; database **demo/main**.
 
-**1. A standardized virtualization query** (an operator, or `org`, asks
-`demo/main` a question without naming a backend — SQLite here, but the caller
-cannot tell):
+**1. A standardized virtualization query** (an operator, or the keeper layer,
+asks `demo/main` a question without naming a backend — SQLite here, but the
+caller cannot tell):
 
 ```jsonc
 // DbCtlReq::Query   (db serve WS, or `db --env demo/main query … --format json`)

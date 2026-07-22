@@ -36,6 +36,7 @@ independent forever (INTENT #49).
   **RESOLVED (INTENT #137): direct**; and their supervision/metering story
   is fully open (NOT "cc" by default). See agents.md open question 5.
 - How `agent-type` is represented (open string vs registered type descriptor).
-- Whether coordinator-owned agents re-seat onto this edge (`org-agents`,
-  now coordinator-shaped — the `org` crate is dissolved, INTENT #132) once
+- Whether keeper-owned agents re-seat onto this edge (`org-agents` →
+  renamed `keeper-agents` per components/agents.md — the `org` crate is
+  dissolved, keeper is the LOCKED replacement, INTENT #132/#172) once
   `agents` exists, moving part of `org-on-cc` here.

@@ -40,7 +40,7 @@ promote,introspect,config,query}.rs`), `stack.md`/`vdb` (batch-4 neighbor),
 
 ## Charter
 
-`db` is Mind OS's **boring database action-runner**: the single crate that
+`db` is Substrate's **boring database action-runner**: the single crate that
 actually *runs actions against one specific database* — migrations
 (author/apply/rollback/status/crawl/lint), the `ops` control-plane baseline,
 seed + per-migration fake-data, edge-function bundle/deploy/activate with
@@ -277,7 +277,7 @@ to a **cloud** Supabase target for the genuinely Postgres-only needs (INTENT #82
 "never need local Postgres" — going past SQLite means promoting to cloud). The
 driver code can remain in-tree marked deprecated (so existing Postgres-dialect
 introspection/edge SQL that `supabase-cloud` shares stays available), but it is
-**not a selectable local target** in a Mind OS deployment. Flagged: the operator
+**not a selectable local target** in a Substrate deployment. Flagged: the operator
 may want it fully removed vs. kept behind a `--allow-docker` dev escape hatch —
 recommend removed, matching the emphatic rule.
 

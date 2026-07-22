@@ -16,9 +16,9 @@ NEEDS-REVISITING, retained as discussion input, not as decided law. **Nesting:**
 execution plane. **Locked layering honored throughout: VFS < VDB < KG**
 (INTENT #96). **Consumes:** vdb (graph databases), vfs (file-pointer
 validation), mesh (registration / `kg/` keyspace / locks / cron / pubsub via
-`mesh-client`), and the shared `execution-engine` lib (kg-nodes adapter,
-compiled in). **Consumed by:** projects (L6, `projects-kg`), org (RESOLVED
-home of its self-restructuring graph — friction-round 2, INTENT #121),
+`chassis`), and the shared `execution-engine` lib (kg-nodes adapter,
+compiled in). **Consumed by:** projects (L6, `projects-kg`), keeper (formerly
+`org`; RESOLVED home of its self-restructuring graph — friction-round 2, INTENT #121),
 any service that creates or reads graphs (`kg-api`, NEW — see Proposed
 contracts) — with the stated posture "assume that every service will be
 using the knowledge graph" (INTENT #121). Grounded in INTENT #50/#62/#85/#92/#93/#96/#97, the batch-1/2/3
@@ -59,9 +59,9 @@ to any consuming service, the ability to **add new node types, schemas, and
 version control** over them — and the design posture is to **"assume that
 every service will be using the knowledge graph."** KG is not a specialist
 tool a few services opt into; it is a universal plane. The first confirmed
-beneficiary is `org`, whose self-restructuring org-graph is now RESOLVED to
-live on KG (db keeps only flat relational metadata — see the boundary note
-below and org.md).
+beneficiary is **keeper** (formerly `org`), whose self-restructuring org-graph
+is now RESOLVED to live on KG (db keeps only flat relational metadata — see
+the boundary note below and org.md).
 
 **Boundary — what `kg` does NOT own.** It does not own *database
 mechanics* — a graph's tables live in a VDB-managed database; VDB tracks
@@ -81,12 +81,12 @@ consumes `types::trigger` UNCHANGED (queues' locked shared data model) and
 the shared execution-engine lib; kg contributes only the kg-nodes subject
 binding and the host process. It does not own project structure — `projects`
 (L6) builds its graphical file system AS a kg graph; kg is the substrate,
-projects is the consumer. The `org` metacognitive graph's home is
-**RESOLVED (friction-round 2, INTENT #121): org's self-restructuring graph
-lives ON kg** — "Org's self-restructuring knowledge graph definitely
-belongs in the KG service"; `db` serves org only for flat relational
+projects is the consumer. The keeper (formerly `org`) metacognitive graph's
+home is **RESOLVED (friction-round 2, INTENT #121): its self-restructuring
+graph lives ON kg** — "Org's self-restructuring knowledge graph definitely
+belongs in the KG service"; `db` serves keeper only for flat relational
 metadata. kg is the substrate there too; the org-graph's *semantics* remain
-org's.
+keeper's.
 
 ## Primary design concerns
 
@@ -127,7 +127,7 @@ designed for many-small, not few-large (friction point).
 ### 2. The global registry + template catalog — the `kg/` keyspace
 
 Registry and templates are small, LWW-friendly control-plane records; they
-ride a **`kg/` keyspace on `replicated-kv`** (opened via `mesh-client`'s
+ride a **`kg/` keyspace on `replicated-kv`** (opened via `chassis`'s
 KvHandle — the exact precedent `vfs` set with its `vfs/` keyspace). Every
 node can answer "what graphs exist, where does each live, what schema does
 it speak" from a local read — the INTENT #97 global-registry requirement
@@ -340,7 +340,7 @@ boring-fast at personal scale.
 > redesigned here — the wave-2 model below is retained intact as the
 > discussion input. This is a **REQUIRED KG discussion item**, to be taken
 > up alongside the KG-templating / `schema` round (INTENT #122/#131). Note:
-> INTENT #121 (org's graph lives ON kg; "assume that every service will be
+> INTENT #121 (keeper's graph lives ON kg; "assume that every service will be
 > using the knowledge graph") is unchanged by this flag.
 
 > **✅ WAVE-3 FOLD (INTENT #135/#142, ledger item c) — distributed-everywhere
@@ -657,7 +657,7 @@ path named.
 ## Relationships / edges
 
 Contract edges (cross-process, over the local `:3649` daemon; client halves
-via `mesh-client`):
+via `chassis`):
 
 - **vdb** via **`kg-vdb`** (authored; assigned by wave2-plan §3b) —
   graph-database lifecycle: create-from-core-schema, transactional
@@ -701,7 +701,7 @@ graph databases beneath inherit the ladder via VDB), `pubsub-protocol`
 event semaphores), `cron-api` (pointer sweeps, cloud sync ticks).
 
 Internal-lib seams (compiled in, NOT contract edges): `execution-engine`
-(kg-nodes adapter — the locked shared lib), `mesh-client`,
+(kg-nodes adapter — the locked shared lib), `chassis`,
 `substrate-types` (Provenance/Event/trigger vocabulary + the new
 `types::kg` module authored in the contracts).
 

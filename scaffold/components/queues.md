@@ -569,7 +569,7 @@ seams per `mesh-core.md`, **not** contract edges (INTENT #45).
 
 Parent: mesh | Children: none. Server side lives in `lib/mesh::queues`; the client
 half (publish/register-trigger/handler-delivery handle to the local daemon) is part
-of `mesh-client`'s surface — services get queues through the same thin boot lib
+of `chassis`'s surface — services get queues through the same thin boot lib
 they get `register`/`resolve`/`pubsub` from (per `mesh-core.md` and
 `pubsub-relay.md` nesting). Confirmed at skeleton time.
 
@@ -625,7 +625,7 @@ The per-pair contract round authored these edges; the contract files are
 authoritative (including Reconciliation notes). Detailed proposals formerly here
 are superseded by them.
 
-- `queues-api` (any service via `mesh-client` ↔ mesh.queues; cross-cutting, one
+- `queues-api` (any service via `chassis` ↔ mesh.queues; cross-cutting, one
   shared document; queues owns) — queue management, `SendEvent`, declarative
   trigger register/update/deregister, and the push-dispatch delivery + ack/nack
   side; durable/at-least-once, the guaranteed counterpart to

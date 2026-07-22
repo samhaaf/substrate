@@ -209,22 +209,34 @@ was requested and is progressing. The state machine is per-restart, keyed by
 The update pattern is a fixed sequence supervision drives, reusing the registry's
 LWW flip and mesh-core's `ProcessControl`:
 
-1. **Spawn new** — `ProcessControl.spawn(SpawnSpec{ slug, version, port: NEW })`.
-   The new instance registers itself (a *second*, distinct registry entry — same
-   slug, new endpoint) and begins heartbeating; it comes up **not yet fronted**.
+1. **Spawn new** — `ProcessControl.spawn(SpawnSpec{ slug, version, port: NEW })`
+   in handoff/standby mode. The new instance comes up **not yet fronted** and
+   **defers self-registration**: the registry holds **exactly one Live record per
+   `(slug, node)`** (service-registry concern 7), so there is never a second Live
+   entry — the "dual" here is only a brief *process*-level window (two processes
+   alive), not a keyspace one. supervision verifies the new instance by probing
+   its port directly (it knows the port from `SpawnSpec`), not via a registry
+   entry.
 2. **Verify** — supervision waits for the new instance to be *healthy* (live
    lease + a passing health check against `Endpoint.health_path`) up to a
    `handoff_deadline`. If it never becomes healthy → **abort**: keep the old,
    kill the new, raise `SuperError::HandoffStalled { slug }` + alarm (dashboard,
    optionally cc). No flip happens; the old instance was never disturbed.
-3. **Flip** — write the registry LWW entry `slug -> new endpoint` (newest
-   `version` wins; INTENT #32). Resolves now route to the new instance. This is
-   the atomic cut-over; single-port locality means callers never notice.
+3. **Flip** — issue `FlipEndpoint(slug, node, new)`: **one LWW `put`** on the
+   single `(slug, node)` key that swaps the endpoint old→new and bumps
+   `generation` (newest wins; INTENT #32), returning the superseded endpoint
+   synchronously so supervision knows which port to down (service-registry
+   concern 7). Resolves now route to the new instance — no intermediate state
+   where the slug points at nothing or at both. This is the atomic cut-over;
+   single-port locality means callers never notice.
 4. **Relinquish old** — issue a `restart-protocol` signal to the OLD instance at
    the reason-appropriate level (L2 for routine, L3 for compatibility). It drains
    in-flight work behind the already-flipped front door, saves, and yields.
 5. **Down old** — on `Relinquished`/`Saved` (or deadline), `ProcessControl.signal`
-   the old port down; tombstone its (now superseded) registry entry.
+   the old port down. There is no separate registry entry to tombstone — the
+   single `(slug, node)` record already points only at the new endpoint after the
+   flip; the old endpoint is simply unreferenced, and its `generation` bump feeds
+   zombie-detection (service-registry concern 7).
 6. **Backstop** — if the old copy lingers (didn't die), **zombie-killing**
    (concern 6) discovers and kills it. The handoff *deliberately* brings the old
    down; zombie-killing is the safety net (mesh.md concern 12).

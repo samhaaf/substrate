@@ -100,7 +100,7 @@ crate at once). Four guardrails, in order of teeth:
    Every message/event crossing the mesh carries the **sending service's name
    AND version**. The home is `Provenance` (which already carries `service`): a
    new additive `service_version: SemVer` field, `#[serde(default)]`, stamped by
-   the daemon/`mesh-client` alongside the existing provenance fields, so every
+   the daemon/`chassis` alongside the existing provenance fields, so every
    envelope, event, and queue delivery is version-attributed with no per-service
    effort. Receivers MAY enforce a **version floor** ("I'm only accepting
    messages from nodes with service version greater than X"); a floored message
@@ -526,6 +526,22 @@ pub enum PromiseResolution<T = serde_json::Value> {
 }
 ```
 
+**NAME RECONCILIATION — `PromiseFulfillment` wins (wave-3 amendment, batch-2
+flag).** Three names for "a wire promise's later value" drifted across the batches:
+this file's provisional `PromiseResolution` (here), `mesh-transport`'s authored
+`MsgKind::PromiseFulfillment { promise, outcome }` frame
+(`contracts/mesh-transport.md` §3–4), and chassis's internal `PromiseResolved {
+promise_id, outcome }` (`components/chassis.md`). **The authored winner is
+`mesh-transport`'s `PromiseFulfillment`** — it is the name on the reconciled,
+implementation-ready transport contract that ~23 edges ride. At fill, the wire
+type this enum describes is **renamed `PromiseFulfillment`**; `PromiseResolution`
+and chassis's `PromiseResolved` are naming-history aliases, superseded. The
+*shape* is unchanged (the `Fulfilled`/`Failed` arms map onto mesh-transport's
+`ResponseOutcome::{Success, Error}` carried in the `PromiseFulfillment` frame — a
+promise never re-resolves to a promise; the `Pending` arm is the fetch-before-ready
+read, a query-side state, not a third frame arm). This is a rename, not a redesign
+— see § "Wave-3 amendment queue" for provenance.
+
 **Version-floor wire types (INTENT #113).** The sender name+version already rides
 `Provenance` (unchanged); wave 3 adds the two runtime consequences #113 names as
 matchable wire vocabulary here rather than as stringly leaves:
@@ -590,6 +606,89 @@ decided here** (that consolidation is PARKED, OQ-3 — "didn't seem very boring"
 the mechanism must stay un-mergeable with a one-line change). `types` supplies
 the flag and stops. This keeps the type flippable regardless of how the parked
 question resolves.
+
+## Wave-3 amendment queue (collected across batches)
+
+Vocabulary additions that later wave-3 batches *proposed to `types`* but did not
+own (each batch authored its own file and flagged the `types` landing for the
+harmonizer). Collected here so the `types` owner lands them in one pass, each with
+provenance and its governing guardrail. None is a new grab-bag; each is a named
+module or a single additive field, per concern 3.
+
+### AQ-1. `types::trigger` extension — the cron fold (batch 3)
+
+`types::trigger` (home already acknowledged wave-2: "shape authored by queues,
+module lives in `types`") gains the **cron-absorption** additions the batch-3 fold
+requires. **Shape authoritative in the contract** (`contracts/queues-api.md`
+§ Proposed contracts (wave 3) / `components/queues.md` concern 10); homed here.
+Additions:
+
+- `Trigger.source: TriggerSource` — replaces the wave-2 `Trigger.queue:
+  QueueName` field. `enum TriggerSource { Queue(QueueName) | Schedule(ScheduleSource) }`.
+- `ScheduleSource { schedule: Schedule, target: FireTarget, misfire: MisfirePolicy }`
+  and its `Schedule` (`Cron|Every|Once` + `#[serde(other)] Unknown`), `FireTarget`
+  (`Anywhere|Node(NodeId)` + `Unknown`), `MisfirePolicy` (`Skip|FireOnWake{grace,
+  coalesce}` + `Unknown`) — vocabulary moved intact from the tombstoned `cron` lib.
+- `HandlerRef::Emit { queue: QueueName, event_type: EventType }` — the cron
+  emission variant (also a generic event-router action).
+- `Trigger.enabled: bool` (`#[serde(default = "default_true")]`), and the
+  `SourceKind { Queue, Schedule }` `ListTriggers` discriminant.
+
+**Guardrail fit:** wire-crossing (persists in `replicated-kv` across a mixed-version
+fleet) → guardrail 4 in full: every new enum reserves `#[serde(other)] Unknown` and
+is **fail-safe** (an unknown `Schedule`/`FireTarget`/`MisfirePolicy` never fires).
+The `queue → source` change is a **pre-production reshape** (INTENT #138 — no
+production use yet), mechanical, not a compatibility break. **Inclusion test:** pure
+declarative data used by ≥2 crates (`queues` + `execution-engine`, which consumes
+`types::trigger` unchanged) and part of the `queues-api` schema — passes trivially.
+**Provenance:** batch 3; `queues.md` concern 10, `queues-api.md`; INTENT
+#56/#91/F6b (cron→Schedule), #101/#103 (LOCKED declarative-trigger vocab, untouched).
+
+### AQ-2. Inference modality vocabulary + capability (batch 5)
+
+Two landings, from the S2T/T2S-are-inference-modalities settlement (INTENT #157/#166
+Q12, ledger A5.92):
+
+- **NEW module `types::modality` (`modality.rs`)** — its own module per concern 3
+  (a distinct domain from telemetry or events). Shape authoritative in `engine.md`
+  P1:
+  ```rust
+  pub enum MediaType { Text, Audio, Image, Video, #[serde(other)] Unknown } // guardrail 4
+  pub struct Modality { pub input: SmallVec<[MediaType; 2]>, pub output: MediaType } // S2T = {[Audio] -> Text}
+  // canonical constructors: Modality::{T2T, S2T, T2S, TI2T}
+  ```
+  Supersedes any prior single-tag `Modality = Text|Image|Video|Audio` sketch (the
+  ML input→output pairing wins). **Inclusion test:** used by `engine`, `inference`,
+  `models`, `scheduler`, `completion-router`, and the `service-lookup`
+  `NodeCapabilities` — well past ≥2. `SmallVec` is a permitted leaf dep in the same
+  class as the existing `serde`/`uuid` (or lower to `Vec<MediaType>` if the
+  zero-dep line is read strictly — harmonizer's call, a one-word change).
+  **Provenance:** batch 5; `engine.md` P1; INTENT #18/#166 Q12.
+- **Additive field on `NodeCapabilities` (`node.rs`):**
+  `#[serde(default)] pub modalities_available: Vec<Modality>` — mirrors the existing
+  `models_available` DOWNLOAD-inventory affinity input; a T2T-only node advertises
+  `[Modality::T2T]`, a Pi with no S2T hardware simply omits it. The
+  completion-router treats it as **one more affinity axis** — no new routing plane,
+  **no authority dependency (OQ-1 stays PARKED)**. **Provenance:** batch 5;
+  `inference.md` P1; INTENT #166 Q12.
+- **`RuntimeSpec` — home is `engine-exec`, NOT `types` (recorded, not landed).**
+  `RuntimeSpec { repo, asset_matcher, version_source }` is the per-runtime
+  provisioning key on `engine.md`'s `InferenceBackend` trait (`fn runtime(&self) ->
+  RuntimeSpec`, `engine.md` P2); it rides the modality vocabulary but is the
+  **execution-surface trait's** type, authored on `contracts/engine-exec.md`, not
+  shared `types` vocabulary. It does not pass the `types` inclusion test as a
+  cross-cutting struct (single owning trait), so it stays on the engine-exec
+  surface. Recorded here only because the amendment queue named it; **no `types`
+  landing** unless a second consumer later forces it (the guardrail-2 rule).
+
+### AQ-3. `PromiseFulfillment` name reconciliation (batch 2)
+
+The wire-promise resolution type is authoritatively named **`PromiseFulfillment`**
+per the authored `contracts/mesh-transport.md` (`MsgKind::PromiseFulfillment`),
+which wins over this file's provisional `transport::PromiseResolution` and chassis's
+internal `PromiseResolved`. Landed as a **prose note in the `transport.rs` module
+above** (§ "NAME RECONCILIATION") — a rename at fill, shape unchanged. **Provenance:**
+batch 2; `mesh-transport.md` §3–4, `chassis.md`; INTENT #152/#154/#156.
 
 ## Relationships / edges
 

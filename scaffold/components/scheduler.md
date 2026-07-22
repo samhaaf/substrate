@@ -57,7 +57,7 @@ decides **WHAT runs and WHEN on this node**; it does **not** execute generation
 `benchmark-collections`), and does **not** speak mesh — it is a compiled-in
 **internal library of `inference`** (INTENT #22/#29), reached in-process by `api`
 (`api-dispatch`) and read by the composition root for the interruptibility feed;
-`api`/`mesh-client` own the wire, registration, and restart callback. It
+`api`/`chassis` own the wire, registration, and restart callback. It
 orchestrates its four siblings; it holds no HTTP, no SQLite schema, no kernel
 math, and no mesh vocabulary.
 
@@ -204,7 +204,7 @@ user of `preemption_threshold`.
 
 inference.md (batch 5) defined the vocabulary (`types::restart::Interruptibility`
 = `Idle` / `Interruptible` / `CriticalSection{until}`) and owns the *feed* to
-`mesh-client`; `supervision` owns the daemon-side ladder. **The transition logic
+`chassis`; `supervision` owns the daemon-side ladder. **The transition logic
 — when the node is in each state — is the scheduler's**, because the scheduler is
 the only place that knows the live admission/queue/swap state. I expose one pure
 read the composition root forwards on change:
@@ -476,7 +476,7 @@ Feeds an inference-owned cross-cutting protocol (scheduler is the *source*, not 
 contract party):
 
 - the **interruptibility transitions** (concern 3) are what the `inference`
-  composition root forwards to `mesh-client` as `restart-protocol`
+  composition root forwards to `chassis` as `restart-protocol`
   `InterruptibilityUpdate` frames; the scheduler owns the transition function,
   `inference`/`supervision` own the wire and the ladder. Flagged for reconciliation
   with inference.md's concern-4 table (the benchmark-`Idle` deviation).

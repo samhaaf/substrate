@@ -4,7 +4,8 @@
 mesh  <-  inference (api)
 
 - **inference (api)** is the **publisher** — it emits per-node lifecycle +
-  throughput events onto mesh pub/sub via `mesh-client` (api.md proposal).
+  throughput events onto mesh pub/sub via `chassis` (formerly `mesh-client`;
+  api.md proposal).
 - **mesh.completion-router** is a **consumer** — this is its live-primary
   load/inventory feed for the `NodeRegistry` projection (completion-router.md
   concern 3).
@@ -70,10 +71,11 @@ struct BackendEvent { detail: BackendDetail }
 ## Error cases
 
 - **Lossy by pub/sub contract.** A `Lagged` notice or a dropped delta on the
-  local mesh-client connection triggers **no api action** — the router reconciles
-  via `node-state-poll` (completion-router concern 3). A `seq` gap in pubsub
-  provenance likewise triggers a reconcile poll of that node, never a guess.
-- **Local daemon down at publish time.** `mesh-client` buffers best-effort
+  local `chassis` (formerly `mesh-client`) connection triggers **no api action**
+  — the router reconciles via `node-state-poll` (completion-router concern 3).
+  A `seq` gap in pubsub provenance likewise triggers a reconcile poll of that
+  node, never a guess.
+- **Local daemon down at publish time.** `chassis` buffers best-effort
   (bounded, drop-oldest). In standalone mode inference falls back to the raw
   `/events` WS (api concern 4); no event is an error.
 - **No delivery guarantee, no ack semantics** beyond the pub/sub layer's

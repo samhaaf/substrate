@@ -2,7 +2,8 @@
 
 ## Parties
 `mesh.network-topology` (producer — one tracker per mesh daemon) → any
-subscriber: **cc**, **org**, and mesh's own in-process observability hub.
+subscriber: **cc**, the emergent **keeper** layer (historically "org"), and
+mesh's own in-process observability hub.
 Delivered as `pubsub-relay` envelopes on topic `net.topology`, relayed across
 services and nodes by the pub/sub plane (rides `pubsub-protocol`).
 **Harmonization flag (unresolved tension):** this file assumed a relay-side
@@ -136,12 +137,13 @@ enum SelfOfflineCause {
 ## Reconciliation notes
 - **Single-party edge — authored from the producer's proposal.**
   `network-topology.md` is the only party; no cross-party disagreement to
-  resolve. Subscribers (cc, org) named the edge in their designs but proposed
-  no conflicting shape, so this file adopts the producer's proposal verbatim.
+  resolve. Subscribers (cc, the keeper layer) named the edge in their designs
+  but proposed no conflicting shape, so this file adopts the producer's
+  proposal verbatim.
 - **Gateway dropped as a subscriber** (2026-07-18 mesh merge): the
   observability fan-out hub now consumes topology in-process, so the external
-  subscriber list is cc + org + (in-process) mesh hub. Updated from the
-  wave-1 stub, which still named gateway.
+  subscriber list is cc + the keeper layer + (in-process) mesh hub. Updated
+  from the wave-1 stub, which still named gateway.
 - **NodeId naming edge, flagged for the harmonizer.** `PeerRef` carries BOTH
   `node_id` (device name — the routing/cross-ref key shared with
   service-registry and completion-router) and `stable_id` (Tailscale

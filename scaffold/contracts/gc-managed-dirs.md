@@ -27,7 +27,7 @@ The `GcApi` trait is implemented by both `GcHandle` variants; it exposes the
 ```rust
 enum GcHandle {
     Embedded(Arc<GcService>),   // in-process fn calls — standalone/tests, today's behaviour
-    Remote(GcClient),           // WS to the local gc daemon via mesh-client — the normal mesh world
+    Remote(GcClient),           // WS to the local gc daemon via chassis (formerly mesh-client) — the normal mesh world
 }
 
 trait GcApi {  // both variants implement this identical surface

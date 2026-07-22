@@ -122,7 +122,7 @@ further mention.
 ## Import surface (anticipated; all mesh-mediated, never Cargo-linked)
 
 Every service below is a top-level app reached **over the wire (mesh-mediated
-WS/CLI)** (INTENT #29). Only `types` + `mesh-client` are compiled-in shared
+WS/CLI)** (INTENT #29). Only `types` + `chassis` are compiled-in shared
 libs. The point of the surface-schema gift is that this list is **generic** —
 AUI consumes the mesh's cross-cutting planes, not a fixed roster of services.
 

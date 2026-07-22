@@ -2,7 +2,7 @@
 
 ## Parties
 
-- **any service** (via `mesh-client`) — acquires/releases/renews distributed semaphores
+- **any service** (via `chassis`, formerly `mesh-client`) — acquires/releases/renews distributed semaphores
 - **mesh** (`mesh.locks`, the L2 internal library) — the semaphore authority
 
 Cross-cutting, surface-schema-style: ONE shared document, every service is a

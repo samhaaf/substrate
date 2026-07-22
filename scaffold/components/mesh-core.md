@@ -74,7 +74,8 @@ to ride on. Concretely mesh-core owns, and owns *exclusively*:
 **Boundary — what mesh-core does NOT own.** It does not implement any of the
 utility algorithms: not the LWW/anti-entropy store (`replicated-kv`), not the
 slug↔endpoint registry (`service-registry`), not semaphores (`locks`), not
-queues/triggers/handlers (`queues`), not scheduling (`cron`), not
+queues/triggers/handlers (`queues`, which now also owns scheduling after the
+wave-3 cron fold), not
 version/boot-order/restart-ladder *policy* (`supervision`), not fleet completion
 routing (`completion-router`), not topology diffing (`network-topology`), not
 pub/sub topic delivery (`pubsub-relay`). mesh-core *composes* these and defines the
@@ -122,11 +123,13 @@ Ring 3  (L2 on KV) service-registry · locks · queues · supervision
         all four ride replicated-kv's keyspaces (addressing / semaphore state /
         queue metadata / version+boot-order records).
 
-Ring 4  (L2 composed) cron · completion-router · dashboard (module)
-        cron rides registry+locks; completion-router rides service-registry +
+Ring 4  (L2 composed) completion-router · dashboard (module)
+        completion-router rides service-registry +
         network-topology (fleet discovery) + PeerLink (forwarding);
         the dashboard module (folded dashboard-serving, concern 12) rides
         service-registry (discover) + pubsub-relay (feed) + the HttpSurface seam.
+        (cron is no longer a Ring-4 module — wave-3 folded its evaluator into
+        Ring-3 `queues` as `TriggerSource::Schedule`; see queues.md concern 10.)
 ```
 
 **Seams mesh-core DEFINES (the trait boundaries — the actual wave-2 output).**
@@ -176,7 +179,7 @@ debt INTENT #38 forbids.
 
 ### 2. Single-port locality + the addressing dispatcher (INTENT #58/#59)
 
-A local service connects once to `ws://127.0.0.1:3649` (via `mesh-client`) and
+A local service connects once to `ws://127.0.0.1:3649` (via `chassis`) and
 sends envelopes carrying an `Address`. The Dispatcher resolves each class:
 
 ```rust
@@ -275,8 +278,10 @@ and tears them down top-down:
    discovered-not-hardcoded, INTENT #36). Register mesh's own slugs — the
    `inference` fleet front-door alias, and the `dashboard` slug →
    `Endpoint{ scheme: Http, host, port, health_path: "/health" }`.
-9. Ring 4: `cron`, `completion-router`, and the `dashboard` module (mount its
+9. Ring 4: `completion-router` and the `dashboard` module (mount its
    axum `Router` — static + `/events` + `/api/*` — onto the `HttpSurface`).
+   (cron's scheduler is no longer a Ring-4 module — it folded into Ring-3
+   `queues`, started at step 7.)
 10. `supervision` reads boot-order records and starts/adopts local services in
     dependency order (concern 4).
 11. Flip the Dispatcher live → accept and route service traffic. Announce ready.
@@ -344,7 +349,7 @@ a shared UTC view), exposes `now_utc()` (offset-corrected) and a monotonic
 component for the HLC, surfaces per-node offset/drift on the surface schema,
 and flags a node whose offset exceeds a threshold (dashboard alarm; possibly
 refusing timestamp-sensitive operations). Whether services get daemon-issued
-timestamps via a `mesh-client` call or only the in-process rings consume the
+timestamps via a `chassis` call or only the in-process rings consume the
 authority is a fill-time decision. This is a **design item for mesh-core's
 fill** — approach-sketched here, not implementation-ready.
 
@@ -371,13 +376,19 @@ service-to-service link.
 **(b) Patch-through-on-restart — "guaranteed responses."** When the Dispatcher
 resolves a target whose service is **down** on the resolved node, it does **not**
 immediately error. Instead:
-1. It asks `supervision` (the boot-order/restart authority) to **ensure `slug` is
-   up on `node`** — `supervision` decides *whether/when* and drives the restart
-   via mesh-core's `ProcessControl` (concern 4). mesh-core owns *executing* the
+1. It calls `supervision`'s **`ensure_up(slug, node)`** (the boot-order/restart
+   authority; the primitive is designed in supervision concern 11) to **ensure
+   `slug` is up on `node`** — a fire-and-forget nudge, not a request/response
+   call. `supervision` decides *whether/when* and drives the restart via
+   mesh-core's `ProcessControl` (concern 4). mesh-core owns *executing* the
    spawn/kill; `supervision` owns the *policy*.
 2. It **parks the inbound frame** in a **bounded** pending buffer keyed by
-   `(target, frame_id)`, awaiting a readiness signal (the target's fresh
-   `chassis` bring-up re-registering a live `service-registry` lease, concern 6).
+   `(target, frame_id)`, awaiting a readiness signal. Readiness is **not a pushed
+   callback**: the Dispatcher OBSERVES `service-registry` and unparks the moment a
+   fresh **`Live`** record (bumped `generation`) appears for `(slug, node)` — the
+   ordinary lease `chassis` re-registers at its own bring-up. This is exactly the
+   mechanism designed in supervision concern 11 (registry-observation, not a new
+   channel).
 3. On readiness it **patches the held frame through** to the new session via
    `LocalDelivery` (local) or `PeerLink` (remote). The caller experiences one
    response, never learning the target had bounced.

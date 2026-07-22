@@ -18,7 +18,7 @@ residence), `secrets` via `rollup-secrets` (secret references, never raw in
 output), mesh via `rollup-mesh` (registration + resolve surface), **`kg` via
 `rollup-kg` (WAVE-3, INTENT #140/#150: reads the rollup-graph for graph-backed
 plugin/bundle rollup — plane 2, additive and opt-in)**, `types` +
-`mesh-client` (shared libs, compiled in). **Consumed by:** `cc` via
+`chassis` (shared libs, compiled in). **Consumed by:** `cc` via
 `rollup-cc` (on-demand plugin assembly — PRIMARY consumer), mesh
 `queues`/triggers via `rollup-mesh` (declarative payload-assembly references),
 `projects` via `projects-rollup` (future — "tasks are rolled up"). Grounded in
@@ -350,7 +350,7 @@ contains a secret value (only `SecretRef`s).
 rollup is consumed by *apps* (cc) and by *mesh* (queues/triggers) that cannot
 link it (INTENT #29: no cross-app in-process linking). So rollup is a **daemon
 registering on the local mesh** (single-port locality, `:3649`, via
-`mesh-client`), serving `rollup-mesh`/`rollup-cc` over WS — and **also a
+`chassis`), serving `rollup-mesh`/`rollup-cc` over WS — and **also a
 noun-verb `clap` CLI** for human/local use, exactly like `db`/`secrets`/`gc`/
 `cc`:
 
@@ -506,7 +506,7 @@ agent ran with.
 ## Relationships / edges
 
 Contract edges are cross-process WS through the local `:3649` daemon (INTENT
-#29/#58). `types` and `mesh-client` are compiled-in shared libs, NOT contract
+#29/#58). `types` and `chassis` are compiled-in shared libs, NOT contract
 edges.
 
 - **cc** via `rollup-cc` — cc's on-demand plugin/prompt assembly (directory

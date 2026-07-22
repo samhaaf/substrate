@@ -9,9 +9,18 @@ merge rule, sync protocol, or guarantees table. **Nesting:** internal lib of mes
 `lib/mesh::kv`), Ring 2 in mesh-core's internal-layering architecture.
 **Consumes:** mesh-core Ring-0 seams only (`LocalStore`, `PeerTransport`) +
 `types`. **Consumed by:** Ring 3 (`service-registry`, `locks`, `queues`,
-`supervision`) and Ring 4 (`cron`), via the `KvHandle`/`KeyspaceHandle` seam
+`supervision`), via the `KvHandle`/`KeyspaceHandle` seam
 specified here. Designed WITHIN mesh-core.md's ring model; no deviations from
 it are proposed.
+
+> **⚠ WAVE-3 REFERENCE UPDATE (cron fold, ledger D2; INTENT #56/#91/F6b).**
+> `cron` is no longer a Ring-4 lib or a KV tenant of its own — it folded into
+> `queues` as a `Schedule` trigger source (queues.md concern 10; `cron.md` /
+> `cron-api.md` are tombstones). Wherever this file names Ring-4 `cron`, the
+> `cron/` schedule keyspace, or the `cron-api` contract, read it as **`queues`'
+> `Schedule`-trigger machinery** — the schedule fire-cursor now lives under
+> `queues/schedule-state/<trigger_id>` (queues-api.md). No change to the version
+> model, merge rule, or guarantees; this is a naming/tenancy correction only.
 
 ## Charter
 

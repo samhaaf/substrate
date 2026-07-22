@@ -49,7 +49,7 @@ guarantees as designed-in structure, not policy:
 dependency of its host apps, **NOT a contract edge** (locked rounds 4–5;
 wave2-plan §3 footer) — it never opens a socket, never registers with mesh,
 and reaches mesh facilities (queues, locks, pub/sub, secrets) only through its
-host's `mesh-client` via the `HostSeam` (below); this includes RECEIVING
+host's `chassis` via the `HostSeam` (below); this includes RECEIVING
 queue/schedule-dispatched invocations (§3, wave-3 fold) — the host, already a
 `queues-api` party for every other reason a mesh service is, simply hands the
 engine a `Deliver` it already received, and the engine hands back an ack/nack
@@ -354,7 +354,7 @@ zombie-kill beyond the child itself). Every capability a handler uses is a
   invocation; **this is what makes provenance total**: handlers physically
   cannot write except through the traced path.
 - `ctx.emit(event)` / `ctx.enqueue(queue, event)` — host publishes via
-  mesh-client (pub/sub Envelope with `causal_parent` = this invocation, per
+  chassis (pub/sub Envelope with `causal_parent` = this invocation, per
   pubsub-relay concern 1; or `queues-api` SendEvent) — the causal chain
   crosses the bus intact.
 - `ctx.fetch(req)` — **all network egress executes host-side** against the
@@ -474,7 +474,7 @@ contract.**
 - **Retry → DLQ:** failures retry per `RetryPolicy` (engine-local, against
   the outbox row). On exhaustion the delivery — change snapshot, trigger id,
   failure history, full `TraceCtx` — is `SendEvent`-ed (through the host's
-  mesh-client, `queues-api`) onto the database's dead-letter queue
+  chassis, `queues-api`) onto the database's dead-letter queue
   `ee.dlq.<database>` (lazily ensured; an ordinary mesh queue, INTENT #95).
   From there the standard fabric takes over: the DLQ's own declarative
   trigger escalates to cc exactly as queues.md concern 8 designed. **The
@@ -586,7 +586,7 @@ additionally a *consumer* (through its hosts) of two cross-cutting APIs.
   *(authored: scaffold/contracts/cc-escalation.md.)*
 - **`vdb`** — HOST (internal-lib seam, not a contract): VDB embeds the engine
   with the `Tables` adapter, implements `HostSeam` (SQL via `vdb-db`, mesh via
-  its mesh-client, secrets via `vdb-secrets`, artifacts via `vdb-vfs` — the
+  its chassis, secrets via `vdb-secrets`, artifacts via `vdb-vfs` — the
   `stack-vfs` name is a rename-tombstone), hosts the `ee_*` schema, owns provenance-level config,
   retention, and cloud-target materialization. Co-batch ⇄: the seam trait +
   `ee_*` schemas must be reconciled mid-batch with the vdb designer.
@@ -610,18 +610,18 @@ additionally a *consumer* (through its hosts) of two cross-cutting APIs.
   fail-safe arms so an older `cc` (built against the wave-2 two-variant
   shape) degrades to `Unknown` on a `Direct` escalation instead of failing
   the whole deserialize — see "Proposed contracts (wave 3)".
-- **`queues`** (consumer, via host mesh-client, `queues-api`) — DLQ
+- **`queues`** (consumer, via host chassis, `queues-api`) — DLQ
   enqueueing (`ee.dlq.<database>`), `ctx.enqueue` event publication, AND
   (wave-3 fold, §3) receiving `Deliver` pushes + issuing `AckDelivery`/
   `NackDelivery` for `HandlerRef::ExecFn`-targeted triggers whose `source` is
   `TriggerSource::Queue` or `TriggerSource::Schedule`. This is a wider use of
   `queues-api` than before (push-dispatch + ack/nack, not just enqueue), but
   still not a NEW contract file — it is the same cross-cutting `queues-api`
-  every mesh service already speaks, reached through the host's mesh-client,
+  every mesh service already speaks, reached through the host's chassis,
   same as `vdb`/`kg`'s own generic mesh-service surface. The binding for the
   **change-bound** path remains the **shared trigger data model**, not a wire
   edge.
-- **`locks`** (consumer, via host mesh-client, `locks-api`) — Ephemeral
+- **`locks`** (consumer, via host chassis, `locks-api`) — Ephemeral
   event-ID semaphores `ee.<database>.<change_id>.<trigger_id>` for
   replicated-database trigger dedup; catches `PartitionMergeExceeded` into
   the per-trigger seam. Exactly the consumer locks.md concern 7 lists.
@@ -641,7 +641,7 @@ additionally a *consumer* (through its hosts) of two cross-cutting APIs.
   internal processes; the host's restart-ladder participation drains the
   engine (in-flight invocations are the `CriticalSection`).
 - **`rollup`** (indirect — via queues' assembly) — `AssemblyTemplate`'s
-  `Rollup(RollupRef)` nodes resolve through the host's mesh-client at
+  `Rollup(RollupRef)` nodes resolve through the host's chassis at
   assembly time, inheriting queues' `llm_safe` constraint on that edge
   unchanged.
 

@@ -241,8 +241,8 @@ opaque-payload / open-identifier philosophy). Point by point:
    connection itself the subscriber with an additive filter set. **Connection-as-
    subscriber wins** for a single socket. *Losing view:* the `subscriber_id`
    model matters only for fan-in multiplexing of many logical subscribers on one
-   socket — `mesh-client` handles that above this layer (see mesh-client's
-   `Frame` multiplexing), so it isn't needed on the wire.
+   socket — `chassis` (formerly `mesh-client`) handles that above this layer
+   (see mesh-transport's `Frame` multiplexing), so it isn't needed on the wire.
 
 5. **Error taxonomy.** Merged. `types` had `{UnknownTopic, NotSubscribed,
    PayloadTooLarge, Malformed}`; `pubsub-relay` had `{InvalidTopicPath,

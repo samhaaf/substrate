@@ -2,7 +2,8 @@
 
 ## Parties
 `kg` ↔ mesh. Over the local mesh daemon `:3649` (single-port locality) via
-`mesh-client`. Authored from `kg.md` concern 2/4/9 and its `kg-mesh` proposal
+`chassis` (formerly `mesh-client`). Authored from `kg.md` concern 2/4/9 and its
+`kg-mesh` proposal
 (kg is authoritative; mesh contributes the generic protocols it already owns).
 Replaces the wave-1 requirements-only stub.
 

@@ -106,7 +106,7 @@ for *inference* — this is account administration only.
 
 ## Import surface (anticipated; all mesh-mediated, INTENT #29)
 
-Only `types` + `mesh-client` are compiled-in shared libs. Every service edge is
+Only `types` + `chassis` are compiled-in shared libs. Every service edge is
 over the wire.
 
 | Consumes / Exposes | Via | Why |

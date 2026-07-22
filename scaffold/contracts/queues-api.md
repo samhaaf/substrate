@@ -2,7 +2,7 @@
 
 ## Parties
 
-- **any service** (via `mesh-client`) — enqueues events, registers triggers, runs handlers
+- **any service** (via `chassis`, formerly `mesh-client`) — enqueues events, registers triggers, runs handlers
 - **mesh** (`mesh.queues`, the L2 internal library) — durable queues + declarative dispatch
 
 Cross-cutting, surface-schema-style: ONE shared document, every service is a
@@ -23,6 +23,16 @@ trigger that dictates the payload, not the event"); handlers hold the code.
 ## Schema
 
 ### The declarative trigger (`types::trigger` — shape authored by queues)
+
+> **PENDING TYPES AUTHORING (wave-3 fold, batch 3).** The cron-fold additions
+> below — `TriggerSource` (the `queue` → `source` enum change), `ScheduleSource` /
+> `Schedule` / `FireTarget` / `MisfirePolicy` (see § Proposed contracts (wave 3)),
+> and the `HandlerRef::Emit` variant — are homed in the `types::trigger` module but
+> were **not yet landed in `types` when batch 3 folded cron in here**. They are now
+> recorded in `components/types.md` § "Wave-3 amendment queue" (the `trigger.rs`
+> extension entry) for the `types` owner to author; this contract carries the
+> authoritative *shape* (shape authored by queues), `types` carries the *home*. No
+> vocabulary change to the LOCKED declarative-trigger model (#101/#103).
 
 ```rust
 pub struct Trigger {

@@ -314,8 +314,14 @@ struct RecipientKey { service: Slug, node: NodeId }   // topic is implicit in th
 
 - **Boring provisional (INTENT #155 verbatim):** the cache is *"a caching system
   for intermediate responses that is also distributed, like a KV store"* — a
-  **distributed KV-backed cache** (the same one promise resolutions ride,
-  concern 10). That reading is INTENT's own words and is the default binding.
+  **distributed KV-backed cache** (the same `replicated-kv` store promise
+  resolutions ride, concern 10). `replicated-kv.md` concern 10 records the
+  matching **consumer note** for this same seam story: a `pubsub-cache/` keyspace
+  keyed by the same `RecipientKey { service, node }` defined above, values a small
+  envelope buffer, `expiry_events` off (retention/TTL stays the cache's own
+  policy). That is a *consumer note only* on kv's side — kv does not add the
+  keyspace or implement `IntermediateCache` — and it is INTENT's own words, the
+  default binding. Both files keep it PARKED (OQ-3); neither adopts it.
 - **MUST NOT decide (PARKED OQ-3).** Whether `SaveFailed` deliveries are instead
   **enqueued into `queues`** (the wave-2 F5 consolidation — "saved pub/sub
   deliveries just get enqueued into queues") is the operator's parked "didn't seem
@@ -426,7 +432,7 @@ publish.
 
 Parent: mesh | Children: none. Module `lib/mesh::pubsub` (server/broker side) +
 the daemon↔daemon relay link. The client half (a service's
-subscribe/publish handle to its local daemon) is part of `mesh-client`'s surface,
+subscribe/publish handle to its local daemon) is part of `chassis`'s surface,
 not a separate crate — services get pub/sub through the same thin boot lib they
 get `register`/`resolve` from (mesh.md concern 0). Confirmed at skeleton time.
 
@@ -473,7 +479,7 @@ The per-pair contract round authored these edges; the contract files are
 authoritative (including Reconciliation notes). Detailed proposals formerly here
 are superseded by them.
 
-- `pubsub-protocol` (every service via `mesh-client` ↔ mesh's pubsub-relay;
+- `pubsub-protocol` (every service via `chassis` ↔ mesh's pubsub-relay;
   cross-cutting, ONE shared surface-schema-style document) — the WS
   publish/subscribe envelope, scoped topics + filters, `RelayFrame`
   daemon↔daemon facet, `PubSubError` taxonomy, and the best-effort/lossy +

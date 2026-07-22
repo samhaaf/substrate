@@ -9,7 +9,8 @@ client / mesh.completion-router  <->  inference (api)
   honors a pin), copies status+headers+body byte-for-byte, and relays the WS
   stream. It transforms nothing (completion-router.md proposal).
 - Downstream typed consumers of this same surface: `cc`/future `agents` (see
-  `llm-calls`), `org`, and the dashboard.
+  `llm-calls`), the emergent **keeper** layer (historically "org"), and the
+  dashboard.
 
 ## Purpose
 The single external completion surface of an inference node: submit / status /
@@ -18,7 +19,7 @@ models, and estimate. Mesh forwards it **byte-transparently** so a caller cannot
 tell a node-direct call from a mesh-routed one — the same `/v1/` request works
 whether it lands on the local node or is relayed to a peer. This is the one
 completions entry point; `llm-calls` (cc/agents) reuses it rather than adding a
-second surface (INTENT #40, kept "cheap to fan out" for org).
+second surface (INTENT #40, kept "cheap to fan out" for the keeper layer).
 
 ## Schema
 
@@ -128,7 +129,7 @@ synthesizes a body from the `/v1` payload).
   — stable) and (b) the `/v1/completions/:id/stream` path convention (its relay
   index key). Parsing/rewriting the body is a **conformance violation** (would
   re-introduce version coupling).
-- **Typed consumers (cc/org/dashboard): MEDIUM.** `/v1` bodies and `StreamEvent`
+- **Typed consumers (cc/keeper/dashboard): MEDIUM.** `/v1` bodies and `StreamEvent`
   evolve **additive-only**. `StreamEvent`/`LifecycleEvent` require a
   `#[serde(other)]` catch-all arm in `types::stream` so a mixed-version fleet
   tolerates unknown variants mid-rollout (flagged to `types`; INTENT #66).

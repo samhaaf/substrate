@@ -1,583 +1,226 @@
-# Substrate — Scaffold Overview (wave-2 close-out)
+# Substrate — Scaffold Overview (wave-3 close-out)
 
-> **NAMING REOPENED — "SUBSTRATE" IS THE WORKING NAME; THE FINAL NAME IS
-> OPEN (friction-round 3, 2026-07-20, INTENT #129/#141).** This supersedes
-> the round-2 "resolved Substrate, full circle" note (INTENT #120). Round 3:
-> "Mind temple — that's what this is. It's a mind temple. Maybe we call it
-> mind temple, or just temple. Mind Temple OS. Substrate OS. Those are the
-> candidates now." Round 4 (same day) crystallized the criteria while
-> keeping it open: Mind Temple is "a tiny bit cliche... I don't want to feel
-> embarrassed — I want to confuse people by using a word they've never heard
-> before"; Substrate remains "a really good starting point because the
-> philosophy is true — build up from reusable boring primitives. But a
-> temple you build a strong foundation in is a better abstraction."
-> **Candidates now: Substrate (OS) vs (Mind) Temple / the temple idea "in a
-> different language."** Criteria: simple, transcription-friendly,
-> non-cliche, resonant, possibly unfamiliar. Until decided, every
-> "Substrate" in this tree reads as the WORKING name.
->
-> **Re-spoken round update (2026-07-21/22, INTENT #158/#162/#171): a FOCUSED
-> NAMING ROUND is IN PROGRESS.** Two locks landed on the way: **LANDSCAPE is
-> LOCKED as the name of the topological GRAPH — explicitly NOT the OS name**
-> (INTENT #162); **CHASSIS is LOCKED as the daemon-wrapper lib name** (INTENT
-> #166, STT-permitting). The OS name itself is still open (Substrate working;
-> Landscape OS was a candidate but the word is now spent on the graph). The
-> topological-node concept name is OPEN with **"keeper" leading** (Bishop
-> superseded; Jester dropped — INTENT #162). Next round per INTENT #171:
-> "lock everything in the intent file… and let's focus on the name."
->
-> **Naming history, for the record:** the system was first locked as
-> **Mind OS** ("an operating system of my mind"), but that name is taken by
-> an existing company the operator finds cheesy; **Broomstick OS** was
-> pinned as a candidate but is "corny — it's the name of my business";
-> **Mesh OS** "doesn't say what it is." **Substrate** — the name the repo
-> carried all along — was restored as THE name at friction-round 2 (INTENT
-> #120), then reopened at round 3 as above. (Mycelium and ripple-derived
-> names were rejected earlier; "ripples" is a RESERVED term, see the
-> placeholder section.) Stale "Mind OS" mentions surviving in component
-> files read as "Substrate."
+> **OS NAME STILL OPEN; "SUBSTRATE" IS THE WORKING NAME (INTENT
+> #129/#141/#171/#172).** A focused naming round is queued (ledger OQ-7). Until
+> it lands, every "Substrate" in this tree reads as the WORKING name. Naming
+> history, for the record only: **Mind OS** was once locked ("an operating
+> system of my mind") but the name is taken; **Broomstick OS** ("corny"),
+> **Mesh OS** ("doesn't say what it is"), **Mind Temple / Temple OS** ("a tiny
+> bit cliche"), and **Landscape OS** (the word `landscape` is now spent on the
+> graph) were all floated and set aside. Criteria the operator set: simple,
+> STT-friendly, non-cliche, resonant, unfamiliar-OK. "Mycelium" and
+> ripple-derived names were rejected; **`ripples` is a RESERVED term** and
+> names nothing in v1.
 
-## Canonical vocabulary (re-spoken round, 2026-07-21/22 — INTENT #161–#166)
+## Canonical vocabulary (LOCKED — INTENT #172, wave-3 intent ledger §A1)
 
-The one place the tree's load-bearing words are defined. Where any component
-or contract file says otherwise, THIS block supersedes it (with the INTENT
-ledger above it). Nailing this down was the operator's explicit precondition
-for continuing the architecture discussion (INTENT #161).
+The one place the tree's load-bearing words are defined. Where any component or
+contract file says otherwise, THIS block supersedes it (with the INTENT ledger
+above it). Historical terms may appear ONLY in naming-history notes.
 
-- **landscape** — the ONE open-world topological graph in which all our
-  projects and things live. **LOCKED as the GRAPH name — explicitly NOT the
-  OS name** (INTENT #158/#162). Everything below lives on the landscape.
-- **topological node** — a node on the landscape that owns its surrounding
-  region: an **org-chart seat** ("you split an org by topology, not by which
-  humans you can get" — INTENT #162). Agents spin up FROM it, each with their
-  own workspace. The concept formerly riffed as coordinator/owner/deva/
-  bishop. **Name OPEN — "keeper" leading** ("it keeps that area of the
-  topology. It actually checks all the boxes," INTENT #162).
-- **seed** — the topological node's **persistent shared memory ONLY — NOT
-  the node itself** (INTENT #161, superseding the beat-11 "the seed IS the
-  node" framing of INTENT #149). It can be edited like an artifact. The
-  operator is not in love with the word ("taking on too many meanings") —
-  it may yet be renamed.
-- **workspace** — the per-thread **ephemeral memory**. Each thread has one;
-  nothing is shared between threads except the node's seed (like today: one
-  repo, many workspaces each with a thread; nothing shared except .mind).
-- **bundle** — **LOCKED** (INTENT #165/#166): the **targeted-rollup product
-  of ANY landscape node** — topological nodes and artifact nodes both. For a
-  topological node the bundle = **role prompt + plugins**, and "the role
-  prompt is basically the content of the seed." For an artifact node it is
-  the skills/tools of that artifact's type, appearing when the artifact is
-  in sight.
-- **chassis** — **LOCKED** (INTENT #156/#166): the name of the
-  daemon-wrapper core lib every service inherits (formerly "proto-daemon /
-  daemon wrapper / DW"): brings the daemon online, establishes data
-  contracts, enforces Rust-exhaustive per-app case handling.
-- **threads** — how agents run against a topological node: **interactive**
-  (human-attached) or **headless** (started from a message) (INTENT #149).
-  A thread is itself a node, linked to what it generated.
+- **landscape** — the ONE open-world topological graph in which all our projects
+  and things live; it holds **keepers AND artifacts**. **LOCKED as the GRAPH
+  name — explicitly NOT the OS name** (INTENT #158/#162). Built on `kg`.
+- **keeper** — a node on the landscape that owns its surrounding region: a
+  **topological node = an org-chart seat** ("you split an org by topology, not
+  by which humans you can get"). **project is the PRIMARY keeper type.** Keepers
+  own their region and delegate to sub-keepers; threads spin up against a keeper.
+  **LOCKED** (INTENT #162/#172) — formerly riffed as topological node /
+  coordinator / owner / deva / bishop / Jester, **all superseded**. Replaces the
+  dissolved `org` concept ("coordinator = owner = keeper," INTENT #130/#132).
+- **bundle** — a keeper's **persistent shared knowledge** (rolled-up init: role
+  prompt + plugins), generalizing to the **targeted-rollup product of ANY
+  landscape node** (keepers and artifact nodes both). For an artifact node it is
+  the type's skills/tools, appearing when the artifact is in sight. **LOCKED**
+  (INTENT #165/#166/#172). **Supersedes "seed"** for a node's persistent
+  memory — that word is retired; use it for nothing but the KG self-seed sense.
+- **workspace** — the per-thread **ephemeral memory**, one-to-one with a thread.
+  Nothing is shared between threads except the keeper's bundle (like today: one
+  repo, many workspaces each with a thread; nothing shared except `.mind`).
+  **LOCKED** (INTENT #149/#161).
+- **chassis** — **LOCKED** (INTENT #156/#166): the daemon-wrapper core lib every
+  service inherits (formerly "proto-daemon / DW / **mesh-client**"). Brings the
+  daemon online, establishes data contracts, enforces Rust-exhaustive per-app
+  case handling. **`mesh-client` retired into it** (wave-3, ledger D1).
+- **threads** — how agents run against a keeper: **interactive** (human-attached)
+  or **headless** (started from a message) (INTENT #149/#150). A thread is itself
+  a node, linked to what it generated.
 
-## Wave 2 — COMPLETE (status block)
+## Wave 3 — COMPLETE (status block)
 
-**Date:** 2026-07-19. **Commit lineage:** `bca1100` (wave-2 decompose /
-`wave2-plan.md` authored) → batches 1–8 (per-module design passes, layer by
-layer, 5–8 modules per batch) → `0c5d6fb` (per-pair contract round — all
-pairs reconciled) → **this harmonization commit** (consistency sweep +
-coverage-gap closure + this close-out). Process per INTENT #107 and the
-Scaffolding Pattern: decompose → per-module designs proposing neighbor
-contracts → per-pair contract round → harmonization → **friction-point
-surfacing for the operator's clarification round** (the friction report lives
-in the harness workspace, `substrate-v2/reports/wave2-friction-points.md`).
+**Date:** 2026-07-22. **Commit lineage (wave-3):**
+`0c503a5` (batch 1 — envelope switch, chassis, mesh-transport, mesh-client
+tombstone) → `297fb6c` (batch 2 — mesh mediation, delivery modes, topology+time,
+dashboard fold) → `bffbfd3` (batch 3 — queues+cron fold, registry versioning,
+router+supervision refresh) → `477859b` (batch 4 — schema/rollup/kg reshape, vdb
+sessions, engine+kv refresh) → `90f0107` (batch 5 — inference modalities,
+vfs+secrets+spend consolidation) → `e20306a` (batch 6 — keeper centerpiece + L6
+conceptual designs) → **this commit** (batch 7 — vocabulary sweep, contract
+refresh, harmonization close-out). Wave 3 sits on top of the wave-2 line
+(`0c5d6fb` contract round → `586561c` harmonization) and the three friction
+rounds + re-spoken locks (`e948cb5` → `d605db5` → `ab68f57` → `c4a44f9`).
 
-What exists at close-out:
+**What wave 3 did** (bottom-up per #44/#102; guardrail = the wave-3 intent
+ledger, `substrate-v2/reports/wave3-intent-ledger.md`, and INTENT.md #1–#173):
 
-- **47 component files** in `scaffold/components/` (48 as of friction-round
-  2 — `onion.md` added as a requirements-only candidate stub, INTENT #122;
-  renamed `schema.md` at friction-round 3, INTENT #131; **49 as of the
-  re-spoken round** — `ui-server.md` + `aui-client.md` added, and `gc.md` +
-  `openrouter-mgmt.md` became tombstones-with-content, INTENT #166/#168) —
-  **43 live modules** (44 until friction-round 3 dissolved the `org` crate,
-  INTENT #132) across
-  the 7-layer OS stack (L0–L6) plus **4 history/tombstone files** (`mesh.md`, the
-  round-9 pre-split mesh design record; `gateway.md`, tombstone — gateway
-  merged into mesh 2026-07-18; `stack.md`, superseded requirements history —
-  the module is `vdb`, "stack" survives as the PATTERN name; `org.md`,
-  tombstone-with-content — the org crate dissolved into emergent
-  coordinators at friction-round 3, INTENT #132). The former `ccd.md` is
-  `cc.md` (rename, INTENT #131).
-- **75 contract files** in `scaffold/contracts/` — 71 live authored contracts
-  + 4 tombstones (`mesh-registry-read` — gateway merge; `registry-replication`
-  — superseded by `kv-replication`; `stack-vfs`/`stack-mesh` — renamed
-  `vdb-vfs`/`vdb-mesh` at harmonization, operator sign-off pending).
-- **Harmonization coverage result:** wave2-plan §3 identified 69 pairs; the
-  contract round authored 64 of them and legitimately ADDED two
-  (`kg-api`, `vfs-content` — recorded as deviations-by-addition in the files)
-  plus the planned `kv-replication` generalization. Three planned pairs had
-  no file (`aws-vdb`, `aws-secrets`, `projects-vdb`) and four rounds-era
-  stubs were never upgraded (`stack-vfs`, `stack-mesh` — renamed
-  `vdb-vfs`/`vdb-mesh`; `kv-cache`; `service-registration`); all were
-  authored/renamed at harmonization from the already-reconciled component
-  halves. Gaps deliberately NOT closed (surfaced in the friction report
-  instead of invented here): **projects↔repo** (worktree binding — no edge in
-  the inventory), **vfs-secrets**, **engine-vfs**, and **mesh-transport**
-  (the byte-level framing layer ~12 contracts bind to by reference — carried
-  as mesh-core's to pin at fill).
-- Each component file now carries a compact **"Contracts (wave 2 —
-  authored)"** section pointing at its contract files; the contract files are
-  authoritative (including their Reconciliation notes). Detail lives there,
-  not here.
+- Folded the **comms stack** (#152–#157) that wave-2 left unfolded: the
+  success/error/promise **envelope switch** (`mesh-transport`, new), universal
+  **mesh mediation + promises + streaming rules** (into `mesh-core`), configurable
+  **pub/sub lossiness + intermediate cache** (into `pubsub-relay`).
+- Created **`chassis`** (the daemon-wrapper) and retired **`mesh-client`** into it.
+- Absorbed **`cron` → `queues`** (a `Schedule` trigger source), **`tailscale-query`
+  → `network-topology`**, **`dashboard-serving` → `mesh-core`**, completing the
+  earlier **`gc` → `vfs`** and **`openrouter-mgmt` → `spend`** folds.
+- Reshaped the data/execution plane: **`schema`** folded to implementation-ready
+  (nested + multiple inheritance, codegen bridge, DC-emergent surface),
+  **`rollup` toward KG/schema**, **`kg` distributed-everywhere** flagged, **vdb**
+  session home confirmed, **error-taxonomy** migration staged in `types`.
+- Put **S2T/T2S** as `inference` modalities with a warm-model policy.
+- Designed the **L6 conceptual layer**: **`keeper`** (NEW — the wave's central
+  design, replaces `org`), plus `projects` (now a landscape view, not a crate),
+  `artifacts`, `agents` (stays), `environments`/`cicd` (stubs), and the new
+  `ui-server`/`aui-client` placeholders (#168).
+- **This batch (7):** vocabulary sweep to the LOCKED words across every component
+  and contract; contract-graph refresh (adding `mesh-transport` + `schema-query`,
+  tombstone-noting the folded contracts); loose-annotation cleanup; and this
+  close-out.
 
-**Governing precedence:** INTENT items (#1–#171, harness workspace) win over
-scaffold text; contract files win over component-file proposals;
-`wave2-plan.md` remains the module-inventory record of the decompose step
-(it retains the pre-rename `ccd`/`onion`/`org` vocabulary as history).
+What exists at close-out: **42 live component design files** in
+`scaffold/components/` plus **10 tombstone/history records** (`cron`,
+`dashboard-serving`, `gateway`, `gc`, `mesh-client`, `openrouter-mgmt`,
+`tailscale-query`, `org` — tombstones-with-content; `mesh` — the pre-split mesh
+charter record; `stack` — superseded, the module is `vdb`, "stack" survives as
+the PATTERN name). **~71 live contract files** in `scaffold/contracts/` plus
+tombstones (`cron-api`, `mesh-registry-read`, `registry-replication`,
+`stack-vfs`, `stack-mesh`) and two folded-to-internal surfaces (`tailscale-status`
+→ network-topology-internal; `vfs-gc` → vfs-internal).
 
-## Friction-round 1 — operator answers folded in (2026-07-19, INTENT #108–#118)
-
-The first clarification round after wave-2 close-out. Dispositions (detail and
-verbatim rationale live in the named files):
-
-- **Queue-ownership fork — LOCKED** (INTENT #112): replicated-everywhere +
-  event-ID semaphore; **all nodes process; whoever discovers an event may
-  claim ownership via the semaphore** (nanosecond UTC timestamp, whoever gets
-  it). Single-owner-node rejected. Rationale: reliability over speed
-  ("keeping things running all the time and having our leverage create more
-  leverage"); partition insight: if an event reached both nodes, those nodes
-  were connected. → `components/queues.md` concern 4,
-  `contracts/queues-api.md` (its provisional assumption is now the locked
-  model).
-- **Kernel-KV-outside-VFS — BLESSED** (INTENT #108): mesh's own SQLite/KV
-  state sits below the storage plane, on the plain OS filesystem — "Makes
-  sense because everything depends on it. It's the one exception." →
-  `components/replicated-kv.md` concern 9.
-- **Mixed-version updates — CONFIRMED, no longer open** (INTENT #113): "the
-  conversation is moot" — the restart-priority ladder IS the answer.
-  Non-critical updates wait for idle (mixed versions fine, that's the point);
-  critical incompatible updates go out to every instance at HIGH priority.
-  Organic-newest-wins stands. **NEW LOCKED cross-cutting requirement on top:
-  sender version stamping** — every mesh-crossing message/event carries the
-  sending service's name AND version; receivers may enforce a version floor
-  (catchable rejection); schema changes offer one version of back-compat plus
-  a please-update warning attached back to the sender. →
-  `components/supervision.md` concern 9, `components/types.md` guardrail 4,
-  `contracts/pubsub-protocol.md`, `contracts/queues-api.md`.
-- **S3 bulk flow — CONFIRMED** (INTENT #114): direct-upload with mesh-issued
-  presigned permission (the Presigned default); the mesh as router locates
-  the data-holding node and tells it to send to the presigned URL — via queue
-  OR a direct service-router path. → `components/aws.md` concern 3,
-  `contracts/aws-vfs.md`.
-- **Clock discipline — HARDENED, new design item** (INTENT #116): the HLC
-  ratchet stays; ADDED a **mesh time-authority requirement** — mesh owns
-  time: enforced UTC sync, possibly mesh-daemon-issued timestamps with
-  neighbor-ping offset correction, race-condition management "as hardened as
-  is physically possible." Approach-sketched; a design item for mesh-core's
-  fill. → `components/mesh-core.md` concern 9,
-  `components/replicated-kv.md` concern 1.
-- **`db serve` daemon — FROZEN** (INTENT #115): operator flagged possible
-  drift ("db = a standalone crate you call as a tool; VDB = the mesh-accessed
-  service"); **do not build; discussion pending**. Design annotated, not
-  deleted. Mesh may use db via direct CLI execution for its own database (no
-  daemon, no mesh dependency). → `components/db.md` concern 1,
-  `contracts/vdb-db.md`, `contracts/db-control-plane.md`.
-  **SUPERSEDED at friction-round 3 (INTENT #128): UNFROZEN and ACCEPTED** —
-  see the friction-round 3 section below. **Re-superseded at the re-spoken
-  round (INTENT #167): sessions live in vdb, db has NO daemon** — the
-  original instinct won after all; see the re-spoken section.
-- **Naming — PINNED, undecided** (INTENT #117): SUPERSEDED at friction-round
-  2 (INTENT #120) — the name is **Substrate**; see the header note.
-- **App-dev framework — noted, future scope** (INTENT #118): see the
-  placeholder section.
-- Still genuinely open after this round: FIFO queues (no operator ask),
-  binary delivery / per-node build cache (INTENT #33), the cloud node
-  (INTENT #110 — topics for discussion), disaster-recovery design (INTENT
-  #109 — direction rich, design pending), and the remaining wave-2 friction
-  items awaiting later clarification rounds (per INTENT #111, the loop
-  continues, curated by the friction report).
-
-## Friction-round 2 — operator answers folded in (2026-07-20, INTENT #119–#127)
-
-The second clarification round. Dispositions (detail and verbatim rationale
-live in the named files):
-
-- **Naming — RESOLVED: Substrate** (INTENT #120): full
-  circle; the Mesh OS / Broomstick OS pin and the "Mind OS at v1" lock are
-  both superseded. **REOPENED at friction-round 3 (INTENT #129/#141)** —
-  Substrate is now the WORKING name; see the header note.
-- **Restart-signal semantics — deferred to a PHILOSOPHY** (INTENT #119): the
-  per-app idle/critical question (including benchmark-as-Idle) is not ruled
-  on here; a restart-interrupt-signal philosophy will be developed via the
-  critic pattern (Opus proposes, Fable critiques, Opus synthesizes) in a
-  dedicated harness plugin for working on substrate. Benchmark-as-Idle
-  stands **applied provisionally, pending that philosophy**. →
-  `components/supervision.md` concern 3, `components/inference.md` concern 4.
-- **Org's graph home — RESOLVED: KG** (INTENT #121): "Org's
-  self-restructuring knowledge graph definitely belongs in the KG service";
-  `db` keeps only flat relational metadata. KG's charter explicitly gains:
-  services can add new node types, schemas, version control — and "assume
-  that every service will be using the knowledge graph." →
-  `components/kg.md` charter, `components/org.md` (since friction-round 3 a
-  tombstone — INTENT #121 carries forward in its "What org IS" section).
-- **NEW candidate crate: `onion` — schema-delta layering** (INTENT #122): a
-  delta language over schema templates, flatten-on-template-update,
-  residual deltas; applicable beyond KG (YAML, JSON schema). Captured as a
-  requirements-only stub; **a dedicated KG-templating discussion round is
-  REQUIRED before any design.** **RENAMED `schema` + upgraded to nested
-  inheritance at friction-round 3 (INTENT #131)** — see below. →
-  `components/schema.md`, `components/kg.md` concern 3 note, and the tree
-  below (candidate, placement undecided).
-- **Coordinators — elevated to a first-order concept** (INTENT #123):
-  dedicated discussion required; recorded, not designed. →
-  `components/projects.md` design note + open questions, and the open
-  questions below.
-- **Process law for the next scaffolding run** (INTENT #124): boring
-  decisions only; see standing principle 11.
-- **Handlers no-net-by-default — BLESSED** (INTENT #125): "Fascinating
-  idea. I like it. I'm OK with that" — including the weaker
-  declared-not-enforced cloud caveat. → `components/execution-engine.md`
-  concern 7 + Friction #3/#5.
-- **Third-party tools + browser-as-a-tool** (INTENT #126): a future `tools`
-  concept; browser explicitly a third-party tool, NOT a first-order crate;
-  KG around tool uses and feedback; the don't-reinvent principle joins the
-  standing principles (principle 12). → placeholder section.
-- **THE ENDGAME: topological owners** (INTENT #127): recorded
-  verbatim-grade, deliberately NOT designed. → `components/org.md` and the
-  placeholder section.
-- Newly open (recorded, awaiting their own rounds): the restart-signal
-  philosophy (INTENT #119, critic-pattern plugin); the KG-templating /
-  `onion` discussion round (INTENT #122); the coordinators discussion
-  (INTENT #123) — coordinator-per-workspace, workspaces possibly pulled out
-  on top of VDB, coordinator-as-a-service, coordinator compaction ("compact
-  the thread and basically lose nothing"), and the
-  git+projects+environments+coordinators elegance problem ("a bunch of
-  disparate things" that must be made elegant together); and the owners
-  open questions (INTENT #127, listed in the placeholder section).
-
-## Friction-round 3 — operator answers folded in (2026-07-20, INTENT #128–#141)
-
-The third clarification round. Dispositions (detail and verbatim rationale
-live in the named files):
-
-- **`db serve` — UNFROZEN, ACCEPTED** (INTENT #128, resolving #115)
-  **[since SUPERSEDED at the re-spoken round, INTENT #167 — sessions moved
-  to vdb, db has no daemon; see the re-spoken section]**: "it
-  actually does make sense to have a session concept with a headless
-  stateful daemon running as part of db." Division clarified: **VDB = the
-  virtualization layer** (same access to databases regardless of
-  environment/underlying technology), **delegating to db** so the same
-  tools aren't defined twice; **VDB owns statement tracking, cleanup, and
-  session management.** All round-1 FREEZE annotations removed. →
-  `components/db.md` concern 1, `components/vdb.md` concern 7,
-  `contracts/vdb-db.md`, `contracts/db-control-plane.md`,
-  `contracts/db-inference-init.md`.
-- **RENAME `ccd` → `cc`** (INTENT #131): "They're all daemons — we don't
-  need this one to be special. It's just cc, not the ccd." File renames:
-  `components/ccd.md` → `cc.md`; contracts `rollup-ccd` → `rollup-cc`,
-  `ccd-events` → `cc-events`, `ccd-escalation` → `cc-escalation`,
-  `ccd-projects` → `cc-projects`, `org-on-ccd` → `org-on-cc`, `spend-ccd`
-  → `spend-cc`, `agents-ccd` → `agents-cc`. Naming-history notes kept in
-  each file; `wave2-plan.md` keeps the old names as history.
-- **RENAME `onion` → `schema`, upgraded** (INTENT #131): "we'll just call
-  it schema. Our crate for managing schemas with versions and layering.
-  One boring tool for schema management, used within all the other
-  services." Model upgraded from single-layer template+delta to **NESTED
-  inheritance to arbitrary depth** ("this schema inherits from that schema
-  and applies these migrations, to arbitrary depth"). Accepted as a
-  concept; placement still undecided; the KG-templating discussion round
-  is still REQUIRED before design. → `components/schema.md`,
-  `components/kg.md` concern 3 note.
-- **`org` crate DISSOLVED — orgs are emergent** (INTENT #132): "We don't
-  need an org crate. Org is emergent — it just is a bunch of coordinators.
-  Maybe in the future an org node with a specific owner attached, like the
-  chief in the agentic-business idea." Org ≈ a knowledge graph linking
-  coordinators with typed edges (reports-to, delegates-to,
-  may-create-sub-coordinators), living ON kg (INTENT #121 unchanged).
-  `org.md` is now a tombstone-with-content; the L6 tree drops `org`;
-  `org-on-cc` survives as a shaped-for record only. → `components/org.md`,
-  `contracts/org-on-cc.md`.
-- **Coordinator = owner; the concept becomes a MINI-HARNESS** (INTENT
-  #130/#133, carrying #127's owners endgame): "They are the same thing."
-  Multi-threaded (one human thread + persistent per-message threads), an
-  HTTP-like message protocol to a workspace coordinator, broadcast to
-  sibling threads in the same space, messaging + workspace construct +
-  compaction built in; workspaces stay AS-IS; per-node-TYPE directory
-  structures tracked within the `schema` service; the archetype wants a
-  grounded name (deva/angel-class, "grounded, not mystical"). Recorded
-  verbatim-grade as a **DISCUSSION-REQUIRED first-order concept, not
-  designed**. → `components/org.md` (the concept's home), the placeholder
-  section below.
-- **Layer-6 purpose statement** (INTENT #134): "We need a bunch of boring
-  services, but one of those boring services enables the future of mind
-  work. That's what we're aiming towards at the layer-6 level." → the L6
-  section below.
-- **KG distribution: distributed-everywhere may be a HARD constraint**
-  (INTENT #135): "This is a distributed graph — it needs to be accessible
-  from every mesh node... keeping it distributed might have to be a hard
-  constraint. But maybe I'm misunderstanding the question — come back to
-  this." The wave-2 home-node + offline refuse/branch model **NEEDS
-  REVISITING** against it — flagged as a REQUIRED KG discussion item
-  (alongside the templating round), deliberately NOT redesigned now. →
-  `components/kg.md` concern 4 flag.
-- **Artifacts reframed: objects with attributes AND METHODS** (INTENT
-  #136): schematized graph nodes whose distinguishing value is **agent
-  interaction** — tools attached to items, visible only when the artifact
-  comes into scope; used by the `agents` service. The standing question
-  recorded: "is there anything useful in artifacts we can't get from the
-  knowledge graph directly?" → `components/artifacts.md` reframe section.
-- **Custom agents do NOT route through cc** (INTENT #137): "Custom agents
-  might call OpenRouter, might call the inference tool — they're not
-  necessarily going to call cc." cc is for the **full Claude Code agent
-  shape**; the brokered-through-cc lean is superseded. →
-  `components/agents.md`, `contracts/agents-cc.md`, `contracts/llm-calls.md`,
-  `components/cc.md` routing addendum.
-- **Error-taxonomy migration: NOW** (INTENT #138): "We're going to do
-  everything before we even test it. There's no production use of it yet...
-  we're going to build it correctly." Existing flat leaves migrate in ONE
-  sweep at skeleton time; no bridge period. → `components/types.md`.
-- **BIG unification idea: mesh messaging on schema inheritance** (INTENT
-  #139): "the ENTIRE messaging protocol in the mesh could be done using
-  schemas and schema inheritance." Recorded as a discussion/design item for
-  the next pass — NOT applied to the authored contracts. →
-  `components/schema.md`.
-- **Rollup moves toward KG** (INTENT #140): plugin-rollup "more like a
-  graph... built on top of schemas and KG"; prompt fragments possibly stay
-  file-based; "skip directly to rollup being built on top of KG" recorded
-  as direction, design deferred. → `components/rollup.md` concern 8 note.
-- **Naming reopened** (INTENT #129/#141): Substrate (OS) vs (Mind) Temple /
-  temple-in-another-language; criteria: simple, transcription-friendly,
-  non-cliche, resonant, possibly unfamiliar. **Substrate = working name;
-  final name open.** → the header note.
-- Newly open / still open after this round: the coordinators discussion
-  round (INTENT #123, now enriched by #130/#132/#133 — the mini-harness,
-  the archetype name, per-node-type directory structures); the
-  KG-templating / `schema` design round (INTENT #122/#131) plus the KG
-  distribution-constraint revisit (INTENT #135); the INTENT #139
-  schema-unification round; the rollup-on-KG design pass (INTENT #140);
-  and the final name (INTENT #141).
-
-## Re-spoken round — operator answers folded in (2026-07-21/22, INTENT #161–#171)
-
-The vocabulary-correction round (after the coordinator/seed rounds, INTENT
-#142–#160, whose records live in the INTENT ledger). Dispositions — detail
-and verbatim rationale live in the named files:
-
-- **Vocabulary NAILED DOWN** — see the canonical vocabulary block at the top
-  of this file (landscape LOCKED as graph name; seed = shared memory only;
-  workspace = per-thread ephemeral; bundle LOCKED; chassis LOCKED; threads
-  interactive-or-headless; topological-node name OPEN, keeper leading).
-- **THE AUTHORITY NODE — REOPENED; the blessing-shaped framing is
-  WITHDRAWN** (INTENT #163) — see the dedicated subsection below.
-- **gc ABSORBED INTO vfs** (INTENT #166, Q9): "garbage collection is
-  actually a spectrum — mark-for-removal, move to another device, cold
-  storage; maybe take it apart and reuse pieces." gc is no longer a
-  standalone crate: it becomes an **internal module/spectrum of vfs**;
-  the built `lib/gc` pieces may be reused. → `components/gc.md`
-  (tombstone-with-content), `components/vfs.md` concern 5,
-  `contracts/vfs-gc.md` (internal note).
-- **db-vs-vdb session home — DECIDED: sessions live in VDB; db returns to
-  a pure CLI tool with no daemon** (operator delegated the pick, INTENT
-  #167: "just pick one"). Supersedes the `db serve` daemon (INTENT
-  #128's division stands otherwise: vdb owns statement tracking, cleanup,
-  session management). → `components/db.md`, `components/vdb.md` concern 7,
-  `contracts/vdb-db.md`.
-- **Artifacts — the other half of the landscape** (INTENT #165): the
-  landscape holds topological nodes AND artifacts; artifact TYPES are
-  schemas, directly inspectable/editable (Python-class analogy) so agents
-  improve a type's skills/methods over time; an artifact's bundle appears
-  when it comes into sight; **everything in the landscape gets targeted
-  rollup**. → `components/artifacts.md` (rewritten).
-- **spend — CONFIRMED, anchored to landscape topological nodes** (INTENT
-  #166, Q10): per-region spend rollups; sources = OpenRouter key usage
-  (keys attachable to nodes or node+environment combos) and Claude Code
-  usage via cc. `openrouter-mgmt` folds INTO spend. Loose end recorded
-  (INTENT #170): CC reports per-run costs but Max-plan runs are effectively
-  free — spend must represent that honestly. → `components/spend.md`,
-  `components/openrouter-mgmt.md` (absorbed note).
-- **agents — STAYS as a crate** (INTENT #167): a conceptual placeholder for
-  CUSTOM agent harnesses (OpenRouter + inference data contracts). Agents ≠
-  threads-starting-from-seeds — that is the topological-node (keeper)
-  concept. → `components/agents.md`.
-- **schema settlements** (INTENT #166): multiple-inheritance conflicts =
-  **explicit manual resolution at schema initialization, no quiet
-  overwrites (LOCKED, Q16)**; the gravity-well worry is BLESSED away — "it's
-  okay that schema is getting big; simple boring thing, many surfaces" —
-  with the two-engines rule standing (**rollup composes text; schema
-  migrates structure**). → `components/schema.md`.
-- **S2T / T2S are inference MODALITIES** (INTENT #157/#166, Q12): ML-style
-  naming (not STT/TTS); they ride `inference` as modalities with a
-  **warm-model policy** option (kept loaded for always-on voice), not as
-  separate mesh services.
-- **DC (data contracts) — NO SERVICE** (INTENT #151/#166, Q11): the data
-  contracts are EMERGENT from **chassis + schema + the generated Rust
-  struct libraries** — no `dc` crate, no daemon.
-- **queues-as-pubsub-with-persistence consolidation — NEEDS-EXPLANATION**
-  (INTENT #167): the proposed consolidation "didn't seem very boring" —
-  explain or discuss before it goes anywhere; NOT folded in.
-- **environments — RESERVED for a dedicated deep-dive round** (INTENT
-  #164): a project has 1+ repos; repos have branches; branches deploy into
-  cloud environments with their own secrets/resources; environments attach
-  to branches AND topological nodes. "We'll have to turn our full attention
-  to it. We're not there yet." No design here.
-- **NEW L6 placeholders: `ui-server` + `aui-client`** (INTENT #168): the
-  operator has ALREADY refactored the harness AUI into ui-server +
-  aui-client with a layered state-machine library between them (aui-client
-  runs on the walk-along Pi). Data-contract placeholders only. →
-  `components/ui-server.md`, `components/aui-client.md`.
-- **Dogfooding + self-seeding** (INTENT #169): the OS gets its own
-  topological node; seed the knowledge graph from the beginning with
-  information about itself (the repo structure) **deterministically** —
-  "don't just write it into the code and hope it doesn't drift" — so
-  installers keep full control to extend.
-- **Process** (INTENT #163/#171): no conclusions-for-blessing without
-  discussion (see below); next up is the FOCUSED NAMING ROUND, then back
-  into design.
-
-### The authority node — REOPENED (INTENT #163; supersedes the INTENT #157 conclusion)
-
-The INTENT #157 framing ("we do kind of need an authority node… all it
-basically has to do is lock conditions," cloud-resident, plus a chassis
-"blessing queue") was laid out conclusions-first and is **WITHDRAWN pending
-a dedicated discussion**. This was the operator's *third* process pushback
-on the same shape: "You can't lay out conclusions and ask me to bless them
-without discussing the arc… each of these rounds needs to be more
-discussion-oriented." **Process rule, standing: no conclusions-for-blessing
-without discussion.**
-
-The operator's alternative paradigm, verbatim-grade (INTENT #163):
-
-> The thing formerly called authority node: NOT that name — it never blesses
-> spending; "all it ever was is like the master in a master/replica database
-> scheme — a node that determines if merges succeeded." ALTERNATIVE: do
-> write-blocking/blessing on a **single node via semaphore within the
-> mesh**; when two disjoint graphs merge, **ONE node in the newly-joined
-> network steps through the merge and asks each affected application "how do
-> you want to handle this?"** — pushing merge resolution back to services —
-> "then there is no need for a central authority node ever. We just have to
-> talk about it."
-
-The never-does list, recorded: it **never makes or blesses spending
-decisions** — it was only ever a merge/replication master. (If an
-authority-ish node does end up existing, the narrow lock-conditions job
-list is acceptable — but that is for the dedicated discussion, not assumed
-here.) No component carries an authority-node design; `locks.md`'s
-partition-merge machinery (its concern 6) is the closest existing surface
-and is where the semaphore-based alternative would be discussed.
+**Governing precedence:** INTENT.md #1–#173 (verbatim operator truth) wins over
+all scaffold text; the wave-3 ledger's SETTLED index is the derived guardrail;
+contract files win over component-file proposals; the canonical vocabulary block
+wins over any older wording; `wave2-plan.md` remains the wave-2 module-inventory
+record (retains pre-rename `ccd`/`onion`/`org` vocabulary as history).
 
 ## The OS layering — final component tree
 
-43 live modules, 7 layers (44 until friction-round 3 dissolved `org`,
-INTENT #132; the re-spoken round then absorbed `gc` into `vfs` and
-`openrouter-mgmt` into `spend` (−2) and added the `ui-server`/`aui-client`
-placeholders (+2), INTENT #166/#168 — net 43). A module may only depend on
-its own layer's peers
-and lower layers; every cross-app call goes through the local mesh daemon
-(single-port locality, `:3649`); in-process linking across app boundaries is
-forbidden (INTENT #29), shared libs excepted (compiled in — `types`,
-`tailscale-query`, `mesh-client`, `execution-engine`). Kinds: app-crate ·
-internal-lib(parent) · shared-lib · app-frontend · stub.
+A module may only depend on its own layer's peers and lower layers; every
+cross-app call goes through the local mesh daemon (single-port locality,
+`:3649`); in-process linking across app boundaries is forbidden (INTENT #29),
+shared libs excepted (compiled in — `types`, `chassis`, `execution-engine`).
+Kinds: app-crate · internal-lib(parent) · shared-lib · app-frontend · stub.
 
 ```
-L0 foundation      types (shared-lib)             tailscale-query (shared-lib)
-L1 mesh kernel     mesh-core (bin/mesh, :3649)    pubsub-relay (lib)
-                   network-topology (lib)          mesh-client (shared-lib)
+L0 foundation      types (shared-lib)
+                   [tailscale-query — ABSORBED into network-topology (L1),
+                    wave-3 F9a; tombstone-with-content]
+
+L1 mesh kernel     mesh-core (bin/mesh, :3649 — absorbs dashboard-serving:
+                   HTTP + kv-read dashboard hosting; universal mediation,
+                   promises, streaming rules, mesh time-authority)
+                   pubsub-relay (lib — configurable lossiness + intermediate
+                   cache)      network-topology (lib — absorbs tailscale-query
+                   as its `query` submodule + the time-measurement half)
+                   chassis (shared-lib — the daemon-wrapper; ABSORBS mesh-client)
+
 L2 state + OS svcs replicated-kv    service-registry (THE wiring seam)
-                   locks            queues          cron
-                   supervision      completion-router
-                   dashboard-serving                aws (app-crate)
-L3 storage plane   vfs (app; gc ABSORBED as an internal module — re-spoken
-                   round, INTENT #166: the removal spectrum mark-for-removal /
-                   move-between-devices / cold-storage)      secrets (app)
-                   [gc — ABSORBED into vfs; gc.md is a tombstone-with-content;
-                    lib/gc pieces may be reused]
-L4 data+execution  db (app — pure CLI tool, NO daemon; sessions live in vdb —
-                   re-spoken round, INTENT #167)
-                   vdb (app; "stack" = the pattern name; owns db sessions)
-                   execution-engine (shared-lib)   kg (app)   rollup (app)
-L5 services/apps   inference (app) ── store engine scheduler models cache
-                                      telemetry benchmark api (8 internal libs)
-                   repo (app)       cc (app)      dashboard (ui/dashboard)
-L6 org plane       projects  artifacts  cicd
-   (STUB track)    environments (RESERVED for its own deep-dive — INTENT #164)
-                   spend (openrouter-mgmt ABSORBED — re-spoken round)
-                   agents (custom-agent-harness placeholder ONLY — INTENT #167)
-                   aui  ui-server  aui-client (NEW placeholders — INTENT #168)
-                   (design notes + anticipated contracts; "not implementing now")
-                   [org — DISSOLVED, friction-round 3, INTENT #132: emergent,
-                    "just a bunch of coordinators"; org.md is a tombstone-with-
-                    content holding the coordinator/owner concept — now the
-                    topological-node/keeper concept, see the vocabulary block]
-                   [openrouter-mgmt — ABSORBED into spend; tombstone-with-content]
+                   locks            queues (absorbs cron as a Schedule trigger)
+                   supervision      completion-router      aws (app-crate)
+                   [cron — ABSORBED into queues; dashboard-serving — FOLDED into
+                    mesh-core; both tombstones-with-content]
 
-candidate          schema (schema management: versions + layering, nested
-   (placement      inheritance to arbitrary depth — INTENT #122/#131; renamed
-    undecided)     from `onion` at friction-round 3; accepted as a concept,
-                   placement undecided; requirements-only stub; the dedicated
-                   KG-templating discussion round is still required first)
+L3 storage plane   vfs (app; gc ABSORBED as an internal removal-spectrum module —
+                   mark-for-removal / move-between-devices / cold-storage)
+                   secrets (app — use-without-seeing, keeps ALL versions)
+                   [gc — ABSORBED into vfs; tombstone-with-content]
+
+L4 data+execution  db (app — pure CLI tool, NO daemon; sessions live in vdb)
+                   vdb (app; "stack" = the pattern; owns db sessions + provenance)
+                   schema (app — versions + nested/multiple inheritance, codegen
+                   → Rust libs, DC-emergent surface)     kg (app — landscape
+                   substrate; distributed-everywhere flagged)
+                   rollup (app — toward KG/schema)   execution-engine (shared-lib)
+
+L5 services/apps   inference (app) ── store engine scheduler models cache
+                                      telemetry benchmark api (8 internal libs);
+                                      S2T/T2S are inference MODALITIES (#166 Q12)
+                   repo (app)       cc (app)      dashboard (ui/dashboard)
+
+L6 landscape /     keeper (NEW — the topological node; REPLACES org; the wave's
+   org plane         central L6 conceptual design; NO crate this pass)
+   (conceptual /    projects (a landscape VIEW / primary keeper TYPE — NOT a
+    STUB track)      crate; the .mind workspace-schema migration home)
+                   artifacts (the OTHER HALF of the landscape — types are schemas,
+                     inspectable/editable; bundle-appears-in-sight)
+                   spend (openrouter-mgmt ABSORBED; anchored to landscape keepers)
+                   agents (custom-agent-harness placeholder ONLY — #167; never cc)
+                   environments (RESERVED for its own deep-dive — #164)   cicd (stub)
+                   aui   ui-server   aui-client (AUI split placeholders — #168)
+                   [org — DISSOLVED (#132): emergent, "a bunch of keepers";
+                    org.md is a tombstone-with-content, design-lineage → keeper.md]
+                   [openrouter-mgmt — ABSORBED into spend; tombstone-with-content]
 ```
 
-Notable placements (full reasoning in `wave2-plan.md` §1): `aws` sits at L2
-because the replication plane, VFS overflow, VDB cloud target, and secrets
-push all consume it; `gc` — formerly at L3 beside `vfs` (dual-role: embedded
-lib in inference + per-node `:8430` daemon VFS calls) — is now an internal
-module of `vfs` (re-spoken round, INTENT #166; `lib/gc` remains a reusable
-piece for inference's embedded consumers); inference's per-node loopback
-API convention is **`:8420`** (real per-node endpoints resolve via the
-registry; `:3649` is the only mesh port).
+Notable placements: `aws` sits at L2 because the replication plane, VFS overflow,
+VDB cloud target, and secrets push all consume it; `schema` sits at L4 (the
+gate that once deferred it — "the dedicated KG-templating round" — is LIFTED,
+batch 4); `keeper` is L6 and conceptual only (no crate, #148 beat 1 / directive
+#173c). Inference's per-node loopback convention is `:8420`; `:3649` is the only
+mesh port.
 
-## Final contract graph — the 71 live contracts
+## Final contract graph
 
-Grouped by cluster; every name is a file in `scaffold/contracts/`. Direction
-and payload detail live in the files.
+Grouped by cluster; every name is a file in `scaffold/contracts/`. Direction and
+payload detail live in the files (their Reconciliation notes are authoritative).
 
-**Cross-cutting protocols (one shared document, every service a party —
-surface-schema precedent):**
-`service-lookup` (register/resolve — THE wiring seam) · `pubsub-protocol`
-(the standard WS pub/sub envelope) · `restart-protocol` (two-way 4-level
-graceful-restart ladder + interruptibility + port-handoff) · `queues-api`
-(typed events → declarative triggers → handlers) · `locks-api` (distributed
-semaphores + the partition-merge error) · `cron-api` (on-node-N / anywhere
-schedules) · `surface-schema` (the boring render+interaction schema every
-service publishes).
+**Cross-cutting protocols (one shared document, every service a party):**
+`service-lookup` (register/resolve — THE wiring seam) · `mesh-transport`
+(**NEW, wave-3** — the success/error/promise envelope switch + framing layer,
+#154; the byte-level layer ~12 contracts bind to) · `pubsub-protocol` (the
+standard WS pub/sub envelope + configurable lossiness) · `restart-protocol`
+(two-way 4-level graceful-restart ladder + interruptibility + port-handoff) ·
+`queues-api` (typed events → declarative triggers → handlers; **absorbs the
+tombstoned `cron-api`** as a `Schedule` trigger source) · `locks-api` (distributed
+semaphores + the partition-merge error) · `surface-schema` (the boring
+render+interaction schema every service publishes) · `schema-query` (**NEW,
+wave-3** — the runtime schema / generated-type query surface, DC-emergent, #166
+Q11 / #150 beat 16).
 
 **Mesh kernel + replication plane:**
-`kv-replication` (the ONE anti-entropy protocol for all kernel state;
-supersedes `registry-replication`) · `tailscale-status` (tailscale-query →
-network-topology, SOLE consumer — completion-router dropped at the contract
-round) · `network-events` (peer on/off + self-connectivity feed) ·
-`aws-mesh` (the replication plane's S3/AWS leg) · `kernel-confidence`
-(scheduler → telemetry kernel reads).
+`kv-replication` (the ONE anti-entropy protocol for all kernel state; supersedes
+`registry-replication`) · `network-events` (peer on/off + self-connectivity
+feed) · `aws-mesh` (the replication plane's S3/AWS leg) · `kernel-confidence`
+(scheduler → telemetry kernel reads). *(`tailscale-status` is now a
+network-topology-INTERNAL surface — tailscale-query absorbed, wave-3 F9a — the
+file records it as the internal record.)*
 
 **Completion data plane:**
 `v1-completion-api` (the `/v1` REST+WS surface, forwarded transparently) ·
 `node-state-poll` (router's reconcile reads) · `inference-events` (per-node
-pub/sub lifecycle stream) · `llm-calls` (cc → inference, metering-shaped).
+pub/sub lifecycle stream, incl. modality/warm-model events) · `llm-calls`
+(cc → inference, metering-shaped).
 
 **Observability plane:**
-`dashboard-feed` (browser fan-out + REST + static hosting) · `gc-events`
-(party change: the emitter is now vfs's internal gc module — re-spoken
-round) · `cc-events` · `system-state` (SystemState incl. the wave-2
-`effective_max_concurrent`).
+`dashboard-feed` (browser fan-out + REST + static hosting — served by mesh-core
+now) · `gc-events` (emitter is vfs's internal gc module) · `cc-events` ·
+`system-state`.
 
 **Storage plane:**
-`vfs-mesh` · `vfs-content` (bulk content bytes, pull-driven — added by the
-contract round) · `vfs-gc` (**now vfs-INTERNAL** — gc absorbed into vfs at
-the re-spoken round, INTENT #166; the file carries the module's internal
-surface as record) · `aws-vfs` (S3 overflow tier) ·
-`gc-managed-dirs` (embedded-gc in-process surface — `lib/gc` stays a
-reusable piece) · `secrets-mesh` ·
+`vfs-mesh` · `vfs-content` (bulk content bytes, pull-driven) · `vfs-gc` (**now
+vfs-INTERNAL** — gc absorbed into vfs; the file carries the module's internal
+surface) · `aws-vfs` (S3 overflow tier) · `gc-managed-dirs` (embedded-gc
+in-process surface — `lib/gc` stays a reusable piece) · `secrets-mesh` ·
 `db-secrets` · `repo-secrets` (secret↔workflow injection-on-push — THE v1
-capability) · `rollup-secrets` · `vdb-secrets` · `aws-secrets` (SM push
-design-only + creds + S3 CSE keys + genesis rule) · `openrouter-secrets`
+capability) · `rollup-secrets` · `vdb-secrets` · `aws-secrets` · `openrouter-secrets`
 (stub-track) · `secrets-environments` (stub-track).
 
 **Data & execution plane:**
-`db-control-plane` · `db-inference-init` · `vdb-db` (was the `db serve`
-session protocol; **SUPERSEDED-as-wire at the re-spoken round, INTENT #167 —
-sessions live in vdb, db is a pure CLI with no daemon; the file records
-vdb's internal session surface**) · `vdb-vfs` (SQLite-file-in-VFS;
-renamed from `stack-vfs`) · `vdb-mesh` (registration/catalog/locks; renamed
-from `stack-mesh`) · `aws-vdb` (RDS+Lambda target, design-only v1) ·
-`kg-vdb` (KG built ON VDB) · `kg-vfs` (node→file pointers) · `kg-mesh` ·
-`kg-api` (the KG consumer surface — added by the contract round) ·
-`rollup-mesh` (trigger payload-assembly) · `rollup-vfs` · `rollup-cc` ·
-`cc-escalation` (DLQ + loop-depth-exceeded investigations, one shape).
+`db-control-plane` · `db-inference-init` · `vdb-db` (**sessions live in vdb, db
+is a pure CLI with no daemon — the file records vdb's internal session surface**,
+#167) · `vdb-vfs` (SQLite-file-in-VFS; renamed from `stack-vfs`) · `vdb-mesh`
+(renamed from `stack-mesh`) · `aws-vdb` (RDS+Lambda target, design-only v1) ·
+`kg-vdb` (KG built ON VDB) · `kg-vfs` (node→file pointers) · `kg-mesh` · `kg-api`
+(the KG consumer surface) · `rollup-mesh` (trigger payload-assembly) · `rollup-vfs`
+· `rollup-cc` · `engine-exec` · `cc-escalation` (DLQ + loop-depth investigations).
 
 **Inference-internal (the node's crate contracts):**
 `store-access` · `engine-exec` · `model-ensure` · `kv-cache` ·
@@ -585,205 +228,190 @@ from `stack-mesh`) · `aws-vdb` (RDS+Lambda target, design-only v1) ·
 
 **Service/application plane:**
 `service-registration` (cc as registrant/resolver) · `agent-management`
-(spawn/track/signal/stream/reap) · `org-on-cc` (the maximalist-consumer
-read bundle — party dissolved at friction-round 3, INTENT #132; survives
-as the shaped-for record for the coordinator/owner concept) · `repo-vfs` ·
-`repo-environments` (v1-facing shape pinned
-despite environments being stub-track) · `cicd-repo`.
+(spawn/track/signal/stream/reap) · `org-on-cc` (the maximalist-consumer read
+bundle — party dissolved at #132; survives as the shaped-for record for the
+keeper concept) · `repo-vfs` · `repo-environments` (v1-facing shape pinned) ·
+`cicd-repo`.
 
 **L6 stub-track (anticipated contracts, content deferred):**
 `projects-vfs` · `projects-mesh` · `projects-kg` · `projects-rollup` ·
-`projects-vdb` · `projects-artifacts` · `cc-projects` · `spend-cc` ·
-`agents-cc` (Claude-Code shape only — INTENT #137) · `aui-mesh` ·
-`openrouter-spend` (party change: `openrouter-mgmt` absorbed into `spend`
-at the re-spoken round — the OpenRouter key-usage pull is now spend's own
-source adapter) · `environments-vdb`. (All seven former `*-ccd` names
-were renamed `*-cc` at friction-round 3, INTENT #131.)
+`projects-vdb` · `projects-artifacts` · `cc-projects` · `spend-cc` · `agents-cc`
+(Claude-Code shape only — #137) · `aui-mesh` · `openrouter-spend`
+(`openrouter-mgmt` absorbed into `spend` — the OpenRouter key-usage pull is now
+spend's own source adapter) · `environments-vdb`.
 
-**Tombstones (4):** `mesh-registry-read`, `registry-replication`,
-`stack-vfs`, `stack-mesh` — each file explains its supersession.
+**Tombstones:** `cron-api` (folded into `queues-api`), `mesh-registry-read`
+(gateway merge), `registry-replication` (superseded by `kv-replication`),
+`stack-vfs` / `stack-mesh` (renamed `vdb-vfs`/`vdb-mesh`) — each file explains
+its supersession.
 
-**Deliberately NOT contract edges** (locked rounds 4–5): all shared-lib
-consumption (`types`, `tailscale-query`, `mesh-client`, `execution-engine`) —
-internal library dependencies; `tailscale-status` is the one shared-lib API
-documented as a contract anyway (its public trait IS its contract — nature
-flag recorded in the file).
+**Deliberately NOT contract edges:** all shared-lib consumption (`types`,
+`chassis`, `execution-engine`) is internal library dependency, invisible in the
+contract graph by design.
 
 ## The wiring seam — service-registry + supervision
 
-**The runtime composition point is the mesh `service-registry`
-(`service-lookup`), executed by `supervision`.** Every service, at boot,
-registers its `slug -> {scheme, host, port, health_path}` against its LOCAL
-mesh daemon on `:3649` and resolves every dependency by slug — never a static
-URL. Records ride `replicated-kv` (leases + heartbeats + LWW tombstones), so
-"anywhere you access mesh is exactly the same."
+**The runtime composition point is the mesh `service-registry` (`service-lookup`),
+executed by `supervision`.** Every service, at boot via `chassis`, registers its
+`slug -> {scheme, host, port, health_path}` against its LOCAL mesh daemon on
+`:3649` and resolves every dependency by slug — never a static URL. Records ride
+`replicated-kv` (leases + heartbeats + LWW tombstones), so "anywhere you access
+mesh is exactly the same."
 
 - **Addressing classes:** `Singleton` (cc, kg, secrets…; `db` no longer
-  registers — it is a pure CLI tool with no daemon, re-spoken round) ·
-  `NodeScoped` (vfs legs — incl. its internal gc module, formerly the gc
-  `:8430` daemon — and per-node `inference` instances) · `FleetAlias` — a
-  **resolve-time policy** on the `inference` slug (→ local `:3649` →
-  completion-router), NOT a stored record. Per-node `inference` registration
-  is legal and IS the router's fleet membership (`resolve_all("inference")`)
-  — the concern-5 dispute resolved at the contract round
-  (`service-lookup.md` Reconciliation notes).
-- **Supervision executes the seam:** dependency-derived boot order (registry
-  stores `requires`; supervision topo-sorts and mesh STARTS local services),
-  the 4-level restart ladder (`restart-protocol`), port-handoff updates
-  (new port → health check → registry flip → drain old), minimal-restart
-  rolling updates. The mixed-version update protocol is **CONFIRMED**
-  (friction-round 1, INTENT #113): the restart-priority ladder IS the answer
-  — non-critical waits for idle; critical incompatible updates push to every
-  instance at high priority — plus the LOCKED sender-version-stamping
-  requirement (friction-round section above).
-- The assembler (skeleton phase) touches exactly this seam; each crate's
-  private composition root (`InferenceService::start`, mesh's ring layering)
-  is NOT the seam.
+  registers — pure CLI, no daemon) · `NodeScoped` (vfs legs incl. its internal
+  gc module; per-node `inference` instances) · `FleetAlias` (a resolve-time
+  policy on the `inference` slug → completion-router).
+- **Supervision executes the seam:** dependency-derived boot order, the 4-level
+  restart ladder (`restart-protocol`), port-handoff updates, minimal-restart
+  rolling updates. Mixed-version updates are CONFIRMED (#113): the restart-priority
+  ladder IS the answer, plus LOCKED sender-version stamping.
+- **Universal mediation (wave-3, #152):** EVERYTHING follows the loopback pattern
+  through the local mesh daemon; never service-to-service directly. If a target
+  is down, mesh restarts it and patches the message through. If a service can't
+  answer instantly, mesh returns a **promise**; the caller moves on; the value is
+  pushed back over WS. Every inter-service contract handles the promise case
+  (`mesh-transport` envelope: success / error / promise).
 
 ## Standing cross-cutting principles
 
-1. **INTENT wins.** Where scaffold text conflicts with the INTENT ledger
-   (#1–#171), INTENT governs. The canonical vocabulary block at the top of
-   this file wins over any older wording in component/contract files.
+1. **INTENT wins.** Where scaffold text conflicts with INTENT.md (#1–#173),
+   INTENT governs; the canonical vocabulary block wins over older wording.
 2. **Provenance is first-order** — healthcare-grade traces on every handler
-   touch; scoped per-project/per-database; VDB is its primary home; VFS
-   carries a lighter requirement.
-3. **Pairwise data contracts are the operating model** — any contract change
-   triggers a design session analyzing ripple effects.
-4. **Single-port locality:** every service talks only to its local mesh
-   daemon on `:3649`; mesh does all relaying. Per-node inference loopback
-   convention: `:8420`. In-process linking across app boundaries forbidden
-   (INTENT #29).
-5. **Boring layers on boring layers** — mesh utilities are internal libs,
-   never standalone services; replicated state is LWW (naive by blessing);
-   the HLC ratchet stands and is now exceeded by the mesh time-authority
-   requirement — mesh owns time (friction-round 1, INTENT #116; approach-
-   sketched in `mesh-core.md` concern 9).
-6. **Triggers are declarative** — filter expression + payload-assembly
-   template, registered as DATA; code lives only in handlers. One trigger
-   data model shared by queues and the execution-engine's two adapters.
+   touch; scoped per-project/per-database; VDB primary, VFS lighter.
+3. **Pairwise data contracts, mediated by mesh** — any contract change triggers a
+   design session analyzing ripple effects; DC is EMERGENT from chassis + schema
+   + generated Rust libs (no `dc` crate, #166 Q11).
+4. **Single-port locality + universal mediation** — every service talks only to
+   its local mesh daemon on `:3649`; mesh does all relaying, promises, and
+   patch-through-on-restart. In-process linking across app boundaries forbidden (#29).
+5. **Boring layers on boring layers** — mesh utilities are internal libs, never
+   standalone services; replicated state is naive LWW; the HLC ratchet stands
+   under the mesh time-authority requirement (mesh owns time, #116).
+6. **Triggers are declarative** — filter expression + payload-assembly template,
+   registered as DATA; code lives only in handlers. One trigger data model shared
+   by queues (incl. the absorbed `Schedule`/cron source) and the execution-engine.
 7. **No secret ever reaches an LLM** — use-without-seeing, `llm_safe`
-   fail-or-degrade, structurally enforced; rollup never resolves a raw
-   secret reference in LLM-bound content.
-8. **NO DOCKER locally, ever; SQLite-locally LOCKED** — Postgres exists only
-   as a cloud VDB target; containers, if ever, live only in AWS via `aws`.
-9. **Wire-struct version discipline** (types guardrail 4): additive-only,
-   `#[serde(default)]`, `#[serde(other)]` enum tolerance, explicit `v`
-   fields on persisted/replicated shapes — the qualifier on INTENT #45's
-   "no runtime version tracking for shared libs". PLUS the LOCKED
-   sender-version-stamping requirement (friction-round 1, INTENT #113):
-   every mesh-crossing message carries sender service name + version;
-   receiver version floors are catchable; one version of back-compat with a
-   please-update warning to the sender.
-10. **Naming guardrails:** the module is `vdb`, "stack" is the pattern;
-    "ripples" is RESERVED and names nothing in v1; `inference` will not be
-    renamed; `ccd` is now `cc` and `onion` is now `schema` (INTENT #131);
-    **landscape** is LOCKED as the topological-graph name (NOT the OS name),
-    **chassis** is LOCKED as the daemon-wrapper lib name, **bundle** is
-    LOCKED as the targeted-rollup product of any landscape node (re-spoken
-    round, INTENT #162/#166 — see the vocabulary block); the
-    topological-node name is OPEN with "keeper" leading; the system's
-    WORKING name is **Substrate** — the final name is OPEN (INTENT
-    #129/#141/#171, superseding #120's "resolved"; a focused naming round
-    is in progress).
-11. **Process law — boring decisions only (friction-round 2, INTENT #124):**
-    in the next scaffolding run, agents capture all open questions and make
-    BORING decisions only. "I want them to make boring decisions, and if a
-    decision is not boring, then we need to talk about it and figure out
-    which path is the most boring" — non-boring decisions escalate to the
-    operator, never get assumed.
-12. **Don't reinvent — leverage third-party tools (friction-round 2, INTENT
-    #126):** "we're building what's strictly necessary for our mind temple,
-    plus ways to enable agents to be leveraged further — take advantage of
-    third-party tools, we don't want to reinvent everybody else's work."
-    Concretely: the browser is a third-party tool under the future `tools`
-    concept, NOT a first-order crate (see the placeholder section).
+   fail-or-degrade; rollup never resolves a raw secret reference in LLM-bound content.
+8. **NO DOCKER locally, ever; SQLite-locally LOCKED** — Postgres exists only as a
+   cloud VDB target via `aws`; containers, if ever, live only in AWS.
+9. **Wire-struct version discipline** — additive-only, `#[serde(default)]`,
+   `#[serde(other)]` tolerance, explicit `v` fields on persisted/replicated
+   shapes; every mesh-crossing message carries sender service name + version;
+   receiver version floors are catchable; one version of back-compat + a
+   please-update warning (#113).
+10. **The two-engines rule** — **rollup composes text; schema migrates
+    structure.** Never a third engine (#166 F-2). schema's gravity-well is
+    BLESSED ("simple boring thing, many surfaces").
+11. **Naming guardrails:** the LOCKED vocabulary is **landscape / keeper / bundle
+    / workspace / chassis / threads** (see the vocabulary block); `inference`
+    will not be renamed; the module is `vdb` ("stack" = the pattern); `ccd`→`cc`,
+    `onion`→`schema` (#131); **`ripples` is RESERVED** and names nothing in v1;
+    the OS working name is **Substrate**, final name OPEN (OQ-7).
+12. **Process law — boring decisions only (#124/#173d):** agents capture all open
+    questions and make the single most BORING decision; anything non-boring is
+    escalated to a clarification-round beat, never assumed. When in doubt, choose
+    the placeholder that can be un-chosen with a one-line edit.
+13. **AUI never touches `~/code/substrate` directly (#1/#10);** reports are the
+    communication fabric (#2); no technical debt by design (#38); a crate is an
+    app, everything else a library (#22).
 
-## L6 / placeholder section
+## Open questions — the operator's ledger (32; align to §B of the intent ledger)
 
-**The L6 purpose statement (friction-round 3, INTENT #134):** "We need a
-bunch of boring services, but one of those boring services enables the
-future of mind work. That's what we're aiming towards at the layer-6 level."
+Full verbatim-grade records live in `substrate-v2/reports/wave3-intent-ledger.md`
+§B and in INTENT.md. Three tiers. **PARKED items MUST stay open — design AROUND
+them, do NOT decide them in scaffold (#173d).** The design-around placeholders
+live in ledger §C.
 
-The nine L6 modules (eight after `openrouter-mgmt` absorbed into `spend`,
-plus the two new `ui-server`/`aui-client` placeholders — re-spoken round,
-INTENT #166/#168; nine until `org` dissolved — friction-round 3, INTENT
-#132) are **design stubs with anticipated contracts, explicitly
-"not implementing now"** (INTENT #49/#51):
-`projects` (graphical FS over VFS via a KG graph; the confirmed .mind
-workspace-schema migration — heavy design notes retained), `artifacts`
-(the OTHER HALF of the landscape — artifact types are schemas, directly
-inspectable/editable; bundle-appears-in-sight; rewritten per INTENT #165,
-superseding the #136 emphasis), `environments` (stub-track yet
-load-bearing: it pins the v1-facing `repo-environments` shape; RESERVED
-for its own deep-dive round, INTENT #164), `cicd` (own-crate vs
-emergent-from-repo OPEN), `spend` (pull-shaped cost queries, anchored to
-landscape topological nodes — INTENT #166; absorbs `openrouter-mgmt`),
-`agents` (conceptual placeholder for CUSTOM agent harnesses — OpenRouter +
-inference data contracts; NOT the thread-from-seed mechanism, INTENT #167;
-never absorbs cc; custom agents call OpenRouter/inference DIRECTLY, INTENT
-#137), `aui` (voice interface over the mesh), `ui-server` + `aui-client`
-(the already-refactored AUI split, data-contract placeholders — INTENT
-#168).
-**`org` is NOT a module (INTENT #132):** "org is emergent — it just is a
-bunch of coordinators," probably a KG linking coordinators with typed edges
-(reports-to, delegates-to, may-create-sub-coordinators); possibly a future
-org NODE with a chief owner attached; `org.md` is its tombstone-with-content
-and the home of the coordinator/owner concept. **`ripples` — RESERVED
-TERM**: a future KG micro-agent system; not designed, not discussed, and the
-word must not name the execution-engine or any propagation mechanism.
-**App-development framework (INTENT #118, future scope, noted only):** "We
-need a whole system built around designing applications built on top of our
-mesh OS" — an application-development framework for the OS; not designed, not
-scheduled.
+**PARKED (6) — reserved for dedicated discussion; do NOT decide:**
+- **OQ-1. Authority node + the no-authority merge-delegation alternative.**
+  `[PARKED]` The "authority node" framing is WITHDRAWN; the boring provisional is
+  a merge-reconciler surface on `locks` that emits a conflict event per affected
+  application (#163). No `authority` crate, no blessing-family contract.
+- **OQ-2. Environments — full deep-dive.** `[PARKED]` `environments` stays a
+  requirements-only stub with thin edges to repo/vdb/secrets (#164).
+- **OQ-3. Queues-as-pubsub-with-persistence consolidation.** `[PARKED — "didn't
+  seem very boring"]` `pubsub-relay` stays purely lossy; the durable path is a
+  separable delegation to queues, marked NEEDS-EXPLANATION, not blessed (#167 SB7a).
+- **OQ-4. Bottom-up topography — actual structure + initial schemas per node
+  type.** `[PARKED]` Landscape = one open-world KG, project the primary keeper
+  type; `has-repo` is a candidate edge, not a resolution (#144/#167 F-3).
+- **OQ-5. Keeper↔bundle curation mechanism.** `[PARKED]` Curation = a KG write on
+  the bundle node at thread end; golden-rules-vs-metacognitive-pass undecided (#167 F-4).
+- **OQ-6. Keeper-to-keeper message + approval protocol.** `[PARKED]` Approvals
+  ride the durable queues (exactly-once); the propose→deliberate→approve state
+  machine itself is undesigned (#88/#127/#149 beat 10).
 
-**`tools` — third-party agent-tool integration (INTENT #126, future scope,
-noted only):** agents need tools, and GitHub hosts whole repos of agent
-tools (e.g. agent browsers). The **browser is explicitly a third-party tool
-under this general `tools` concept, NOT a first-order crate** — so versions
-can be swapped without re-engineering. Wanted alongside it: a KG around tool
-uses and feedback on tools. Governed by standing principle 12
-(don't-reinvent). Not designed, not scheduled.
+**RAISED-AND-UNANSWERED (21) — his questions, no answer:**
+- **OQ-7. OS name — final call.** `[OPEN]` Focused naming round queued (#171/#172).
+- **OQ-8. herald / marshal / console sub-role words.** `[OPEN]` keeper+bundle
+  locked; sub-role assignments unconfirmed (#162/#172).
+- **OQ-9. Org-chart seat types beyond technical.** `[OPEN]` Reference the
+  CareerCrafter agentic-org proposal; hierarchy of node types w/ multiple
+  inheritance (#150 beat 14).
+- **OQ-10. CC-free-on-Max spend accounting.** `[OPEN]` Max-plan runs are ~free;
+  spend must represent that honestly (#170).
+- **OQ-11. KG merge machinery under distributed-everywhere.** `[OPEN]` home-node +
+  offline model needs revisiting; kg-api offline behavior is a per-graph knob (#135).
+- **OQ-12. Multiple human threads per node — semantics.** `[OPEN]` collides with
+  one-per-workspace; conflict-event notification for the losing init delta (#146/#142).
+- **OQ-13. Mesh time-authority design.** `[OPEN]` HLC ratchet + mesh-owns-time
+  sketched; full design is fill-time (#116).
+- **OQ-14. The cloud node.** `[OPEN]` Lambda-behind-API-Gateway + S3 as "one
+  node"; not a physical device (#110/#157).
+- **OQ-15. .mind migration path.** `[OPEN]` Substrate for coordinator/artifact/task
+  migration undecided (queues+pubsub vs KG vs hybrid; synthesis leans hybrid, #87/FP9).
+- **OQ-16. git / branch / worktree / merge / environment charter.** `[OPEN — the
+  biggest structural gap]` What happens to a keeper's KG-homed workspace/bundle on
+  branch merge; projects↔repo binding (#123).
+- **OQ-17. Keeper as a crate this pass?** `[OPEN]` Directive #173b: conceptual
+  only, no crate this wave — leaning capture-now (answered by keeper.md).
+- **OQ-18. Compaction — which bundle version to re-seed from, what must be saved.**
+  `[OPEN]` "compact and lose basically nothing" (#123).
+- **OQ-19. Ownable node types beyond app/project/component.** `[OPEN]` boring core
+  adds sub_project/feature/service; past that is his call (#127).
+- **OQ-20. Types↔schema authority-of-record.** `[OPEN]` compiled vs runtime
+  types — which wins; codegen bridge keeps both reachable (#145).
+- **OQ-21. Schema as the universal messaging protocol.** `[OPEN]` #139 — its own
+  round; not applied to authored contracts.
+- **OQ-22. Name the "beautiful property."** `[OPEN]` each thread modifying future
+  inits; may be retired per #149 beat 5 — verify (#146).
+- **OQ-23. Tools registry + optional MCP surface.** `[OPEN]` in tension with the
+  harness no-MCP stance — surface it, don't silently import (#30/#126).
+- **OQ-24. Postgres-vs-no-Docker reconciliation.** `[OPEN]` prove SQLite-only is
+  sufficient first (#82/#91).
+- **OQ-25. Services contribute dashboard COMPONENTS — version architecture.**
+  `[OPEN]` leaning: components ride the schema/DC surface (#37/#158).
+- **OQ-26. App-development framework for the OS.** `[OPEN — future scope]` (#118).
+- **OQ-27. Restart-signal philosophy.** `[OPEN]` owned by the (now-existing)
+  substrate plugin via a critic pattern (#119).
 
-**Coordinators/OWNERS — ONE first-order concept, dedicated discussion
-required (INTENT #123, sharpened by #127/#130/#132/#133; recorded not
-designed) — VOCABULARY SINCE SUPERSEDED (re-spoken round, INTENT
-#146–#162): the concept is now the TOPOLOGICAL NODE on the landscape (an
-org-chart seat owning its region; agents spin up from its SEED — its
-persistent shared memory — into per-thread WORKSPACES; name OPEN, "keeper"
-leading, deva/bishop/coordinator/owner all superseded as names). Read the
-paragraph below through the vocabulary block at the top of this file:** friction-round 3 resolved that **coordinator and owner ARE THE
-SAME THING** (INTENT #130) — an owner is a coordinator with no human in the
-loop — and the org crate dissolved into this concept (INTENT #132). The
-round-2 sketch stands: coordinators attach to workspaces; workspaces often
-attach to worktrees; **one coordinator per workspace**. "I really only like
-to talk to coordinators — I don't like talking to individual agents at
-all." AUI threads = a coordinator with a workspace attached. Coordinators
-live inside a project on a branch; the workspace merges into other branches
-with it. **Coordinator compaction:** "I should be able to compact the
-thread and basically lose nothing." The round-3 sharpening (INTENT
-#130/#133): the concept becomes a **MINI-HARNESS** — multi-threaded (one
-human thread + persistent per-message threads), an **HTTP-like message
-protocol** for sending one message to a workspace coordinator, handled in a
-dedicated thread then **broadcast to sibling threads** in the same space;
-messaging capability, a dedicated workspace construct, and compaction built
-in. Each coordinator has its own KG and workspace; the workspace concept
-stays AS IT IS (the existing .mind construct); per-node-TYPE directory
-structures are tracked within the `schema` service; the archetype wants a
-grounded name (deva, angel — "a spiritual construct, an archetype — but
-grounded, not mystical"). The endgame flow (INTENT #127 — owners
-hierarchical over the topological map, propose → approve → dispatch →
-report with contract + version info) now lives under this concept. The
-git+projects+environments+coordinators interplay is still "a bunch of
-disparate things" that must be made elegant together. Full verbatim-grade
-record: → `org.md` (the concept's home) and `projects.md`.
+**PENDING HIS BLESSING (5) — designer positions that can ride the closing round:**
+- **OQ-28. Consolidation sign-offs** (seed-bishop Q5–Q12): projects→keeper type
+  (reverses #47), environments/artifacts keep-vs-fold, spend+openrouter, DC-emergent,
+  S2T/T2S — most applied provisionally, awaiting beat-by-beat blessing.
+- **OQ-29. Authority beats** (Q1–Q4): superseded by OQ-1's parking; the
+  sub-questions remain his once OQ-1 is discussed.
+- **OQ-30. Transport authorizations** (E2a/E2b, FP13): authorize the streaming
+  peer-link channel + the `mesh-transport` envelope spec; whether pub/sub ever
+  grows a retained store.
+- **OQ-31. Standing-law confirmations**: v-field discipline, benchmark-Idle,
+  mixed-version newest-wins, presigned-direct-to-S3, no-net-handlers, HLC ratchet
+  — mostly answered, awaiting explicit confirmation.
+- **OQ-32. cicd** — own crate vs emergent-from-repo; sibling vs child of
+  environments — stub-only this wave (FP18/#104).
+
+*Resolved-by-delegation (record, don't re-raise):* db-vs-vdb session home → VDB
+(#167); DC → emergent (#166 Q11); S2T/T2S → inference (#166 Q12); gc → vfs (#166
+Q9); spend+openrouter merged (#166 Q10); multiple-inheritance conflicts → explicit
+manual resolution (#166 Q16); org → emergent keepers (#132); gateway → mesh (#45);
+cron → queues (#56/#91); tailscale-query → network-topology (F9a);
+dashboard-serving → mesh-core (F9b); mesh-client → chassis (#156).
 
 ## History
 
-The round-by-round lock history (rounds 3–9: gateway merge, mesh internals,
-VDB/db/KG layering, SQLite-locally, secrets rename, declarative triggers,
-the aws crate, wave-2 authorization) that previously filled this file lives
-in git history (`git log -- scaffold/overview.md`, through commit `0c5d6fb`)
-and in the INTENT ledger; the surviving decisions are all encoded in the
-component/contract files above. `wave2-plan.md` §5 records the flags carried
-into the batches and their dispositions.
+The round-by-round lock history (wave-2 rounds 3–9; friction rounds 1–3; the
+re-spoken vocabulary round) lives in git history (`git log -- scaffold/overview.md`,
+through commit `c4a44f9`) and in the wave-3 intent ledger. `wave2-plan.md` records
+the wave-2 module inventory and the flags carried into the batches. The surviving
+decisions are all encoded in the component/contract files above.

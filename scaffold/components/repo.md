@@ -582,7 +582,7 @@ rough shape ONLY, no internals decided:
 - **`repo-keeper`/`repo-workspace` (repo ↔ keeper, via a thread's workspace) —
   NEW, candidate-only, no contract file yet.** Purpose: a keeper thread's
   workspace MAY bind a worktree (`WorktreeRecord.workspace`, concern 2) so a
-  coordinator working a branch has a materialized VFS checkout tied to its
+  keeper working a branch has a materialized VFS checkout tied to its
   ephemeral memory. Rough shape (not frozen): `BindWorkspace { repo, worktree,
   workspace_id }` / `UnbindWorkspace`; repo just records the id, has no opinion
   on workspace lifecycle. **MUST NOT decide:** who asserts the binding (the

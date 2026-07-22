@@ -406,7 +406,7 @@ after a GC TTL; sweep discipline mirrors service-registry's tombstone rules.
     `Acquire{slug: occurrence_id, threshold: 1}` shape cron used to call
     directly; cron itself no longer exists as a party, only `queues` does).
   - `execution-engine` (distributed trigger coordination — reaches locks over
-    the wire via its host app's mesh-client, since shared libs are not
+    the wire via its host app's chassis, since shared libs are not
     contract parties), `vdb` (promotion locks, INTENT #86), `vfs`/`gc`
     (lock-with-expiry on managed entries — candidate convergence, flagged).
   *(authored: scaffold/contracts/locks-api.md)*
@@ -449,7 +449,7 @@ after a GC TTL; sweep discipline mirrors service-registry's tombstone rules.
 
 Parent: mesh | Children: none. Module `lib/mesh::locks` (Ring 3), compiled into
 `bin/mesh`, never standalone (INTENT #54). The client half of `locks-api` is
-part of `mesh-client`'s thin surface, same as registry/pub-sub access.
+part of `chassis`'s thin surface, same as registry/pub-sub access.
 
 ## Thoroughness level
 

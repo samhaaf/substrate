@@ -397,7 +397,7 @@ data**, so it carries **light** provenance: the incoming request envelope's
 `correlation_id`/`causation_id` (from `types::Provenance`, already the one
 vocabulary — the `llm-calls`/`v1-completion-api` envelope carries it) is **stamped
 onto the completion row** so a completion traces back to the requesting agent/
-handler (cc, org, a VDB handler) without a per-touch ledger. This is a
+handler (cc, keeper, a VDB handler) without a per-touch ledger. This is a
 store-schema addition (an additive column on `completions`, threaded api →
 scheduler → store) recorded here as a **parent-level requirement** so the seam
 carries the field end-to-end; it is deliberately **light** (no per-token trace,

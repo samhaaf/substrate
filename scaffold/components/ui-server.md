@@ -157,7 +157,7 @@ AgentEvent::{ TurnCompleted, StateChanged, Exited } / cc-events  -> rendered to 
   holds the mesh-side connection, it is the natural place multiple attached
   `aui-client` frontends fan in/out of the same keeper thread — but the
   underlying "multiple human threads per node" question (INTENT #146 "why
-  not") and its interaction with one-coordinator-per-workspace (#123) is
+  not") and its interaction with one-keeper-per-workspace (#123) is
   ledger OQ-12, **OPEN**, not decided here; ui-server's contract is written
   to be agnostic to whichever answer lands (it addresses threads by
   `ThreadId`/`AgentHandle`, not by a fixed 1:1 device mapping).

@@ -2,7 +2,8 @@
 
 ## Parties
 - `cc` (L5, owner/author) `<->` cloud-code (Claude Code) agent processes.
-- Shaped-for consumers (read/drive by handle): `org` (via `org-on-cc`),
+- Shaped-for consumers (read/drive by handle): the emergent **keeper** layer
+  (via `org-on-cc` — historically "org," now keeper, INTENT #132/ledger #172),
   `agents` (via `agents-cc`), the `dashboard`, and `aui`.
 
 *(Stub-track file per this cluster's charter — cc.md authored a complete schema,
@@ -12,8 +13,9 @@ per-pair harmonization pins the CLI/WS split.)*
 ## Purpose
 Spawn / track / signal / stream / reap Claude Code processes by a **stable
 handle** — the multi-agent process-supervision substrate cc owns ("run all
-cloud code through the Marshall"). It is the foundation `org`'s inter-agent
-communication and the future `agents` umbrella layer on top; both address agents
+cloud code through the Marshall"). It is the foundation for the emergent
+**keeper** layer's inter-agent communication (historically "org," INTENT #132)
+and the future `agents` umbrella layer on top; both address agents
 by handle through this same surface. Every spawn is **admission-gated**: it
 carries a `BudgetGrant` from cc's declarative strategy engine that the
 supervisor enforces (INTENT #68).
@@ -61,7 +63,7 @@ restart if the child process survives (re-adopted by `(pid, spawn_cookie)`).
 a live handle). `CcError` lives in `types::error::cc`.
 
 **Version sensitivity:** MEDIUM. `AgentCmd`/`AgentEvent`/`AgentState` are
-wire-crossing (org, dashboard) → additive-only, `#[serde(other)]` on every enum,
+wire-crossing (keeper, dashboard) → additive-only, `#[serde(other)]` on every enum,
 `#[serde(default)]` on new fields. Handle format is an open string.
 
 ## Open questions

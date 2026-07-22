@@ -6,7 +6,8 @@
 - **Producers (two, one union shape):**
   - `mesh.queues` (L2) — authors the `DeadLetter` arm (dead-letter exhaustion).
   - `execution-engine` (L4, embedded in `vdb`/`kg`, reaching mesh through its
-    host's `mesh-client`) — authors the `LoopDepthExceeded` arm.
+    host's `chassis`, formerly `mesh-client`) — authors the `LoopDepthExceeded`
+    arm.
 - **Consumer / receiver:** `cc` (L5) — owns the receiver, the dedup ledger, and
   `EscalationAck`.
 

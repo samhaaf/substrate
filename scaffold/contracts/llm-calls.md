@@ -31,8 +31,8 @@ must carry so the harmonizer never mis-wires it:
 > (`v1-completion-api` or OpenRouter), and their metering story is open (see
 > agents.md).
 
-Kept cheap to fan out (coordinator-driven agents will call at higher volume)
-— same reason `v1-completion-api` stays the single completions entry point.
+Kept cheap to fan out (keeper-driven agents will call at higher volume) —
+same reason `v1-completion-api` stays the single completions entry point.
 
 ## Schema
 

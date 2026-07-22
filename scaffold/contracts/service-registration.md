@@ -17,7 +17,8 @@ records cc's particulars only.)*
   this record like any other.
 - cc resolves its dependencies by slug (`resolve("rollup")`, `resolve("db")`,
   `resolve(AnyNode{inference})` for metering reads) — never a static URL.
-- Registration/renewal ride `mesh-client` exactly as every service's do.
+- Registration/renewal ride `chassis` (formerly `mesh-client`) exactly as
+  every service's do.
 
 ## Reconciliation notes
 - No party proposed cc-specific wire beyond `service-lookup`'s; the contract

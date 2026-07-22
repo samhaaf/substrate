@@ -30,7 +30,7 @@ gateway's remaining real jobs:
 - `service-lookup` — gateway dropped from the party list (mesh doesn't register
   itself with itself for this role; the `dashboard` slug is mesh's own surface).
 - `network-events` — gateway-as-subscriber becomes mesh-internal (the fan-out
-  hub consumes topology in-process); external subscribers (cc, org) unchanged.
+  hub consumes topology in-process); external subscribers (cc, keeper) unchanged.
 
 Design content worth keeping (dynamic per-node subscription supervisor, the
 `proxy.rs::forward` reuse/dedup note, "aggregation must not become routing")
