@@ -1,7 +1,11 @@
 # replicated-kv
 
-**Status:** NEW (wave 2, batch 2 — the Fable seat carrying the wave's
-consistency risk). **Nesting:** internal lib of mesh (module
+**Status:** wave-2 design (batch 2 — the Fable seat carrying the wave's
+consistency risk), **light-refreshed wave 3** (intent-ledger unit
+`replicated-kv-locks-refresh`): added the `pubsub-relay` `IntermediateCache`
+candidate-tenant CONSUMER note (concern 10 + Relationships) — OQ-3 stays open,
+nothing here adopts a binding. No structural change to the version model,
+merge rule, sync protocol, or guarantees table. **Nesting:** internal lib of mesh (module
 `lib/mesh::kv`), Ring 2 in mesh-core's internal-layering architecture.
 **Consumes:** mesh-core Ring-0 seams only (`LocalStore`, `PeerTransport`) +
 `types`. **Consumed by:** Ring 3 (`service-registry`, `locks`, `queues`,
@@ -379,6 +383,27 @@ pairwise requirements, boot order), `cron/` (schedule entries), `config/`
 its per-node rollout state here when designed), `builds/` (the anticipated
 builds/tools registry cache, INTENT #30/#33 — anticipated, not designed).
 
+**Candidate tenant (OPEN, wave-3 batch-2 cross-reference, OQ-3 stays
+un-parked here) — `pubsub-relay`'s `IntermediateCache`.** `pubsub-relay.md`
+concern 6 designs a `SaveFailed` delivery class whose abstract cache seam
+(`save_failed(Undelivered)` / `take_for(RecipientKey, filters) -> Vec<Envelope>`)
+is, in INTENT #155's own words, *"a caching system for intermediate responses
+that is also distributed, like a KV store"* — the boring-provisional reading
+names replicated-kv as the default backing, e.g. a `pubsub-cache/` keyspace
+keyed by the same `RecipientKey { service, node }` pubsub-relay already
+defines, values a small envelope buffer, `expiry_events` off (retention/TTL is
+the cache's own policy, not a KV lease). **This is a CONSUMER note only — kv
+does not add the keyspace, does not implement `IntermediateCache`, and does
+not decide the binding.** `pubsub-relay.md` (batch 2) owns the seam and keeps
+it explicitly PARKED per ledger §C OQ-3 (*"MUST NOT decide... the mechanism is
+the operator's to settle"*) precisely because it is still weighing this
+kv-keyspace binding against enqueuing into `queues` instead (the un-merged
+wave-2 F5 alternative). If OQ-3 resolves toward kv, ordinary `KeyspaceConfig`
+(concern 10's own registration surface) covers it with no schema change to
+this file — no new mechanism, just a new tenant. If it resolves toward
+`queues`, this note is dead and pubsub-relay's seam swaps its binding with no
+change here either. Nothing below this paragraph assumes either outcome.
+
 ### 11. The API surface siblings consume (the exact seam)
 
 This expands mesh-core's `trait KvHandle` sketch ("get/put LWW,
@@ -452,6 +477,13 @@ omitting it and watching three siblings hand-roll racier versions.
   lib seams, not contract edges**: they consume `KvHandle` (concern 11).
   Their external contracts (`service-lookup`, `locks-api`, `queues-api`,
   `cron-api`) are theirs; this lib is invisible in them by design.
+- `pubsub-relay` (batch 2, sibling in-process lib) — **candidate consumer,
+  OPEN, not adopted (ledger §C OQ-3):** its `IntermediateCache` seam for
+  `SaveFailed` deliveries names replicated-kv as the boring-provisional
+  backing (concern 10's new candidate-tenant paragraph). Not a contract edge
+  either way — if adopted it is exactly `KvHandle::open_keyspace` +
+  `KeyspaceHandle::{get,put,scan}` like any other tenant; no new mechanism.
+  pubsub-relay owns whether/when this un-parks.
 - mesh-core Ring 0 — consumes `LocalStore` (SQLite handle) and
   `PeerTransport` (peer links); provides `KvHandle` up. Compiled-in seams
   per mesh-core.md.

@@ -3,7 +3,16 @@
 **Status:** wave-2 full design pass (batch 4, Fable seat), 2026-07-19 —
 SUPERSEDES the round-8 requirements-only stub (its verbatim requirement
 capture is honored in full below; nothing is dropped, everything is now
-designed). **Nesting:** top-level app-crate (`bin/kg` + `lib/kg`), L4 data &
+designed). **WAVE-3 FOLD (batch 4, INTENT #135/#142, ledger item c):
+distributed-everywhere is now the WORKING CONSTRAINT** (a graph is light
+metadata pointing into VFS → replicated to and readable from every node; a
+home node is NOT required for correctness). Correspondingly, concern 4 is
+**NARROWED**: the boring provisional is per-node/edge LWW rows +
+schema-wins-on-merge conflict events (#142); the **full distributed merge
+protocol — write topology, branch/merge transport, the offline-writes default,
+the home-node model — is OQ-11 OPEN and NOT designed this wave.** The wave-2
+Rules 3–4 / `OfflineWrites` machinery REMAINS in this file marked
+NEEDS-REVISITING, retained as discussion input, not as decided law. **Nesting:** top-level app-crate (`bin/kg` + `lib/kg`), L4 data &
 execution plane. **Locked layering honored throughout: VFS < VDB < KG**
 (INTENT #96). **Consumes:** vdb (graph databases), vfs (file-pointer
 validation), mesh (registration / `kg/` keyspace / locks / cron / pubsub via
@@ -34,9 +43,11 @@ graph↔template-version binding, and explicit template migration; **schema
 locking on nodes AND edges** with push-back-on-validation-failure to the
 calling service (rejected, never coerced); **node→VFS-file pointers with
 existence validation** (creation-time and sweep-time); the **graph merge /
-distributed-consistency model** (concern 4 — THE standing open, decided
-here as element-wise LWW + structural repair + first-class conflict
-surfacing); **trigger/handler support** via the shared execution-engine's
+distributed-consistency model** (concern 4 — THE standing open; **wave-3
+provisional, INTENT #135/#142:** element-wise LWW rows +
+schema-wins-on-merge conflict surfacing, home-node-independent — the **full
+distributed merge protocol is OQ-11 OPEN, deliberately NOT designed**);
+**trigger/handler support** via the shared execution-engine's
 kg-nodes adapter, with healthcare-grade provenance on every handler touch
 (INTENT #85/#92 — this plane is provenance's primary home, alongside VDB);
 **environment routing and cloud promotion** of individual graphs; and
@@ -332,6 +343,50 @@ boring-fast at personal scale.
 > INTENT #121 (org's graph lives ON kg; "assume that every service will be
 > using the knowledge graph") is unchanged by this flag.
 
+> **✅ WAVE-3 FOLD (INTENT #135/#142, ledger item c) — distributed-everywhere
+> is the WORKING CONSTRAINT; the merge model is NARROWED to a boring
+> provisional; the full protocol is OQ-11 OPEN.** This wave folds #135 from
+> "flag to revisit" into a **working design constraint**, and correspondingly
+> narrows what concern 4 claims to decide:
+>
+> - **Distributed-everywhere, because the graph is light.** A graph is *light
+>   metadata pointing into VFS* (#135 verbatim; node bodies are `vfs://`
+>   FileRefs — concern 5; the graph itself is structure + pointers + props,
+>   KBs–MBs at personal scale). Because it is light, the element set is
+>   **replicated to and readable from every mesh node**, the same way the
+>   `kg/` registry keyspace (concern 2) already is. **The contracts are
+>   designed so a home node is NOT required for correctness** (§C, OQ-11):
+>   reads serve locally everywhere; convergence is per-element and
+>   home-independent.
+> - **The boring provisional merge model — and ONLY this (do NOT design the
+>   full protocol, §C).** (1) **Per-node/edge LWW rows via
+>   replicated-kv-style versioning:** every element carries the SAME HLC
+>   `Version` as `replicated-kv`, larger version wins per element, tombstones
+>   are writes — idempotent, commutative, deterministic convergence with no
+>   designated serializer (Rule 1 below, retained; it needs no home). (2)
+>   **Schema-wins-on-merge with conflict events** (#142 blessed answer,
+>   verbatim: *"schema wins, offending writes surface as conflict events"*):
+>   when a merged element would violate the graph's bound schema
+>   (unknown/closed-world type, cardinality, dangling edge), the **schema
+>   constraint wins** — the offending write does not get to break the lock —
+>   and it is **surfaced as a `kg_conflicts` row + a `kg.conflict.*` event**
+>   for per-application resolution, never silently applied and never silently
+>   dropped. That is the whole provisional.
+> - **What is NOT designed this wave (OQ-11 OPEN).** The **write topology**
+>   (home-serialization vs home-free), **branch-mint-on-partition**, **merge
+>   transport/sync frames**, and the **`OfflineWrites` default** are OQ-11
+>   OPEN and **NOT designed here.** Rules 3–4 and the `OfflineWrites`/home-node
+>   model below **REMAIN marked NEEDS-REVISITING**, retained intact as
+>   *discussion input*, NOT as law. Per §C, `GraphPolicy.offline_writes`
+>   stays the **per-graph knob whose default is a one-line change**; wave-3
+>   leaves it `Refuse` as an unblessed placeholder. `kg-api` is UNCHANGED —
+>   its `GraphHomeUnreachable` outcome and conflict-surfacing shape remain the
+>   flippable seam (no wave-3 contract-shape change; nothing new to author).
+> - **Read Rules 1–4 below through this lens:** Rule 1 (element LWW) and Rule
+>   2 (restated as schema-wins-conflict-surfacing) ARE the provisional and
+>   stand; Rules 3–4 (home serialization, branch mint, merge transport) are the
+>   NEEDS-REVISITING discussion input, not this wave's decision.
+
 The operator's framing: KV can be naive timestamp-wins; a graph of
 interconnected nodes is "the superset basically." The v1 model decided here
 is **"LWW-plus": element-wise LWW convergence + deterministic structural
@@ -381,7 +436,10 @@ loss:**
   bytes are ever lost; the losing body is one `vfs://` read away.
 
 **Rule 3 — write topology: single-home serialization, divergence only by
-minting (locks' pattern, reused).** Every Local-residence graph has a
+minting (locks' pattern, reused).** ⚠ **NEEDS-REVISITING — OQ-11 OPEN
+(wave-3): this rule and the `OfflineWrites` dial are DISCUSSION INPUT, not
+this wave's law; the home-node premise is exactly what #135
+distributed-everywhere reopens. Retained intact; not redesigned.** Every Local-residence graph has a
 **home node** — the node its SQLite file is anchored to (VFS NodeAnchored;
 kg's home leg holds the `vfs.anchor` lock via VDB). ALL writes for a graph
 route to the home leg (any kg leg accepts a request and relays
@@ -666,8 +724,12 @@ and in overview.md.
 1); the `kg/` keyspace registry + descriptor/policy shapes (concern 2); the
 template model, the three built-in templates' type sets, validation
 push-back semantics, and the migration protocol (concern 3); the generic
-core schema (3b); the v1 consistency model — element-LWW + repair +
-conflict surfacing + mint-on-partition + the honesty table (concern 4);
+core schema (3b); the **wave-3 provisional** consistency model — element-LWW +
+schema-wins-on-merge conflict surfacing, home-independent (concern 4 Rules
+1–2). **NEEDS-REVISITING / OQ-11 OPEN, NOT designed this wave:** the full
+distributed merge protocol — write topology, branch-mint-on-partition, merge
+transport, and the `OfflineWrites` default (concern 4 Rules 3–4, retained as
+discussion input);
 FileRef validation moments and non-destructive breakage handling (concern
 5); the provenance table + union-merge (concern 6); the kg-nodes subject
 binding, fire-at-serialization-point rule, and write_id dedup (concern 7);

@@ -72,83 +72,80 @@ own per-node SQLite system-of-record — a separate database, self-migrating, se
 `store.md`); it does not own the service registry (mesh); it does not own secret
 *material* (that is `secrets` — `db`'s `vault.rs` becomes secrets' Supabase push
 adapter, *consumed by* secrets, see below); and it is **never linked into another
-app** — it is reached as a **CLI subprocess or a mesh-relayed WS daemon**
-(INTENT #29).
+app** — it is reached **only as a `bin/db` CLI subprocess** (INTENT #29; the
+`db serve` daemon is retired — concern 1).
 
 Dual-crate like `gc`/`secrets`: `lib/db` (`substrate-db`, every real behavior) +
-`bin/db` (the `clap` dispatcher, and — new this wave — the `db serve` daemon).
+`bin/db` (the `clap` dispatcher). **No daemon, no network surface, no mesh
+dependency** — a pure tool (INTENT #167).
 
 ## Primary design concerns
 
 ### 1. How VDB (and everyone) calls `db` — the standing "linked vs subprocess vs daemon" question, resolved
 
-The task's central open question. **INTENT #29 forecloses the linked-lib option**
-(it was coined against `db` specifically: "then we'll have to restart the importer
-in order to utilize the most recent version of that tool"). `db` is an
-**app-crate**, not a shared-lib — so it is NOT the "blessed compiled-in exception"
-that `mesh-client`/`types`/`execution-engine` are (those are shared-libs by
-kind). That leaves two *wire* shapes, and the resolution is **both, chosen by
-call-frequency and boot-safety — never linking:**
+The task's central open question — **RESOLVED at the re-spoken round (INTENT
+#167): `db` is a pure CLI tool, no daemon; the warm sessions live in `vdb`.**
+INTENT #29 forecloses the linked-lib option (it was coined against `db`
+specifically: "then we'll have to restart the importer in order to utilize the
+most recent version of that tool"); `db` is an **app-crate**, not a shared-lib,
+so it is NOT a "blessed compiled-in exception" like `chassis`/`types`/
+`execution-engine`. And the round-1 `db serve` daemon is now **retired** — its
+only reason to exist was to hold warm driver connections for `vdb`'s hot path,
+and those connections now live in `vdb` itself (`vdb.md` concern 7). So there is
+exactly **one** shape `db` presents, and the boring split across the `vdb→db`
+boundary is stated from vdb's side:
 
-- **(a) `bin/db` CLI subprocess (standalone, mesh-free, boot-safe).** Every
-  invocation constructs `Db::open` fresh, opens the driver, runs, exits — exactly
-  today's model. Used for: **operator/CI** ops; `inference` **fresh-node
-  bootstrap** (INTENT #23: the node may come up before mesh relays — a subprocess
-  `db migrate up` has no mesh dependency, so it is the boot-safe path — see
+- **(a) The cold path — `bin/db` CLI subprocess (standalone, mesh-free,
+  boot-safe) — the ONLY shape `db` presents.** Every invocation constructs
+  `Db::open` fresh, opens the driver, runs, exits — exactly today's model.
+  `vdb` spawns it for every control-plane action that reuses `db`'s proven,
+  engine-aware logic: migrations (apply/rollback/status/lint/crawl), **changelog
+  codegen** (`install-changelog`), promotion primitives (`dump-to`/
+  `restore-from`/`content-hash`/`snapshot`), structured introspection
+  (`introspect --schema`), edge/handler deploy to cloud targets. Also used —
+  unchanged — by **operator/CI** ops; `inference` **fresh-node bootstrap**
+  (INTENT #23: the node may come up before mesh relays — a subprocess `db
+  migrate up` has no mesh dependency, so it is the boot-safe path — see
   `db-inference-init`); `secrets`' occasional Supabase push (`db vault set`);
-  `promote` runs. Structured output via `--format json`. This is "call it as a
-  command-line tool" — explicitly blessed by #29.
+  and **mesh** managing its own kernel database. Structured output via `--format
+  json`. This is "call it as a command-line tool" — explicitly blessed by #29,
+  and it is the whole of the `vdb-db` contract.
 
-- **(b) `db serve` — a thin daemon over the mesh (warm, hot-path).**
-  **[SUPERSEDED at the re-spoken round (INTENT #167): the session home is
-  VDB and db has NO daemon — see the header note. Retained as record.]**
-  **[Previously UNFROZEN — ACCEPTED by the operator (friction-round 3,
-  2026-07-20, INTENT #128; resolves the INTENT #115 drift flag).]** The operator,
-  verbatim: "Now that you mention there are drivers for sessions that need
-  to run, it actually does make sense to have a session concept with a
-  headless stateful daemon running as part of db... VDB is basically just a
-  virtualized layer to our databases that allows the same access regardless
-  of environment or underlying technology. If it wants to delegate to the
-  db CLI so you don't have to redefine the same tools twice, that makes
-  sense. That's okay with me. VDB just has to keep track of which
-  statements it has running and do proper cleanup and session management."
-  The clarified division: **db owns the headless stateful daemon + session
-  concept; VDB is the virtualization layer** (same access to databases
-  regardless of environment/underlying technology), **delegating to db so
-  the same tools aren't defined twice; VDB owns statement tracking, cleanup,
-  and session management** on its side of the seam. Still true (from the
-  round-1 note): **mesh managing its own database may use the db crate via
-  direct CLI execution** (no daemon, no mesh dependency — db does not
-  depend on mesh), consistent with path (a). New this
-  wave. `db serve` registers the `db` slug with the **local** mesh daemon
-  (`mesh-client`, single-port locality `:3649`), publishes a boring
-  `SurfaceSchema`, participates in `restart-protocol`/`pubsub-protocol`, and
-  relays the **same `lib/db` noun-verb surface over WS** (`db-control-plane`).
-  Its reason to exist: it **holds warm `Db` handles** (open driver connections —
-  `PgClient`, the `Arc<Mutex<Connection>>` sqlite handle) keyed by database
-  identity, so VDB's **handler hot path** (an action per row change) does not pay
-  process-spawn + connect + config-parse per action. VDB reaches it over the
-  mesh (`vdb-db`); because VDB and its local `db` daemon co-reside on the node,
-  this is a local relay through the one port.
+- **(b) The hot path is NOT db's — it is `vdb`'s warm session.** The per-row
+  runtime (drain changelog / run SQL handler / serve a Deno handler's
+  `db.query/exec` / write the provenance row) runs against a **warm driver
+  connection `vdb` holds itself**, keyed by hosted database — "the session,"
+  now living in `vdb` (INTENT #167). `vdb` opens it through the same public
+  driver crates `db` uses (`rusqlite` / `tokio-postgres`), NOT by linking
+  `substrate-db` (INTENT #29). So `db` pays no per-action process-spawn cost by
+  *not being on the hot path at all*; the warm-handle rationale that once
+  motivated `db serve` is satisfied by the session's new home. The capability
+  extensions the daemon once motivated (changelog codegen, copy/verify verbs,
+  outbox parity, structured introspection) survive intact — as **CLI verbs /
+  lib capabilities** reached over path (a), never a socket.
 
-  **This is the net-new surface of the wave.** `db` today has no daemon and no
-  network surface; `secrets.md` (batch 3) and `stack.md` already *assume* a
-  "`db-control-plane` WS call," so the direction is cross-consistent — this
-  design makes it real and concrete. (The round-1 freeze on this daemon mode
-  is lifted: INTENT #128 accepts the headless stateful session daemon as
-  part of db.)
+  **`db serve` is retired (record).** The round-3 acceptance (INTENT #128) of a
+  headless stateful session daemon "as part of db" was superseded at the
+  re-spoken round: the session concept has ONE home (vdb), which deletes db's
+  second public surface, its mesh registration, and the two-WS-hops-per-action
+  cost. The operator's division still holds verbatim — *"VDB is basically just a
+  virtualized layer… VDB just has to keep track of which statements it has
+  running and do proper cleanup and session management"* (#128) — it is simply
+  realized by vdb holding the connections rather than delegating to a db daemon.
 
-**Single-writer discipline (the load-bearing rule that makes two access shapes
-safe).** For any database the daemon has opened (especially **SQLite, which is
-single-writer**), the daemon is the sole connection owner; a concurrent
-standalone `bin/db` opening the *same* file would create two writers and lock
-contention. Rule: **a database that is under mesh management (VDB-registered) is
-mutated only through the daemon**; the standalone CLI is for un-daemonized local
-`db.toml` databases and for boot-time (pre-daemon) bootstrap. The daemon
-enforces its own internal serialization per database (extending the existing
-`advisory_lock`/`apply_atomic` xact-lock discipline, and coordinating
-*distributed* single-firing via mesh `locks` when VDB asks). Flagged as friction:
-the operator should bless the "mesh-managed ⇒ daemon-only writes" rule.
+**Single-writer discipline (the load-bearing rule).** **SQLite is single-writer.**
+For a mesh-managed database, **`vdb` is the sole owner of the file** — it holds
+the `vfs` anchor lock (no other node's `vdb` can open it) and its warm session
+is the one hot-path writer. A cold-path `bin/db` subprocess (a migration) opens
+its own transient connection to the *same* OS path; the rule that keeps them
+safe is **`vdb` quiesces its own writes for the subprocess's duration** (drives
+the entity to `CriticalSection`, drains in-flight, pauses the warm connection —
+`vdb.md` concern 7). So two connections never write concurrently; `db`'s
+existing `advisory_lock`/`apply_atomic` xact discipline plus SQLite's own file
+locking are the backstop. The standalone CLI is otherwise for un-daemonized
+local `db.toml` databases and boot-time bootstrap. *(No operator sign-off is
+pending here — the re-spoken decision settled it; the old "mesh-managed ⇒
+daemon-only" friction flag is dissolved along with the daemon.)*
 
 ### 2. New driver capabilities VDB needs — the adapter matrix refit
 
@@ -201,37 +198,51 @@ so incapable drivers degrade cleanly — the existing pattern):
   a Lambda deploy through `aws`. The **db-side artifact** VDB consumes is
   `handler::codegen` (the deterministic SQL wrapper + TS guard + trigger body +
   stored contract jsonb) — already built, already deterministic, already
-  promote-gated for staleness. No change needed beyond exposing it over the
-  daemon.
+  promote-gated for staleness. No change needed beyond exposing it as a `bin/db`
+  CLI verb vdb invokes as a subprocess.
 
 ### 3. Provenance is FIRST-ORDER and it lands atomically in `db` (INTENT #85/#92)
 
-This is the wave's most important *new* first-class `db` surface. VDB is the
-provenance **primary home** (per-project/per-database — #92), but the *data touch
-itself* happens through `db`. Healthcare-grade provenance ("every time data gets
-touched by a handler" — #85) demands the provenance record be written **in the
-same transaction as the mutation** — otherwise a crash between the write and its
-trace loses provenance, which is exactly the failure a data engineer will not
-accept. So:
+This is the wave's most important *new* first-class provenance surface. VDB is
+the provenance **primary home** (per-project/per-database — #92). Healthcare-grade
+provenance ("every time data gets touched by a handler" — #85) demands the
+provenance record be written **in the same transaction as the mutation** —
+otherwise a crash between the write and its trace loses provenance, which is
+exactly the failure a data engineer will not accept.
 
-- Every mutating `db` action (apply-SQL, apply-migration, run-handler-effect,
-  edge-fire, outbox-drain step) accepts a **`Provenance`** context
-  (`types::provenance::Provenance` — `origin_node`, `origin_service`,
-  `emitted_at`, `causation_id`, `correlation_id`, `hops`) threaded from the
-  caller (VDB stamps it; the event/envelope already carries it — one vocabulary).
-- `db` writes a row into a new **`ops.provenance` / `ops_provenance`** ledger
-  **inside the same `apply_atomic` transaction** as the mutation: `(seq, env,
-  table, op, correlation_id, causation_id, actor_service, handler, at, summary)`.
-  This makes provenance **non-optional and non-losable** — the atomic guarantee
-  is the reason it lives in `db`, not only in VDB's tracker.
-- `db` exposes read/query over the provenance ledger (`db provenance …` verb /
-  WS) so VDB can assemble the causal chain and the dashboard can render "how did
-  this row get here." VDB's loop-detection (INTENT #70) reads `causation_id`
-  chains; `db` supplies the atomic per-touch facts.
-- This is the deep reason `db` cannot stay "no changes": provenance threading is
-  a new argument on the core action surface + a new ops table. Scoped: the
-  **ledger + atomic write + read** are implementation-ready here; the *cross-
-  database aggregation and causal-chain assembly* are VDB's (`vdb.md`).
+**Who owns the transaction, after the wave-3 db split (concern 1).** The atomic
+guarantee moves with the *connection owner*: (i) on the **runtime hot path**,
+the mutation runs on **vdb's own warm session**, so vdb opens the transaction
+and INSERTs the `ops.provenance` / `ops_provenance` row before commit (`vdb.md`
+concern 8); (ii) on the **cold path**, a mutating `bin/db` action (apply-SQL,
+apply-migration, edge-fire, outbox-drain step) writes its provenance/ledger row
+atomically inside its own subprocess transaction. **`db` owns the ops-schema
+*shape*, the atomic-write *discipline*, and the read/query surface** — installed
+and reused identically by both owners — even though the per-handler-touch write
+is now *executed* by vdb. The invariant is one and the same regardless of owner.
+So:
+
+- Every mutating action (whether run by vdb's warm session or a `bin/db`
+  subprocess) carries a **`Provenance`** context (`types::provenance::Provenance`
+  — `origin_node`, `origin_service`, `emitted_at`, `causation_id`,
+  `correlation_id`, `hops`); vdb stamps it, the event/envelope already carries
+  it — one vocabulary. `db`'s cold-path verbs accept it as an argument; vdb's
+  hot-path session sets it on the connection.
+- The row lands in the **`ops.provenance` / `ops_provenance`** ledger **inside
+  the same transaction** as the mutation: `(seq, env, table, op, correlation_id,
+  causation_id, actor_service, handler, at, summary)`. This makes provenance
+  **non-optional and non-losable** by construction — the atomic guarantee is
+  independent of which process owns the transaction (concern 1 split).
+- `db` exposes read/query over the provenance ledger (`db provenance …` CLI verb)
+  so vdb can assemble the causal chain and the dashboard can render "how did this
+  row get here." VDB's loop-detection (INTENT #70) reads `causation_id` chains
+  from the same ledger.
+- This is the deep reason `db` cannot stay "no changes": it must define the
+  provenance **ops-schema + the atomic-write pattern** its cold-path verbs use
+  and vdb's session reuses. Scoped: the **ledger shape + db's own atomic write +
+  read** are implementation-ready here; the *runtime per-handler-touch write* is
+  vdb's session (`vdb.md` concern 8) and the *cross-database aggregation /
+  causal-chain assembly* are VDB's.
 
 ### 4. Query / virtualization surface — the one standardized query interface (INTENT #60)
 
@@ -247,6 +258,11 @@ are the named growth path, EXT**). "Virtualization" = `db` resolves the
 **database handle → driver → runs** — the caller never names a backend, only a
 database. The read/write gate (`query::is_write`, `--write`) and the protected-ref
 guard remain the safety spine. This is a *formalization*, not new engine work.
+**Bearer after the wave-3 split:** the `db query` verb is a `bin/db` subprocess —
+the operator/CI/ad-hoc virtualization surface (query any backend by database
+name). The **runtime handler hot path does NOT use it** — that query/exec runs
+on vdb's own warm session (concern 1); `db query` is for out-of-band access, not
+per-row dispatch.
 
 ### 5. The `supabase-local` Docker deprecation (INTENT #72)
 
@@ -278,7 +294,7 @@ VFS's concern, coordinated by VDB. So the `db`↔VFS edge does **not exist** —
 deliberate non-edge, flagged so the harmonizer does not invent one. (Consistency:
 `store.md` and `stack.md` treat the local SQLite path the same way.)
 
-### 7. Secrets reconciliation — `vault.rs` becomes secrets' Supabase adapter, consumed over the wire
+### 7. Secrets reconciliation — `vault.rs` becomes secrets' Supabase adapter, consumed as a subprocess
 
 `lib/db/src/vault.rs` is a **real, working Supabase-Vault module** (not a stub):
 `set`/`list`/`get`/`remove`/`exists` as bound-param SQL against the
@@ -290,9 +306,9 @@ plaintext). It flows over the `Driver` seam (drives `supabase-local` +
 (INTENT #99/#105, aligned with `secrets.md` concern 5):
 
 - **`secrets` becomes the owner of secret material; `db`'s `vault.rs` IS secrets'
-  Supabase push adapter** — leverage, do NOT rebuild. `secrets` drives it **over
-  the wire** (`db vault set` CLI / a `db-secrets` WS call), **never by linking
-  `substrate-db`** (INTENT #29). See `db-secrets` below.
+  Supabase push adapter** — leverage, do NOT rebuild. `secrets` drives it **as a
+  `bin/db` CLI subprocess** (`db vault set …`), **never by linking `substrate-db`**
+  (INTENT #29; db has no daemon to call — concern 1). See `db-secrets` below.
 - **`db`'s own keychain reads reconcile toward secrets-mediated.** Today
   `supabase_cloud.rs` fetches the Management-API PAT "from the OS keychain at
   runtime" and `config.rs` documents "secrets never live here." Direction: those
@@ -302,7 +318,7 @@ plaintext). It flows over the `Driver` seam (drives `supabase-local` +
   non-LLM caller, raw resolution is allowed for it — but routing through
   `secrets` gives one audited source of truth. This is the operator-authorized
   "one of the times we actually update the db crate" (INTENT #99). Scoped as
-  **direction** here; the keychain→secrets cutover lands when both daemons exist.
+  **direction** here; the keychain→secrets cutover lands when `secrets` is live.
 
 ### 8. Promotion primitives (copy/verify/switch) — `db` provides, VDB orchestrates
 
@@ -322,30 +338,33 @@ mesh lock and flips the mesh registry entry (local→cloud). Local-only promotio
 
 ## Relationships / edges
 
-- **vdb** (consumer) via **`vdb-db`** *(authored: scaffold/contracts/vdb-db.md)* — the VDB
-  daemon drives `db` to run actions against a specific database: apply SQL/DDL,
-  run migrations, deploy/activate handlers, install + drain change-capture,
-  structured introspection, provenance write/read, promotion primitives. **Over
-  the mesh WS (`db serve`), never linked** (INTENT #29). The hot path; the reason
-  for the daemon.
-- **consumers** (operators/CI/`org`) via **`db-control-plane`** *(exists —
+- **vdb** (consumer) via **`vdb-db`** *(authored: scaffold/contracts/vdb-db.md)* — **wave-3
+  reshaped to a CLI-subprocess contract:** vdb spawns `bin/db <verb> --format
+  json` for cold-path control-plane actions against a specific database — apply
+  SQL/DDL, run migrations, deploy/activate cloud handlers, install change-capture
+  (changelog codegen), structured introspection, promotion primitives. **CLI
+  subprocess, never linked** (INTENT #29). The runtime hot path is NOT this
+  contract — it is vdb's own warm session (concern 1).
+- **consumers** (operators/CI) via **`db-control-plane`** *(exists —
   authored: scaffold/contracts/db-control-plane.md)* — the noun-verb control plane (migrate/edge/query/
-  seed/outbox/audit/handler/promote/provenance). **CLI subprocess or daemon WS,
-  never linked** (supersedes the prior file's "Cargo dependency edge" framing).
+  seed/outbox/audit/handler/promote/provenance). **CLI subprocess only, never
+  linked, never a daemon WS** (supersedes both the prior file's "Cargo dependency
+  edge" framing and the interim `db serve` framing).
 - **inference** (consumer) via **`db-inference-init`** *(exists — content
   authored: scaffold/contracts/db-inference-init.md)* — fresh-node DB bootstrap (sqlite driver, ledger-only baseline
   `OPS_BASELINE_SQLITE` + `migration::apply`). **`bin/db` CLI subprocess** (the
   boot-safe path, no mesh dependency), superseding the prior "library dependency"
   framing.
 - **secrets** (consumer) via **`db-secrets`** *(authored: scaffold/contracts/db-secrets.md)* —
-  `secrets` drives `db`'s `vault.rs` as its Supabase push adapter, over WS/CLI,
-  never linked. `db` also *becomes a consumer of `secrets`* for its own
+  `secrets` drives `db`'s `vault.rs` as its Supabase push adapter, **as a `bin/db`
+  CLI subprocess** (no daemon), never linked. `db` also *becomes a consumer of `secrets`* for its own
   credential/keychain resolution (concern 7, direction) — the same edge, both
   directions of trust flow.
-- **mesh** (registration) — `db serve` registers via `mesh-client`/`service-lookup`
-  and rides `pubsub-protocol`/`restart-protocol`/`surface-schema` like every
-  daemon. This is the universal seam, not a `db`-specific contract (no `db-mesh`
-  stub — carried by the cross-cutting protocol contracts).
+- **mesh** — **no registration, no edge.** `db` is a pure CLI tool with no
+  daemon (INTENT #167), so it never registers on the mesh, publishes no surface
+  schema, and participates in no `restart-protocol`. Anything that needs `db`
+  spawns `bin/db`. (This deletes the interim `db serve` mesh-participation of the
+  prior draft.)
 - **NON-edges (deliberate, flagged so the harmonizer does not invent them):**
   `db`↔`vfs` (VDB materializes the SQLite file locally and hands `db` a path —
   concern 6); `db`↔`aws` directly (the AWS RDS/Lambda target is reached *through*
@@ -356,22 +375,23 @@ mesh lock and flips the mesh registry entry (local→cloud). Local-only promotio
 
 Parent: none (top-level L4 app-crate). Children: none. `lib/db` (`substrate-db`,
 all behavior incl. `vault.rs` adapter, drivers, the new provenance/change-capture
-modules) + `bin/db` (the `clap` CLI **and** the `db serve` daemon). The lib/bin
-split is the existing internal convention, not a scaffold nesting.
+modules) + `bin/db` (the `clap` CLI — **no daemon**). The lib/bin split is the
+existing internal convention, not a scaffold nesting.
 
 ## Thoroughness level
 
-**implementation-ready** for the refit's *shape* — the access model (CLI
-subprocess + `db serve` daemon, never linked; the daemon half is **ACCEPTED
-— INTENT #128 resolved the round-1 freeze** — concern 1), the driver-matrix disposition, the
-provenance-atomic-in-`ops` design, change-capture on sqlite, structured
+**implementation-ready** for the refit's *shape* — the access model (**CLI
+subprocess only, never linked, no daemon** — INTENT #167 retired the `db serve`
+daemon; the warm sessions live in vdb — concern 1), the driver-matrix
+disposition, the provenance-atomic ops-schema design (executed per concern 1's
+transaction-owner split), change-capture on sqlite, structured
 introspection, the query/virtualization formalization, the `supabase-local`
 deprecation, the SQLite-in-VFS non-edge, and the secrets reconciliation are all
 specified against real code and buildable as written. **approach-sketched** for:
 the `aws-rds` driver (design-only by mandate — INTENT #105), the exact
 provenance-context threading through every existing call site (a mechanical but
 wide edit — flagged as migration cost), and the keychain→secrets credential
-cutover (direction, lands when both daemons exist).
+cutover (direction, lands when `secrets` is live).
 
 ## Assigned design-depth
 
@@ -383,16 +403,18 @@ neighbor `stack.md`/`vdb`, batch-3 `secrets.md`, and batch-2
 ## Suggested fill-model
 
 **implementation-ready + medium complexity → strong-mid model.** The bulk is
-transcription-grade against existing patterns (the daemon is a `mesh-client`
-register + a WS dispatch over the already-factored `lib/db` API; change-capture
-mirrors the existing outbox; structured introspection mirrors existing
-introspection). **Two areas need care and tests-first:** (1) **provenance
-atomicity** — the provenance row MUST commit-or-rollback with its mutation;
-conformance-test crash-between-write-and-trace to prove no orphaned mutation
-lacks provenance; (2) **single-writer discipline** — test that a mesh-managed
-SQLite database rejects/serializes a concurrent standalone writer. Do NOT let a
-cheap model hand-wave the provenance transaction boundary — a lost trace is a
-silent correctness failure the operator explicitly will not tolerate.
+transcription-grade against existing patterns (the new verbs are `clap`
+subcommands + `--format json` output over the already-factored `lib/db` API;
+change-capture mirrors the existing outbox; structured introspection mirrors
+existing introspection). **Two areas need care and tests-first:** (1)
+**provenance atomicity** — the provenance row MUST commit-or-rollback with its
+mutation; conformance-test crash-between-write-and-trace to prove no orphaned
+mutation lacks provenance (db's own cold-path write; vdb owns the hot-path
+mirror per `vdb.md`); (2) **single-writer discipline** — test that a mesh-managed
+SQLite database serializes a cold-path `bin/db` subprocess against vdb's warm
+session (vdb quiesces; no concurrent writers). Do NOT let a cheap model
+hand-wave the provenance transaction boundary — a lost trace is a silent
+correctness failure the operator explicitly will not tolerate.
 
 ---
 
@@ -402,10 +424,17 @@ The per-pair contract round authored these edges; the contract files are
 authoritative (including their Reconciliation notes). The detailed proposals
 formerly in this section are superseded by the authored contracts.
 
-- `vdb-db` (vdb → db) — the execution arm: `db serve` daemon sessions (db's second public surface). **[ACCEPTED — the daemon mode is operator-accepted per INTENT #128, which resolved the INTENT #115 freeze; VDB delegates to db and owns statement tracking / cleanup / session management on its side.]** → `scaffold/contracts/vdb-db.md`
-- `db-control-plane` (db ↔ consumers) — the noun-verb control plane (CLI half stands; the `db serve` WS bearer is ACCEPTED per INTENT #128). → `scaffold/contracts/db-control-plane.md`
+- `vdb-db` (vdb → db) — the execution arm, **wave-3 reshaped to a CLI-subprocess control-plane contract** (INTENT #167 retired `db serve`; sessions live in vdb). db's second public surface is deleted, not added. → `scaffold/contracts/vdb-db.md`
+- `db-control-plane` (db ↔ consumers) — the noun-verb control plane, **CLI subprocess only** (the interim `db serve` WS bearer is retired per INTENT #167). → `scaffold/contracts/db-control-plane.md`
 - `db-inference-init` (inference → db) — fresh-node bootstrap. → `scaffold/contracts/db-inference-init.md`
-- `db-secrets` (db ↔ secrets) — the Supabase Vault push adapter, reused over the wire. → `scaffold/contracts/db-secrets.md`
+- `db-secrets` (db ↔ secrets) — the Supabase Vault push adapter, reused as a `bin/db` CLI subprocess (no daemon). → `scaffold/contracts/db-secrets.md`
 
-Also a party to (authored elsewhere / cross-cutting): `locks-api`, `pubsub-protocol` — see `scaffold/contracts/`. (`vdb-secrets` is related but is NOT this component's edge — it is secrets' own local-mesh-db adapter, parties `secrets` ↔ `vdb`; db's edge is `db-secrets`.)
+**No cross-cutting mesh protocols** — `db` is a pure CLI with no daemon (INTENT
+#167), so it is a party to **no** `pubsub-protocol`/`restart-protocol`/
+`locks-api`/`surface-schema` (those were the retired `db serve` daemon's; the
+interim draft listed `locks-api`/`pubsub-protocol` here — removed). Distributed
+coordination that once looked like a db concern is vdb's: vdb acquires `locks`
+and orchestrates. (`vdb-secrets` is related but is NOT this component's edge — it
+is secrets' own local-mesh-db adapter, parties `secrets` ↔ `vdb`; db's edge is
+`db-secrets`.)
 

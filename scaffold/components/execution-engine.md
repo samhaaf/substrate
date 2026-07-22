@@ -1,6 +1,12 @@
 # execution-engine
 
-**Status:** NEW (wave 2, batch 4 — Fable seat). **Kind:** shared-lib
+**Status:** NEW (wave 2, batch 4 — Fable seat); **REFRESHED (wave 3, unit
+execution-engine-refresh)** — folds queues.md's batch-3 `TriggerSource` split
+(`Queue`/`Schedule`) in as a second, independent invocation origin (§3,
+below), reconciles idempotency with queues-native ack/nack for that origin,
+and reaffirms (unchanged) the no-net-by-default sandbox posture, the
+per-database Deno process model, the kg-nodes/edges adapter seam, and
+in-transaction provenance emission into VDB's own tables. **Kind:** shared-lib
 (`lib/execution-engine`, crate `substrate-execution-engine`; slug/keyspace
 prefix `ee.` — already in use by `locks.md`'s example slugs). **Naming note:**
 the wave2-plan row says "name TBD — NEVER the reserved word (INTENT #74)."
@@ -16,11 +22,16 @@ Flagged for operator confirmation, not silently locked.
 database-centric trigger/handler paradigm (INTENT #61/#62) for both of its
 hosts: **VDB** (row/table changes on stack-pattern databases) and **KG**
 (node/edge changes on graphs), via two thin **adapters** over one identical
-core. It consumes the LOCKED declarative-trigger data model **unchanged** from
-`types::trigger` (authored by `queues`, batch 2 — one trigger data model, two
-engines, two subject bindings), executes the two handler kinds — **SQL
-handlers** and **Deno/TS handlers** (Deno CONFIRMED, INTENT #65) — and carries
-the OS's three hard guarantees as designed-in structure, not policy:
+core, **plus** (wave-3 fold, §3) a THIRD, adapter-less invocation origin for
+handlers dispatched directly off an ordinary mesh queue or schedule trigger
+(`TriggerSource::Queue` / `TriggerSource::Schedule`, batch 3) with no
+row/node change behind them at all. It consumes the LOCKED declarative-trigger
+data model **unchanged** from `types::trigger` (authored by `queues`, batch 2,
+extended batch 3 with `TriggerSource` — one trigger data model, one engine,
+three subject bindings: table/node/edge change, mesh event, schedule
+occurrence), executes the two handler kinds — **SQL handlers** and **Deno/TS
+handlers** (Deno CONFIRMED, INTENT #65) — and carries the OS's three hard
+guarantees as designed-in structure, not policy:
 
 1. **Traced** — every invocation and every data touch a handler makes is
    recorded in per-database provenance tables with a full causal chain
@@ -38,7 +49,12 @@ the OS's three hard guarantees as designed-in structure, not policy:
 dependency of its host apps, **NOT a contract edge** (locked rounds 4–5;
 wave2-plan §3 footer) — it never opens a socket, never registers with mesh,
 and reaches mesh facilities (queues, locks, pub/sub, secrets) only through its
-host's `mesh-client` via the `HostSeam` (below). It does not own the trigger
+host's `mesh-client` via the `HostSeam` (below); this includes RECEIVING
+queue/schedule-dispatched invocations (§3, wave-3 fold) — the host, already a
+`queues-api` party for every other reason a mesh service is, simply hands the
+engine a `Deliver` it already received, and the engine hands back an ack/nack
+decision for the host to relay. The engine still never speaks `queues-api`
+itself. It does not own the trigger
 *data model* (that is `types::trigger`, shape authored by `queues`); it does
 not run SQL itself (all statements flow through the host seam — VDB executes
 them via the `db` crate over `vdb-db`, per INTENT #29/#96); it does not do
@@ -60,8 +76,12 @@ it, and runs the invocation state machine. An adapter contributes exactly two
 things — the subject binding and the loop-detection identity:
 
 ```rust
-// lib/execution-engine — the adapter seam (two impls, ever: Tables, Graph)
-pub enum AdapterKind { Tables, Graph }
+// lib/execution-engine — the adapter seam (two CHANGE-BOUND impls: Tables,
+// Graph — plus a third, adapter-less origin, Direct, added by the wave-3
+// fold, §3: a queue/schedule-dispatched handler with no captured Change at
+// all, so it never implements ChangeAdapter — it is described here only so
+// AdapterKind/SubjectKey stay ONE enum each across all three origins).
+pub enum AdapterKind { Tables, Graph, Direct, #[serde(other)] Unknown }
 
 pub trait ChangeAdapter: Send + Sync {
     /// Bind a captured change into the generic subject document the shared
@@ -73,10 +93,26 @@ pub trait ChangeAdapter: Send + Sync {
     ///             "meta": { graph, change_id, provenance } }
     fn bind(&self, change: &Change) -> SubjectDoc;
 
-    /// The identity loop detection counts on (concern 4):
+    /// The identity loop detection counts on (concern 5):
     ///   Tables: SubjectKey::Row  { database, table, pk }
     ///   Graph:  SubjectKey::Node { graph, node_id } | SubjectKey::Edge { graph, edge_id }
     fn subject_key(&self, change: &Change) -> SubjectKey;
+}
+
+// The canonical, now-explicit SubjectKey (previously only informally
+// referenced in the doc comments above; written out in full here because §3
+// adds its third variant and cc-escalation.md's `LoopDepthExceeded.subject`
+// consumes this shape verbatim — see "Proposed contracts (wave 3)"):
+pub enum SubjectKey {
+    Row    { database: DbRef,    table: String, pk: String },
+    Node   { graph: GraphRef,    node_id: String },
+    Edge   { graph: GraphRef,    edge_id: String },
+    Direct { engine: Slug,       function: String },  // WAVE-3 FOLD, §3 — no
+                                                       // row/node exists; the
+                                                       // ExecFn target IS the subject
+    #[serde(other)]
+    Unknown,          // wire-discipline fail-safe (types guardrail 4), matching
+                       // Schedule::Unknown/FireTarget::Unknown's pattern in queues.md
 }
 ```
 
@@ -125,8 +161,8 @@ Consequences, all deliberate:
 - **Crash-safe at-least-once.** A daemon death between commit and dispatch
   loses nothing — the undrained outbox row is picked up on restart. A death
   between handler completion and outbox ack causes a replay — which is why
-  idempotency is a contract, not a nicety (concern 5).
-- **The outbox row IS the change-provenance record** (concern 6) — captured
+  idempotency is a contract, not a nicety (concern 6).
+- **The outbox row IS the change-provenance record** (concern 7) — captured
   once, in-band, atomic with the data. No second bookkeeping path to drift.
 - **This is `lib/db`'s proven pattern, promoted.** The real `outbox.rs` in
   `lib/db` already delivers at-least-once-without-duplicates keyed by
@@ -146,10 +182,122 @@ ee_changes:  change_id (uuid, pk) | subject_key | op | old_image | new_image
 ```
 
 `old_image`/`new_image` retention is governed by the per-database provenance
-level (concern 6) — `Full` keeps both images, `Standard` keeps pk + changed
+level (concern 7) — `Full` keeps both images, `Standard` keeps pk + changed
 column/property set + content hashes.
 
-### 3. The handler model — SQL and Deno/TS, with the host holding every capability
+### 3. Queue- and Schedule-dispatched handlers — the direct `ExecFn` path (wave-3 fold; resolves queues.md's batch-3 flag)
+
+Batch 3 folded `cron` into `queues` as `TriggerSource::Schedule`, generalizing
+every `types::trigger::Trigger`'s origin to `source: TriggerSource { Queue(QueueName)
+| Schedule(ScheduleSource) }`. queues.md flagged the open point this design
+must close: *"execution-engine still uses only `TriggerSource::Queue` bindings
+(its adapters); flagged for batch-4 co-design: it must consume the folded
+model unchanged."* **Resolved here:** the engine's adapters (§1) are ONE
+invocation origin, not the only one. A SECOND, independent origin exists —
+an ordinary `queues`-registered `Trigger` (its `source` may be `Queue`
+**or** `Schedule`; this design never needs to distinguish the two past the
+`Deliver` boundary) whose `handler: HandlerRef::ExecFn { engine, function }`
+names this host's mesh service slug (`"vdb"` or `"kg"` — one registration per
+node, per `vdb.md`/`kg.md`) — but `engine: Slug` alone only routes to the
+HOST APP, not to *which* managed database or graph the handler runs against.
+**Convention this design defines for `function`** (an opaque `String` to
+`queues-api` — no wire change, see "Proposed contracts (wave 3)"):
+`"<subject_ref>::<handler_name>@<version>"`, e.g. `"demo/main::nightly_rollup@2.0.0"`
+(VDB, `subject_ref` = `DbRef`) or `"proj-graph::gc_sweep@1.0.0"` (KG,
+`subject_ref` = `GraphRef`, resolved to its underlying `DbRef` via `kg-vdb` —
+KG-built-on-VDB, INTENT #96, guarantees this always resolves).
+
+**Why this exists, concretely.** Two real cases the change-bound adapters
+(§1) cannot express, both legitimate uses of the database-centric handler
+paradigm (INTENT #61/#62) that simply have no captured `Change` to bind:
+
+- **Schedule-only handlers.** A nightly maintenance job, a rollup
+  aggregation sweep, a GC pass — driven purely by `TriggerSource::Schedule`,
+  with no triggering row/node at all.
+- **Cross-database/event-driven handlers.** A handler on database A that
+  should react to an arbitrary mesh event published by service B (not a
+  change captured in A's own `ee_changes` outbox) — an ordinary
+  `TriggerSource::Queue` trigger with `HandlerRef::ExecFn`.
+
+**Dispatch mechanics — deliberately NOT a second execution engine.** The
+host (VDB or KG) is an ordinary `queues-api` party (cross-cutting, "every
+service is a party" — queues.md's own framing); it receives `Deliver` pushes
+addressed to its `engine: Slug`, and on receipt:
+
+1. Parses `function` into `(subject_ref, handler_name, version)`, looks up
+   the registered `HandlerDef` in the SAME registry §4 uses — same static
+   validation at registration time (§1's registration rules apply verbatim;
+   an `ExecFn` naming an unregistered handler or nonexistent `subject_ref` is
+   rejected on `RegisterTrigger`, at `queues`, before it ever reaches here).
+2. Builds a `TraceCtx` (§5) from the `Deliver` envelope: `causation_id =
+   event_id` (queues' own id — for a `Schedule` source this is the
+   deterministic `occurrence_id`, queues.md concern 10; the engine never
+   needs to know which kind produced it), `correlation_id` from
+   `Deliver.correlation_id` (absent ⇒ this invocation roots a NEW chain —
+   exactly like any user action; a schedule fire IS a root). `subject_key =
+   SubjectKey::Direct { engine, function }`, `adapter = AdapterKind::Direct`
+   — so loop detection (§5) applies UNIFORMLY: a direct-dispatched handler
+   that recursively re-triggers itself *within one causal chain* still trips
+   `(subject_key, handler)`; a schedule tick's own periodic re-firing never
+   trips it, because each occurrence roots its own chain (no shared
+   `correlation_id` across ticks — queues.md concern 10).
+3. Invokes the handler through the IDENTICAL per-database Deno process / SQL
+   seam §4 defines — `ctx.sql`/`ctx.emit`/`ctx.fetch` are unchanged. A
+   direct-dispatched handler's writes re-enter `ee_changes` exactly like any
+   handler's (§2), so a nightly aggregation job that touches rows is traced
+   and can itself fire change-bound triggers downstream: ONE chain, crossing
+   from a `Direct` origin into `Tables`/`Graph` origins exactly as §5
+   already describes chains crossing `Tables` into `Graph`.
+4. **Ack/nack rides `queues-api` directly — no engine-local retry/DLQ for
+   this path.** The one genuine simplification direct-dispatch buys: `queues`
+   already owns the FULL delivery lifecycle (visibility timeout, redrive,
+   DLQ, `DeadLetter` escalation) for anything reaching it as a `Deliver`. The
+   engine does not reinvent retry/DLQ here — on handler success it
+   `AckDelivery`s; on failure (respecting `FailPolicy` — `FailClosed` nacks
+   for redrive, `FailOpen` acks anyway and records `Failed` in provenance) it
+   `NackDelivery`s or lets the visibility timeout expire. Exhaustion
+   dead-letters through `queues`' own DLQ trigger exactly as §6 describes for
+   engine-local failures — the two paths converge on the SAME
+   `cc-escalation` `DeadLetter` arm (authored by queues), never a second one.
+5. **Idempotency is queues' `delivery_id`, not a re-derived one.**
+   `IdempotencyMode` on the trigger applies identically: `DedupByEventId`
+   looks up `ee_deliveries` keyed by queues' own `delivery_id` (there is no
+   `change_id` to derive `uuid_v5` from here — queues' id IS the
+   deterministic identity) and skips a delivery already `Completed`;
+   `HandlerIdempotent` trusts the handler and always invokes. **The
+   per-trigger `SemaphoreChoice` (INTENT #101) is enforced UPSTREAM, by
+   `queues`, before the engine ever sees the `Deliver`** — for `EventId`,
+   queues already de-duplicates concurrent delivery of the same event/
+   occurrence across the fleet (queues.md concerns 4/10), so the engine
+   never needs its own `locks` acquisition for this origin (contrast §6's
+   replicated-database case, which DOES need one, because there the engine
+   itself independently observes the same change on multiple nodes — here
+   queues has already collapsed that to one `Deliver`).
+
+**Provenance for a changeless invocation.** `ee_invocations` gains no
+matching `ee_changes` row for a `Direct`-origin invocation (there is no
+captured change) — its `causation_id` instead points at queues' own
+`event_id`/`occurrence_id`, provenance-adjacent metadata that lives in
+`queues`' durable store, not this database's tables. The lineage walk (§7)
+terminates one hop earlier for this origin: row → `ee_touches` →
+`ee_invocations` → (queues' event/occurrence, external to this database) —
+still a complete, honest chain, just crossing into a different subsystem's
+record instead of another `ee_changes` row. Flagged for the harmonizer:
+whether a dashboard lineage-viewer needs `ee_invocations.adapter ==
+Direct` as its cue to stop looking for a local `ee_changes` row (it does —
+this is exactly what the field is for).
+
+**What does NOT change.** The change-bound path (§1's adapters) is entirely
+unaffected — it never touches `queues-api` directly for dispatch and keeps
+its own `ee_changes`-outbox-driven flow. An `EngineTrigger`'s `core.source`
+set to a `Queue(<canonical pseudo-queue>)` (§1) remains internal bookkeeping
+so generic tooling renders one shape, and is orthogonal to this section:
+`Direct`-origin triggers are registered directly with `queues`, not with the
+engine's own registry — there is no `EngineTrigger` for a `Direct`
+invocation at all; `queues` holds the trigger, the engine only supplies the
+`ExecFn` target it routes to.
+
+### 4. The handler model — SQL and Deno/TS, with the host holding every capability
 
 **Handler definition is data + a code artifact**, registered like a trigger
 and versioned. The shape deliberately **extends `lib/db`'s existing handler
@@ -165,7 +313,7 @@ pub struct HandlerDef {
     pub timeout: Duration,               // default 30s Sql / 60s Deno; capped per-database
     pub fail_policy: FailPolicy,         // FailClosed | FailOpen (carried from db)
     pub params: BTreeMap<String, String>,// declared param schema (assembly output is checked against it)
-    pub egress: Vec<EgressRule>,         // per-handler host allowlist — empty = NO network (concern 7)
+    pub egress: Vec<EgressRule>,         // per-handler host allowlist — empty = NO network (concern 8)
     pub secrets: Vec<SecretRef>,         // use-without-seeing refs the host may resolve for egress
 }
 ```
@@ -233,7 +381,7 @@ graph level, `db` keeps its working validator machinery for its own surface,
 and putting sync gates in the daemon write path is a latency/deadlock
 minefield we refuse to enter silently. Flagged (Friction #4), not dropped.
 
-### 4. The causal-trace contract + loop detection (INTENT #70/#85) — the guardrail of record
+### 5. The causal-trace contract + loop detection (INTENT #70/#85) — the guardrail of record
 
 Every invocation carries a `TraceCtx`; it is the concrete instance of
 first-order provenance and the substrate loop detection runs on:
@@ -267,7 +415,7 @@ pub type LoopKey = (SubjectKey, /*handler*/ String);   // "(table,row,handler)" 
 - **At threshold** (per-database default, per-trigger override; default
   constant proposed **3**, fill-time-tunable): the would-be invocation is
   **parked, not run** — recorded in provenance as `outcome: LoopParked`, the
-  trigger's delivery routed to the failure path (concern 5's DLQ flow), and
+  trigger's delivery routed to the failure path (concern 6's DLQ flow), and
   ONE `EscalationRequest { kind: LoopDepthExceeded }` published toward cc
   (deduped by the loop's identity — `(correlation_id, loop_key)` — so a hot
   loop produces one investigation, not a thousand). Park-don't-run is the
@@ -291,7 +439,13 @@ pub type LoopKey = (SubjectKey, /*handler*/ String);   // "(table,row,handler)" 
   `causation_id`/`correlation_id` live in `types` — one vocabulary, many
   hops.)
 
-### 5. Idempotency + delivery lifecycle + failure → DLQ (the queues alignment)
+### 6. Idempotency + delivery lifecycle + failure → DLQ (the queues alignment) — the change-bound path
+
+**Scope note (wave-3 fold):** this section is the idempotency/DLQ story for
+the **change-bound** path (§1's adapters, outbox-driven). §3's direct-dispatch
+origin has its own, simpler idempotency story (queues' own `delivery_id` +
+queues-native ack/nack/redrive/DLQ — §3 point 5) because queues already owns
+that delivery's full lifecycle; it is not repeated here.
 
 Delivery from the outbox mirrors queues' `(message × trigger)` model: each
 `(change, matching trigger)` pair is an independent **delivery** with its own
@@ -332,7 +486,7 @@ contract.**
   provenance, no DLQ) for advisory handlers whose failure must never gum the
   works.
 
-### 6. Provenance emission — per-database `ee_*` tables, in-band (INTENT #85/#92)
+### 7. Provenance emission — per-database `ee_*` tables, in-band, inside VDB's in-transaction schema (INTENT #85/#92)
 
 Provenance lives **inside the database it describes**, in engine-owned tables
 (`ee_` prefix; VDB hosts the schema real estate — co-batch seam with the vdb
@@ -372,7 +526,7 @@ recurse to the root user action. This is the query the investigating cc
 agent, the dashboard's provenance view, and the healthcare-grade audit all
 share.
 
-### 7. Boring guardrails — decided values, flagged where taste matters
+### 8. Boring guardrails — decided values, flagged where taste matters
 
 - **Timeouts:** per-handler (`HandlerDef.timeout`), defaults 30s SQL / 60s
   Deno, hard-capped per-database (default cap 5min). Timeout → the Deno job
@@ -387,11 +541,11 @@ share.
   breach kills the process (supervised restart), outcome `Failed`.
 - **No network by default — OPERATOR-BLESSED (friction-round 2, INTENT
   #125):** `egress: []` is the default; any network use is a per-handler,
-  per-host declarative allowlist, executed host-side (concern 3). This is
+  per-host declarative allowlist, executed host-side (concern 4). This is
   stricter than Supabase edge functions (which get open egress) and is the
   intended difference. The operator blessed it explicitly — "Fascinating
   idea. I like it. I'm OK with that" — including the weaker cloud caveat
-  (concern 8: on cloud targets the allowlist degrades to
+  (concern 9: on cloud targets the allowlist degrades to
   declared-and-audited, not physically enforced). No longer an open flag.
 - **No secrets in handler space, ever:** `SecretRef` resolution is host-side
   egress injection only; the invariant is structural (nothing to leak from a
@@ -401,7 +555,7 @@ share.
   the guardrail that carries intent; a rate limiter would mask loops instead
   of surfacing them). Revisit only with evidence.
 
-### 8. Cloud-target portability — the conformance contract, honestly scoped
+### 9. Cloud-target portability — the conformance contract, honestly scoped
 
 Locally the engine IS the implementation. On VDB's cloud targets (Supabase /
 AWS RDS+Lambda) the stack pattern materializes as generated artifacts (pg
@@ -441,20 +595,32 @@ additionally a *consumer* (through its hosts) of two cross-cutting APIs.
   node/edge `ChangeSet`s at graph semantics (schema validation happens
   BEFORE the engine sees a change). KG's `HostSeam` effects flow through
   VDB (`kg-vdb`), carrying `TraceCtx` in meta so the chain is continuous
-  across the two engines (concern 4). Co-batch ⇄.
+  across the two engines (concern 5). Co-batch ⇄.
 - **`types`** — library dependency: consumes `types::trigger` **UNCHANGED**
   (the batch-2 lock honored: adapter needs live in `EngineTrigger`'s
   extension, never on the core struct); consumes `Provenance`
   (`causation_id`/`correlation_id`), `Event`, `Envelope`. NEW types proposed
-  for the harmonizer: `TraceCtx`/`ChainLink`/`SubjectKey` pass the inclusion
-  test (public signatures of execution-engine, vdb, kg, and the
+  for the harmonizer: `TraceCtx`/`ChainLink`/`SubjectKey`/`AdapterKind` pass
+  the inclusion test (public signatures of execution-engine, vdb, kg, and the
   `cc-escalation` schema) → a `types` provenance-adjacent module (extend
   `provenance.rs` or a sibling `trace.rs` — harmonizer's call; own-module
-  guardrail says sibling).
+  guardrail says sibling). **Wave-3 addition:** `AdapterKind` gains a third
+  variant `Direct` and `SubjectKey` gains `Direct { engine: Slug, function:
+  String }` (§3) — both additive, both given `#[serde(other)] Unknown`
+  fail-safe arms so an older `cc` (built against the wave-2 two-variant
+  shape) degrades to `Unknown` on a `Direct` escalation instead of failing
+  the whole deserialize — see "Proposed contracts (wave 3)".
 - **`queues`** (consumer, via host mesh-client, `queues-api`) — DLQ
-  enqueueing (`ee.dlq.<database>`), `ctx.enqueue` event publication. The
-  binding to queues is otherwise the **shared trigger data model**, not a
-  wire edge.
+  enqueueing (`ee.dlq.<database>`), `ctx.enqueue` event publication, AND
+  (wave-3 fold, §3) receiving `Deliver` pushes + issuing `AckDelivery`/
+  `NackDelivery` for `HandlerRef::ExecFn`-targeted triggers whose `source` is
+  `TriggerSource::Queue` or `TriggerSource::Schedule`. This is a wider use of
+  `queues-api` than before (push-dispatch + ack/nack, not just enqueue), but
+  still not a NEW contract file — it is the same cross-cutting `queues-api`
+  every mesh service already speaks, reached through the host's mesh-client,
+  same as `vdb`/`kg`'s own generic mesh-service surface. The binding for the
+  **change-bound** path remains the **shared trigger data model**, not a wire
+  edge.
 - **`locks`** (consumer, via host mesh-client, `locks-api`) — Ephemeral
   event-ID semaphores `ee.<database>.<change_id>.<trigger_id>` for
   replicated-database trigger dedup; catches `PartitionMergeExceeded` into
@@ -497,16 +663,25 @@ with the `(subject, handler)` loop metric and park+escalate semantics, the
 deterministic-delivery idempotency contract with engine-local + `locks`
 dedup tiers, the in-band `ee_*` provenance schema, and the retry→DLQ→cc
 flow are all decided and specified — the no-net-by-default sandbox posture
-now operator-blessed (friction-round 2, INTENT #125).
-**approach-sketched** in three spots:
+now operator-blessed (friction-round 2, INTENT #125). **Wave-3 refresh
+(§3), also implementation-ready:** the direct-dispatch `ExecFn` origin
+(`TriggerSource::Queue`/`Schedule` → `Deliver` → handler → `AckDelivery`/
+`NackDelivery`, no engine-local retry/DLQ, `delivery_id`-keyed dedup, unified
+loop detection via `AdapterKind::Direct`/`SubjectKey::Direct`) is fully
+specified — it resolves queues.md's batch-3 flag rather than opening a new
+open question.
+**approach-sketched** in four spots:
 (a) the `HostSeam` trait's exact method set (co-batch reconciliation with
 vdb/kg — mid-batch draft-sharing per the ⇄ marking); (b) the cloud-target
 generated-artifact shims (jointly owned with vdb, conformance-suite-bound);
 (c) constants (loop threshold default, K, timeouts, heap cap) — fill-time
-tuning, defaults proposed. One decision remains explicitly held for the
-operator: park-vs-park-and-disable (see Friction). The other —
-no-net-by-default strictness — was BLESSED at friction-round 2 (INTENT
-#125), cloud caveat included.
+tuning, defaults proposed; (d) the `HandlerRef::ExecFn.function` string
+convention (`"<subject_ref>::<handler_name>@<version>"`, §3) — a component-
+level parsing convention this design defines, pending the queues designer's
+concurrence that it belongs in a doc-comment rather than a struct change.
+One decision remains explicitly held for the operator: park-vs-park-and-
+disable (see Friction). The other — no-net-by-default strictness — was
+BLESSED at friction-round 2 (INTENT #125), cloud caveat included.
 
 ## Assigned design-depth
 
@@ -519,7 +694,11 @@ databases-as-supervised-services), secrets.md (`llm_safe`,
 use-without-seeing sinks), stack.md/kg.md/db.md (host requirements), the
 REAL `lib/db` code (`handler.rs` Contract, `outbox.rs` at-least-once
 discipline), and INTENT #29, #61/#62, #65, #70/#71, #84, #85/#92, #86,
-#95/#101/#103.
+#95/#101/#103. **Wave-3 refresh** (unit execution-engine-refresh, Sonnet
+Component-Designer pass, this batch), additionally grounded on the harness-
+side wave-3 intent ledger (§C design-around rules) and queues.md's wave-3
+fold (concerns 10–12, `TriggerSource`/`ScheduleSource`/`HandlerRef::Emit`)
+and `contracts/cc-escalation.md` (the arm this design owns).
 
 ## Suggested fill-model
 
@@ -533,9 +712,14 @@ detection + park/escalate path, and the Deno process supervisor
 (timeout-cancel-kill-restart without losing deliveries), are the two subtle
 surfaces → **strong model**; write the cascade/loop property tests before
 the dispatcher, not after. Fill AFTER `types::trigger` lands and against
-vdb's `HostSeam` impl (kg's follows). The conformance suite (concern 8) is
+vdb's `HostSeam` impl (kg's follows). The conformance suite (concern 9) is
 a first-class fill artifact, not an afterthought — it is what the cloud
-adapters will be held to.
+adapters will be held to. (d) **The §3 direct-dispatch path is the
+LAST-filled surface of the four** — it is genuinely simpler (no
+engine-local retry/DLQ, dedup keyed off queues' own `delivery_id`) → **mid
+model**, but it must be filled AFTER (b)'s dispatcher and the host's
+ordinary `queues-api` client both work, since it only adds a thin
+`Deliver`-in / ack-out shim over machinery both already built.
 
 ---
 
@@ -561,11 +745,51 @@ the contract files):
 - `types::trigger` (owner: queues-authored, types-housed) — consumed UNCHANGED;
   flags: bless the `ee.<database>.<table>` pseudo-queue names in `QueueName`'s
   doc-comment; `HandlerRef::ExecFn { engine, function: "name@version" }`
-  confirmed workable.
+  confirmed workable **at wave 2, for the change-bound path only, where the
+  adapter already supplies the database/graph. SUPERSEDED for wave 3's §3
+  direct-dispatch use, which has no adapter context** — see "Proposed
+  contracts (wave 3)" below for the `"<subject_ref>::<handler_name>@<version>"`
+  convention this design now proposes for that case.
 - Sequencing (`HostSeam`/`ChangeAdapter`/`ee_*` schema; internal-lib seams, NOT
   contracts) — the hardest cross-module dependency in batch 4: if VDB's write
   path cannot host the same-transaction `ee_changes` write, the at-least-once
   and atomic-provenance guarantees both fall — reconcile FIRST.
+
+## Proposed contracts (wave 3)
+
+Additive-only proposals against contract shapes this design owns or authored
+a share of. Neither item changes a wire struct's binary shape; both are
+flagged to the respective owner (`cc` for the escalation arm, `queues` for
+the doc-comment convention) rather than silently assumed.
+
+- **`cc-escalation` — `LoopDepthExceeded` arm, additive extension (§3).**
+  This design owns this arm's shape (wave 2). Wave-3 addition: `AdapterKind`
+  gains a third variant `Direct` (alongside `Tables`/`Graph`) and `SubjectKey`
+  gains `Direct { engine: Slug, function: String }`, so a direct-dispatched
+  handler that loop-parks escalates through the SAME arm, unchanged in every
+  other field (`host`/`database`/`trigger_id`/`handler`/`chain_recent`/
+  `parked_invocation`/`provenance_root` all still apply — `database` resolves
+  via `kg-vdb` for a KG-hosted `Direct` invocation exactly as it already does
+  for the `Graph` adapter, since KG is built on VDB, INTENT #96). Both new
+  variants carry a `#[serde(other)] Unknown` fail-safe arm, mirroring the
+  `Schedule::Unknown`/`FireTarget::Unknown` pattern queues.md's own wave-3
+  fold already established — an older `cc` deserializes an unrecognized
+  variant as `Unknown` rather than dropping the whole escalation. Per
+  cc-escalation.md's own versioning rule ("Additive-safe: new
+  `#[serde(default)]` fields... the open `context: Value` absorbs richer
+  payloads"), this is squarely additive-safe; no existing field, arm, or
+  semantic changes. Flagged to `cc` for concurrence (their receiver need not
+  do anything special with a `Direct` subject beyond rendering it — the
+  investigation context is already self-sufficient per the arm's existing
+  conformance requirement).
+- **`queues-api` — `HandlerRef::ExecFn.function` convention, component-level
+  (§3).** Not a struct change (`function` stays an opaque `String` in
+  `queues-api`'s schema) — a parsing convention this design defines because
+  it is the party that must parse it: `"<subject_ref>::<handler_name>@<version>"`,
+  `subject_ref` a `DbRef` (VDB) or `GraphRef` (KG, resolved to its
+  underlying `DbRef` via `kg-vdb`). Proposed as a doc-comment addition on
+  `HandlerRef::ExecFn` in `queues-api.md`/`types::trigger`, flagged to the
+  queues designer for concurrence, not adopted unilaterally into their file.
 
 ## Non-obvious tests (conformance + correctness)
 
@@ -625,6 +849,35 @@ the contract files):
   `AssemblyTemplate` fixture evaluates identically over a queues event
   subject and an engine row-change subject (queues.md's closing test, run
   from this side).
+- **Schedule-only handler, no row/node (§3, wave-3):** a `TriggerSource::
+  Schedule` trigger with `HandlerRef::ExecFn` fires a handler that touches no
+  pre-existing row; the resulting `ee_invocations` row has `adapter: Direct`,
+  `subject: SubjectKey::Direct{engine,function}`, `causation_id` equal to the
+  occurrence's deterministic `event_id`, and **no matching `ee_changes`
+  row** — the lineage walk correctly terminates at the `queues`-side
+  occurrence rather than erroring.
+- **Direct-dispatch dedup uses queues' `delivery_id`, not a derived one (§3):**
+  the same `Deliver` is redelivered after a visibility-timeout expiry (no ack
+  arrived); with `IdempotencyMode::DedupByEventId` the second attempt is
+  skipped in `ee_deliveries` keyed by the SAME `delivery_id` queues assigned
+  — no `uuid_v5(change_id, trigger_id)` is computed (there is no `change_id`).
+- **Direct-dispatch failure escalates via queues' `DeadLetter`, not
+  `LoopDepthExceeded` (§3):** a direct-dispatched handler that always fails
+  exhausts `queues`' own `max_receive_count` and dead-letters through
+  `queues`' redrive path; the engine issues no DLQ `SendEvent` of its own for
+  this origin (contrast the change-bound path's `ee.dlq.<database>`) — assert
+  no `ee.dlq.*` queue is touched and the escalation arriving at cc is
+  `DeadLetter`, produced by queues, not by the engine.
+- **Loop detection crosses the `Direct → Tables` boundary (§3):** a
+  schedule-driven aggregation handler (`Direct` origin) writes rows whose
+  table trigger (`Tables` origin) writes back and re-emits an event that
+  re-invokes the SAME schedule-driven handler within the SAME causal chain
+  (a contrived but possible cascade) → the repeat count on
+  `(SubjectKey::Direct{engine,function}, handler)` accumulates across the
+  boundary and parks at threshold, exactly as the `Tables ↔ Graph` crossing
+  test does. Conversely, two SEPARATE schedule ticks of the identical
+  trigger (different `correlation_id` each) never accumulate against each
+  other — periodic re-firing is not a loop.
 
 ## Friction points (for the operator round)
 
@@ -634,11 +887,15 @@ the contract files):
    will hurt; the batch-4 `vdb-db` contract should offer a
    session/batch-statement surface. Raised to the vdb/db designers, not
    resolved here.
-2. **`Trigger.queue` semantics for engine bindings.** The shared struct's
-   `queue: QueueName` is queues-native; the engine fills it with a canonical
-   pseudo-queue name and keeps the real binding in the extension struct.
-   Workable but slightly awkward — types/queues harmonizer should bless or
-   improve it.
+2. **`Trigger.source` semantics for engine bindings — SUPERSEDED, resolved by
+   the wave-3 fold.** Wave 2 flagged the shared struct's queues-native
+   `queue: QueueName` field as slightly awkward for engine bindings. Batch 3
+   generalized it to `source: TriggerSource` (`Queue`/`Schedule`) for
+   unrelated reasons (the cron fold); the engine's `EngineTrigger` now sets
+   `core.source = TriggerSource::Queue(<canonical pseudo-queue>)` — the same
+   awkwardness, same shape, just riding the enum instead of a bare
+   `QueueName`. Still workable, still slightly awkward, still flagged to the
+   types/queues harmonizer — carried forward, not re-opened.
 3. **Cloud targets weaken two guardrails — BLESSED (friction-round 2,
    INTENT #125).** On Supabase/RDS, the no-net sandbox and host-side egress
    proxy degrade to declared-and-audited (open platform egress);
@@ -667,3 +924,21 @@ the contract files):
    both traced, one chain).
 8. **Crate name.** `execution-engine`/`ee` proposed (reserved word honored);
    operator has final say per the "name TBD" note.
+9. **`ExecFn.function` string convention — taste, not correctness (§3, wave-3).**
+   `"<subject_ref>::<handler_name>@<version>"` is the boring choice (one
+   opaque string, no wire change), but a typed alternative exists — e.g.
+   widening `HandlerRef::ExecFn` itself to `{ engine: Slug, database:
+   Option<DbRef>, graph: Option<GraphRef>, function: String }` — which is
+   more self-describing at the cost of touching `queues-api`'s struct
+   (queues owns it; a wire change, not a doc-comment). This design proposes
+   the string-convention route as more boring (INTENT #124); flagged to the
+   queues designer, not adopted unilaterally.
+10. **Direct-dispatch and the `Locality`/replicated-database story (§3).**
+    §6's `SemaphoreChoice::EventId` + `locks` composition exists because the
+    engine's OWN outbox-drain can independently observe the same replicated
+    change on multiple nodes. A `Direct`-origin invocation never has that
+    problem — `queues` already collapsed multi-node delivery to one
+    `Deliver` before the engine ever runs — so this design asserts §3's
+    direct-dispatch path needs NO `locks` involvement at all, for any
+    database `Locality`. Flagged in case a future replicated-KG-graph corner
+    case proves this assertion wrong; no such case is known today.

@@ -8,15 +8,23 @@ as the PATTERN name). **Nesting:** top-level L4 app-crate (`bin/vdb` daemon +
 `lib/vdb`), one daemon leg per database-hosting node
 (`AddressingClass::NodeScoped`), plus one *virtual supervised entity per
 managed database* (concern 2). **Layer:** L4 data & execution plane, in the
-LOCKED order **VFS < VDB < KG** (INTENT #96). **Consumes (over the wire, never
-linked — INTENT #29):** `db` via `vdb-db` (the action-runner execution arm),
-`vfs` via `vdb-vfs` (SQLite files are NodeAnchored vfs files), mesh via
-`vdb-mesh` (+ the cross-cutting `queues-api`/`cron-api`/`locks-api`/
+LOCKED order **VFS < VDB < KG** (INTENT #96). **Consumes (never
+linked — INTENT #29):** `db` via `vdb-db` (the action-runner execution arm —
+**wave-3: a `bin/db` CLI subprocess for cold-path actions**, not a wire edge;
+concern 7), `vfs` via `vdb-vfs` (SQLite files are NodeAnchored vfs files; over
+the wire), mesh via
+`vdb-mesh` (+ the cross-cutting `queues-api` [now carrying the absorbed
+`Schedule` trigger source — cron folded in, ledger D2]/`locks-api`/
 `restart-protocol`/`pubsub-protocol`/`surface-schema`), `secrets` via
 `vdb-secrets`, `aws` via `aws-vdb` (cloud target, design-only v1).
-**Compiled-in shared libs:** `mesh-client`, `substrate-types`, and the
-`execution-engine` (stack-tables adapter — an internal library dependency,
-NOT a contract edge, locked rounds 4–5). **Consumed by:** `kg` via `kg-vdb`
+**Compiled-in shared libs:** `chassis` (the daemon-wrapper lib every service
+is built on — INTENT #156, absorbs the old `mesh-client`; brings vdb online as
+a mesh service and carries its restart-ladder/promise/outbox client halves),
+`substrate-types`, the `execution-engine` (stack-tables adapter — an internal
+library dependency, NOT a contract edge, locked rounds 4–5), and — new this
+wave — the **standard driver crates** vdb speaks SQL through on the runtime hot
+path (`rusqlite` local, `tokio-postgres` cloud; third-party libs, NOT `db`'s
+internals, so INTENT #29 is untouched — concern 7). **Consumed by:** `kg` via `kg-vdb`
 (KG is built ON VDB), `projects`/`environments` (L6 stub-track edges).
 Grounded in INTENT #61/#65/#70/#73/#74/#81/#85/#86/#91/#92/#93/#96/#98, the
 batch-1/2/3 designs (queues' trigger data model, supervision's restart ladder +
@@ -116,16 +124,24 @@ apart because "deploy-anywhere" is exactly the ability to rebind them:
 - **Target** — where a database physically runs: `LocalSqlite { node }`,
   `Supabase { project_ref }`, or `AwsRdsLambda { target_id }`. The routing
   rule is the operator's own (INTENT #98): **local environment → SQLite;
-  cloud → promote**. In v1 the target is explicit per-database config;
-  environment-driven routing arrives when `environments` leaves the stub
-  track (`environments-vdb`, anticipated).
+  cloud → promote**. In v1 the target is **explicit per-database config**.
+  **Environments-driven routing stays OPEN (PARKED OQ-2 — ledger §C).** vdb
+  reserves an `EnvRef`-derived routing *placeholder only*: an optional
+  `route_from: Option<EnvRef>` on the database record that, when set, would let
+  `environments` supply the target instead of explicit config. It is a
+  named-but-unwired seam — vdb does NOT decide environment↔repo cardinality,
+  branch-deploy activation, or secrets-per-environment wiring (all OQ-2). When
+  `environments` leaves the stub track (`environments-vdb`), it fills this
+  placeholder additively; until then the explicit `target` field is authoritative.
 
 ```rust
 // catalog record — replicated mesh-wide via replicated-kv (concern 10)
 pub struct DatabaseRecord {
     pub db_id: DbId,                      // "<project>/<name>"
     pub definition: StackDefRef,          // manifest hash + ledger head (VFS content refs)
-    pub target: StackTargetKind,          // LocalSqlite{node} | Supabase{..} | AwsRdsLambda{..}
+    pub target: StackTargetKind,          // LocalSqlite{node} | Supabase{..} | AwsRdsLambda{..} — authoritative in v1
+    #[serde(default)]
+    pub route_from: Option<EnvRef>,       // PARKED OQ-2 placeholder: environments-derived routing, unwired in v1
     pub status: DbStatus,                 // Provisioning | Running | Promoting{..} | Degraded | Retired
     pub provenance: ProvenanceConfig,     // per-database (INTENT #92) — concern 8
     pub version: LwwVersion,              // (wall_clock, node_id), KV discipline
@@ -144,9 +160,16 @@ pub enum StackTargetKind {
 protocol." supervision (batch 2) deliberately designed its whole protocol
 against a *generic supervised service* = `{ endpoint, version,
 Interruptibility, restart-protocol participation }` (supervision.md concern
-10) precisely so vdb could inherit it. The design decision here — flagged as
-the batch's first controversial call — is **how a database becomes such an
-entity**:
+10) precisely so vdb could inherit it. **The participation now rides `chassis`
+(wave-3 fold, ledger §A row 8 / #86).** The vdb daemon, like every service, is
+built on `chassis` (`components/chassis.md`) — `chassis` owns the
+`restart-protocol` client half, the `RestartPolicy` callback seam (L1
+interruptibility feed / L2 `on_restart→Yielding` / L3 `on_restart→Saved` under
+the save deadline / L4 best-effort), registration, and surface publication.
+supervision is the daemon-side authority; `chassis` is the client half vdb
+supplies its policy to. The design decision here — flagged as the batch's first
+controversial call — is **how a database becomes such an entity** *within* that
+one chassis-hosted daemon:
 
 **One vdb daemon per node, multiplexing N databases as VIRTUAL supervised
 entities — NOT one OS process per database.** The vdb daemon is the single
@@ -160,9 +183,10 @@ daemon:
   database from any node is an ordinary `service-lookup` — the wiring seam is
   reused, not extended. On promotion, the registry flip of THIS entry is the
   "switch" (concern 9).
-- **Restart-protocol, per database:** the daemon maintains one
-  `Interruptibility` state per database entity and answers `RestartRequest`s
-  addressed to a database slug: a database mid-write-transaction or
+- **Restart-protocol, per database (through chassis's client half):** the
+  daemon supplies `chassis` a per-database `RestartPolicy` and maintains one
+  `Interruptibility` feed per database entity; `chassis` answers `RestartRequest`s
+  addressed to a database slug through those seams. A database mid-write-transaction or
   mid-migration is `CriticalSection`; one with in-flight handler invocations
   is `Interruptible` and answers L2 `FinishAndRelinquish` by draining those
   invocations (exactly the let-edge-functions-finish primitive concern 9
@@ -343,7 +367,7 @@ concrete — each right-hand side names the real designed mechanism):
 
 | Postgres capability | Daemon-level equivalent (designed, not aspirational) |
 |---|---|
-| `pg_cron` | **mesh `cron`** — a `cron-api` job emits `stack.<db>.<name>.tick` into queue `vdb.<project>.<db>.jobs`; a declarative trigger assembles the payload; a stack handler runs the SQL/Deno work. cron.md concern 6 designs this leg end-to-end (its worked example is literally `vdb/analytics/nightly-rollup`). |
+| `pg_cron` | **mesh `queues`, `TriggerSource::Schedule`** (wave-3 fold — `cron` is absorbed into queues, ledger D2/#56/#91). A `Schedule`-source trigger with `HandlerRef::Emit` publishes `schedule.fired` into queue `vdb.<project>.<db>.jobs`; a downstream `Queue`-source trigger assembles the payload; a stack handler runs the SQL/Deno work. queues.md concern 10 designs this leg end-to-end (worked example `vdb/analytics/nightly-rollup`). |
 | `LISTEN/NOTIFY` | **mesh `pubsub-relay`** — vdb tees change events onto topic prefix `vdb/<project>/<db>/…` (lossy, observability-grade, like queues' tee); durable consumers register a trigger with `HandlerRef::Service`/queue delivery instead (guaranteed). Two consumers, two channels, both standard. |
 | Procedural triggers (PL/pgSQL) | **execution-engine handlers** — declarative `types::trigger` + SQL/Deno handler off the changelog (concern 4). Strictly more capable (handlers can call the mesh) and uniformly provenance-traced. |
 | Edge functions / RPC | **`Invoke` on the database entity** + Deno handler pool (concern 4). |
@@ -404,20 +428,11 @@ which is why the upgrade target is only ever cloud (round-9 lock).
 > ("just pick one"); the simplest shape wins: vdb already owns "statement
 > tracking, cleanup, and session management" (INTENT #128), so vdb now
 > also OWNS the sessions themselves — the warm driver connections keyed by
-> hosted database live inside the vdb daemon, not in a second co-located
-> daemon reached over two WS hops per handler action (the performance flag
-> below dissolves with the hop). This honors the operator's original
-> instinct (INTENT #115: db is a tool you call, VDB is the mesh-accessed
-> service — daemons are services). db is invoked as a **CLI subprocess**
-> for cold-path actions (migrations, promotion legs, bootstrap — db.md
-> path (a), unchanged); for the warm hot path, how vdb obtains driver
-> capability without violating INTENT #29 (never import db's internals) is
-> fill-time latitude: the sanctioned shape mirrors the note below — a
-> db-OWNED lib piece (db compiles its drivers as a lib db itself owns;
-> exposing it for embedding is a db-side decision) or vdb-owned driver
-> code; the `vdb-db` contract's verb vocabulary survives as the internal
-> session-surface shape either way. The `db serve` framing below is
-> retained as record.
+> hosted database live inside the vdb daemon. This honors the operator's
+> original instinct (INTENT #115: db is a tool you call, VDB is the
+> mesh-accessed service — daemons are services). **Wave-3 makes the split
+> concrete (below): the mechanism is no longer fill-time latitude.** The
+> `db serve` framing further down is retained only as record.
 
 > **[Previously UNFROZEN — ACCEPTED (friction-round 3, 2026-07-20, INTENT
 > #128; resolves the INTENT #115 drift flag).]** The operator accepts the `db serve`
@@ -434,44 +449,80 @@ which is why the upgrade target is only ever cloud (round-9 lock).
 > sessions it opens. See `db.md` concern 1 and `contracts/vdb-db.md`.
 
 The locked decomposition makes `db` the crate that "actually runs the actions
-against specific databases," and INTENT #29 forbids linking it. The mechanism
-proposal (db's designer runs concurrently — this is vdb's preferred shape,
-flagged for mid-batch reconciliation):
+against specific databases," and INTENT #29 forbids linking it. **The boring
+split, DECIDED this wave — state it plainly.** There are exactly two paths
+across the vdb→db boundary, chosen by call-frequency and boot-safety, and
+NEITHER links the `db` app-crate:
 
-**`db` grows a daemon mode — `db serve` — registering slug `db` (NodeScoped)
-on the mesh, speaking the `db-control-plane` protocol over the local `:3649`
-daemon; vdb keeps a session per hosted database.** Concretely:
+**(a) Cold path — `db` invoked as a CLI subprocess (`bin/db <verb> --format
+json`).** For every control-plane action that reuses `db`'s proven,
+engine-aware logic — migrations (apply/rollback/status/lint/crawl), promotion
+primitives (`dump-to`/`restore-from`/`content-hash`/`snapshot`), **changelog
+codegen** (regenerating the `_vdb_changelog` AFTER INSERT/UPDATE/DELETE
+triggers per table at `apply_definition`), structured introspection
+(`introspect --schema <table>` → typed `TableSchema`), and edge/handler deploy
+to cloud targets — vdb spawns `bin/db`, passes the resolved OS path + args,
+and parses the structured JSON result. These are infrequent, boot-safe (no
+mesh dependency — the identical path `inference` bootstrap, CI, and mesh's own
+database use), and carry no warm state. This is the **entire `vdb-db`
+contract** (a CLI-invocation contract, not a wire protocol).
 
-- **Session-oriented WS surface**, mapping ~1:1 onto db's existing `Driver`
-  trait (the real code): `OpenSession { target: DriverTarget } → session_id`,
-  then `ApplySql`/`ApplyParams`/`Query`/`QueryParams`/`Introspect`/
-  `ApplyAtomic`/`LedgerRecord`/`AdvisoryLock`/`EdgeDeploy`/`OutboxDrain` —
-  each an existing `lib/db` function exposed, not new behavior. `bin/db`'s
-  CLI is untouched; the daemon is a second thin shell over the same lib
-  (db's own dual-role shape, extended).
-- **Co-location rule:** a `db serve` instance runs on every database-hosting
-  node (a supervision boot-order fact: `vdb` requires `db` locally), so the
-  hot path is vdb → local mesh daemon → local db → SQLite file — one local
-  relay hop, no cross-node traffic for local work. Cross-node db access is
-  never needed: vdb work happens at the database's home by construction.
-- **Extensions db needs (the operator-authorized "extend db as necessary"
-  list, for db's designer):** (1) the `db serve` session surface itself; (2)
-  **changelog codegen** for the sqlite driver — generate/regenerate the
-  `_vdb_changelog` triggers per table at migration-apply time (mirrors its
-  existing handler codegen); (3) **copy/verify verbs** for promotion —
-  `DumpTo { format }`, `RestoreFrom`, `ContentHash { table } → hash` (schema
-  replay already exists via the ledger; these add the data legs); (4) sqlite
-  **outbox parity** (its `outbox` capability flag turned on for sqlite where
-  applicable) so the Supabase and local dispatch stories stay symmetric; (5)
-  the already-flagged reconciliation of its keychain/vault reads toward
-  `secrets` (db.md round-8/9 notes — not vdb's to design).
-- **Performance flag, stated honestly:** every handler-context `db.query`
-  crosses two local WS hops (vdb→mesh→db). At personal-mesh scale this is
-  fine (sub-ms local relay); if it ever measures, the *sanctioned* escape is
-  the same skeleton-time latitude vfs took with gc — db's sqlite driver is a
-  lib db itself compiles; an in-process fast path would be a db-owned
-  embedding decision, never vdb importing db's internals. Default is the
-  wire; the contract shape is identical either way.
+**(b) Hot path — vdb speaks SQL directly against a warm session it owns.** The
+per-row-change runtime — draining `_vdb_changelog`, running SQL handlers,
+serving a Deno handler's `db.query/exec` context calls, and writing the
+provenance record — runs against a **warm driver connection vdb holds itself**,
+keyed by hosted database. THIS is "the session," and it lives in vdb (the
+respoken decision): vdb owns statement tracking, cleanup, and session
+management (INTENT #128) over connections it opened, so the session and its
+tracker are one thing in one process. vdb obtains driver capability from the
+**standard driver crates** (`rusqlite` local, `tokio-postgres` cloud) —
+third-party libraries, NOT `db`'s internals, so INTENT #29 is honored by
+construction (the rule forbids linking the `db` *app-crate*, not using the same
+public driver crates `db` itself compiles against). No db behavior is
+duplicated: the hot path is parameterized `exec`/`query` + a provenance INSERT
+in one transaction; every *smart* engine-aware operation (migration planning,
+promotion, codegen, introspection) stays behind path (a).
+
+**Session lifecycle (in vdb — the entity boot/teardown of concern 2).** When
+vdb boots a database entity it: (1) gets a local OS path from vfs
+(`OpenAnchored`, holding the `vfs.anchor.<path>` exclusive-writer lock); (2)
+runs any pending migrations + changelog codegen via **path (a)** (a `bin/db`
+subprocess); (3) opens ONE warm WAL-mode write connection + a read pool — the
+session — and starts the changelog tailer. `SaveWindow` (L3) checkpoints +
+`Snapshot`s; teardown/L4 closes the session (drain in-flight → WAL-checkpoint →
+release the anchor lock). **Cleanup** = closing the session's connections and
+suspending the tailer; the persisted cursor (`_vdb_meta.processed_seq`) makes
+a killed session crash-recoverable (concern 4).
+
+**Single-writer discipline (load-bearing).** vdb is the sole *owner* of each
+hosted SQLite file (it holds the vfs anchor lock, so no other node's vdb can
+open it — the split-brain guard, concern 10). Its warm connection is the one
+hot-path writer. When a cold-path `bin/db` subprocess must write the same file
+(a migration), vdb **quiesces its own writes first**: it drives the entity into
+`CriticalSection` (concern 2), drains in-flight handler writes, pauses the warm
+write connection, runs the subprocess, then resumes. Two OS connections exist
+only transiently and never write concurrently — vdb's write-serialization plus
+SQLite's own file locking are the backstop.
+
+**Extensions `db` needs (the operator-authorized "extend db as necessary"
+list, for db's designer)** — unchanged in substance, but each is now a **CLI
+verb / lib capability**, never a daemon session verb: (1) **changelog codegen**
+for the sqlite driver (`db install-changelog`); (2) **copy/verify verbs** for
+promotion (`db dump-to`, `db restore-from`, `db content-hash`); (3)
+**structured introspection** (`db introspect --schema`); (4) sqlite **outbox
+parity** where applicable, so the Supabase and local dispatch stories stay
+symmetric; (5) the flagged reconciliation of db's keychain/vault reads toward
+`secrets` (db.md concern 7 — not vdb's to design). The `db serve` daemon of the
+prior draft is **retired**: none of these needs a warm socket, and the warm
+state that once justified the daemon now lives in vdb's session.
+
+**Why this is the boring split.** It deletes a whole public surface (`db serve`
++ its WS protocol + its mesh registration), gives "session" exactly one home,
+keeps `db` a pure boot-safe tool anyone can call as a command, and dissolves
+the two-WS-hops-per-handler-action performance flag the daemon carried (the hot
+path is now an in-process driver call). The one cost — vdb links a driver crate
+directly — is precisely what "sessions live in vdb" means, and it costs nothing
+against INTENT #29.
 
 ### 8. Provenance — the PRIMARY HOME (INTENT #85/#92): every handler touch, healthcare-grade
 
@@ -485,10 +536,23 @@ kept. The design:
   restored database still explains itself. This is the healthcare-data
   -engineer instinct made structural — the audit trail is never in a side
   system that can drift from the data it describes.
+- **Atomicity, and who owns the transaction (INTENT #85, wave-3 precise).**
+  The provenance record for a handler touch commits **in the same transaction
+  as the mutation** — a crash between the write and its trace is impossible by
+  construction. Because the hot path now runs on **vdb's own warm session**
+  (concern 7 path (b)), it is vdb's connection that opens the transaction,
+  applies the handler's write, and INSERTs the `_vdb_provenance` row before
+  commit — the atomic guarantee moves with the connection owner. On the cold
+  path, a `bin/db` migration commits its migration-ledger row atomically in its
+  own subprocess transaction. `db` owns the ops-schema *shape* + the
+  atomic-write *discipline* (installed via path (a)); vdb *executes* the
+  per-touch atomic write on the runtime path. The invariant is identical either
+  way: no committed mutation ever lacks its provenance.
 - **The record.** Every handler invocation writes one provenance record;
   every changelog row a handler causes carries that invocation's id as
   `causation_id` (concern 4's context object routes handler writes through
-  vdb precisely to guarantee this):
+  vdb's session precisely to guarantee this — vdb sets the current causation
+  context on the connection before the write, so the AFTER-triggers stamp it):
 
   ```rust
   pub struct HandlerInvocationRecord {
@@ -666,9 +730,12 @@ Contract edges (cross-process, via the local `:3649` daemon):
   per-database-entity registration, the catalog keyspace tenancy, and the
   (reduced — concern 6) locks usage: promotion mutex + event-ID semaphores.
   *(scaffold/contracts/stack-mesh.md → vdb-mesh)*
-- **db** via `vdb-db` — the execution arm: the `db serve` session protocol
-  (Driver-trait-shaped verbs) + the promotion copy/verify verbs + changelog
-  codegen. NEW pair (wave2-plan §3b). Co-designed with db this batch.
+- **db** via `vdb-db` — the execution arm, **wave-3 reshaped to a CLI-subprocess
+  contract** (concern 7): vdb spawns `bin/db <verb> --format json` for cold-path
+  control-plane actions (migrations, promotion copy/verify verbs, changelog
+  codegen, structured introspection, edge deploy). The runtime hot path is NOT
+  this contract — it is vdb's internal warm session speaking SQL through its own
+  driver crate. NEW pair (wave2-plan §3b).
   *(authored: scaffold/contracts/vdb-db.md)*
 - **secrets** via `vdb-secrets` — (a) the local-mesh-database push adapter
   (secrets → a stack database's encrypted secret facility — the v1-BUILD
@@ -687,14 +754,19 @@ Contract edges (cross-process, via the local `:3649` daemon):
 
 Cross-cutting protocols (one shared document, vdb a party; consumed, not
 authored): `queues-api` (stack handlers as `HandlerRef` targets; handlers
-enqueue events), `cron-api` (the pg_cron leg — cron.md's worked example),
-`locks-api` (promotion mutex; event-ID semaphores), `restart-protocol`
-(per-database-entity participation — concern 2), `pubsub-protocol`
-(`vdb/…` topics), `surface-schema`, `service-lookup` (daemon NodeScoped +
-per-database entities).
+enqueue events; **the `TriggerSource::Schedule` leg that replaces `cron` for
+the pg_cron equivalent — wave-3 fold, ledger D2**), `locks-api` (promotion
+mutex; event-ID semaphores), `restart-protocol` (per-database-entity
+participation, carried by `chassis`'s client half — concern 2),
+`pubsub-protocol` (`vdb/…` topics), `surface-schema`, `service-lookup` (daemon
+NodeScoped + per-database entities). *(`cron-api` is tombstoned into
+`queues-api` — no longer a distinct edge.)*
 
 Internal-lib seams (compiled in, NOT contract edges — INTENT #29/#45):
-`mesh-client`, `substrate-types` (`trigger`, `event`, `provenance`, `error`
+`chassis` (the daemon-wrapper lib, absorbs `mesh-client` — brings vdb online +
+carries every service↔mesh client half), the **driver crates** `rusqlite` /
+`tokio-postgres` (the warm hot-path SQL surface, concern 7),
+`substrate-types` (`trigger`, `event`, `provenance`, `error`
 vocabulary + the `types::vdb` structs recorded in the authored contracts), **`execution-engine`**
 (the stack-tables adapter runs in-process; shares `types::trigger` with
 queues by construction), and the Deno embedding (`deno_core`/subprocess pool —
@@ -728,12 +800,14 @@ participation (concern 2); the `StackTarget` capability matrix (concern 3);
 the local target's changelog change-capture, cursor semantics, Deno sandbox +
 handler context, and Invoke surface (concern 4); the SQLite-sufficiency
 mapping (concern 5); trigger/handler registration-as-data in the ops schema +
-the reduced locks scope (concern 6); the in-database provenance schema,
+the reduced locks scope (concern 6); the **db split — CLI subprocess (cold
+path) vs vdb-owned warm session speaking SQL directly (hot path) — and its
+session lifecycle + single-writer discipline** (concern 7, DECIDED this wave);
+the in-database provenance schema,
 causation threading, and lineage surface (concern 8); the 7-step promotion
 state machine with barrier/drain semantics (concern 9); and the
 replicate-catalog-not-data consistency split (concern 10).
-**approach-sketched** for: the `vdb-db` wire (preferred shape proposed;
-db's designer co-resolves this batch); `kg-vdb` (vdb side proposed; KG
+**approach-sketched** for: `kg-vdb` (vdb side proposed; KG
 co-resolves); the exact Deno embedding (in-process `deno_core` vs subprocess
 pool — fill-time, sandbox spec governs either); the Supabase trigger→outbox
 compilation details (db's existing machinery bounds it); and everything
@@ -759,7 +833,7 @@ corrupts provenance, the module's first-order promise); (2) the **promotion
 state machine** (barrier/drain/delta/flip — its failure mode is a split-brain
 database; write the abort-path and flip-window tests before the happy path).
 The Deno sandbox is transcription against the spec but wants a security
-review pass. Fill AFTER db (its `serve` surface), vfs, locks, queues,
+review pass. Fill AFTER db (its `bin/db` cold-path verbs), vfs, locks, queues,
 replicated-kv, and the execution-engine are filled; alongside kg's early
 fixtures.
 
@@ -773,13 +847,13 @@ formerly in this section are superseded by the authored contracts.
 
 - `vdb-mesh` (vdb ↔ mesh) — registration (per-database supervised entities) + catalog keyspace + locks; RENAMED from `stack-mesh` at harmonization. → `scaffold/contracts/vdb-mesh.md`
 - `vdb-vfs` (vdb ↔ vfs) — the SQLite-file-in-VFS anchor/snapshot surface (vfs.md's surface accepted); RENAMED from `stack-vfs` at harmonization. → `scaffold/contracts/vdb-vfs.md`
-- `vdb-db` (vdb → db) — the execution arm: the `db serve` session protocol. → `scaffold/contracts/vdb-db.md`
+- `vdb-db` (vdb → db) — the execution arm, **wave-3 reshaped**: a CLI-subprocess control-plane contract (cold path); the hot-path session is vdb-internal. → `scaffold/contracts/vdb-db.md`
 - `vdb-secrets` (vdb ↔ secrets) — push adapter + cloud credentials (secrets.md's half accepted, one refinement). → `scaffold/contracts/vdb-secrets.md`
 - `aws-vdb` (vdb → aws) — the RDS+Lambda cloud target; aws.md's half accepted (design-only v1). → `scaffold/contracts/aws-vdb.md`
 - `kg-vdb` (kg ↔ vdb) — KG's storage/routing through vdb (the locked-layering edge). → `scaffold/contracts/kg-vdb.md`
 - `projects-vdb` / `environments-vdb` — stub-track (anticipated, content deferred). → `scaffold/contracts/projects-vdb.md`, `scaffold/contracts/environments-vdb.md`
 
-Also a party to (cross-cutting): `locks-api`, `queues-api`, `cron-api`, `restart-protocol`, `pubsub-protocol`, `surface-schema`, `service-lookup` — see `scaffold/contracts/`.
+Also a party to (cross-cutting): `locks-api`, `queues-api` (incl. the absorbed `Schedule` trigger source — `cron-api` is tombstoned into it), `restart-protocol` (via `chassis`), `pubsub-protocol`, `surface-schema`, `service-lookup` — see `scaffold/contracts/`.
 
 ## Non-obvious tests (conformance + correctness)
 
@@ -843,7 +917,15 @@ Also a party to (cross-cutting): `locks-api`, `queues-api`, `cron-api`, `restart
   an Unknown `StackTargetKind` neither hosts nor deletes it; a newer trigger
   variant fails that trigger's registration loudly and locally (queues'
   rule), leaving sibling triggers live.
-- **pg_cron leg end-to-end (cron.md's worked example):** the
-  `vdb/analytics/nightly-rollup` job fires once fleet-wide, the trigger
-  assembles, the handler runs against the right database, provenance traces
-  handler-write → trigger → cron fire event.
+- **pg_cron leg end-to-end (queues.md's `TriggerSource::Schedule` worked
+  example):** the `vdb/analytics/nightly-rollup` schedule trigger fires once
+  fleet-wide (occurrence-keyed `locks` semaphore), `HandlerRef::Emit` publishes
+  `schedule.fired`, a downstream `Queue`-source trigger assembles, the handler
+  runs against the right database, provenance traces handler-write → trigger →
+  schedule fire event.
+- **Cold/hot boundary (wave-3 split, concern 7):** a migration runs via a
+  `bin/db` subprocess while vdb holds the entity in `CriticalSection` — no
+  concurrent hot-path write reaches the file; after resume, the warm session's
+  provenance-atomic handler writes and the freshly codegen'd `_vdb_changelog`
+  triggers are both live. INTENT #29 guard: vdb links no `substrate-db`
+  symbol (only `rusqlite`/`tokio-postgres`), verified at build.

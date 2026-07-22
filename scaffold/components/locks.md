@@ -1,6 +1,12 @@
 # locks
 
-**Status:** NEW (wave 2, batch 2 — Fable seat). **Nesting:** internal lib of mesh
+**Status:** wave-2 design (batch 2 — Fable seat), **light-refreshed wave 3**
+(intent-ledger unit `replicated-kv-locks-refresh`): UTC-nanosecond
+acquisition-timestamp sourcing via the mesh time module (concern 2, INTENT
+#112/#116), the queues/cron batch-3 fold reflected in Relationships, and the
+PARKED OQ-1 boundary restated explicitly (concern 6). No structural change —
+identity model, acquire protocol, strictness knob, and the merge reconciler
+are unchanged from wave 2. **Nesting:** internal lib of mesh
 (module `lib/mesh::locks`), Ring 3 in mesh-core's internal layering, riding
 `replicated-kv`. Designs the module left OPEN in `mesh.md` concern 10 ("the full
 partition/merge semantics... it has to generalize to be reliable in an infinite
@@ -64,7 +70,11 @@ elegantly (operator: "we cannot violate the laws of physics"):
 6. **Clocks are naive.** LWW timestamps and tie-breaks use wall clocks with a
    deterministic node-id tiebreak (INTENT #32, operator-blessed). A skewed clock
    can win a consolidation tie-break; acceptable at personal-mesh scale, flagged
-   for the record.
+   for the record. **Refined, not repealed (concern 2):** the wall clock behind
+   `created_at`/`granted_at` is now `MeshClock`'s neighbor-corrected UTC
+   (INTENT #112/#116, network-topology.md concern 6), not a raw local clock —
+   fewer ties in practice, same naive-timestamp model in principle; the HLC
+   ratchet underneath the KV envelope is unaffected either way.
 
 ## Primary design concerns
 
@@ -135,6 +145,35 @@ to its local `:3649`):
 The receipt fields `acked_nodes` and `minted_fresh` make the guarantee's *scope*
 first-class data: an application that cares can see exactly which nodes knew at
 confirmation and whether this grant created a fresh (possibly-twin) instance.
+
+**Timestamp precision — UTC nanosecond via the mesh time module (INTENT
+#112/#116).** `InstanceRecord.created_at` (minted at step 2) and
+`HoldRecord.granted_at` (stamped at step 6, the owner's local clock) are read
+from **`MeshClock::now_utc()`** — network-topology's neighbor-ping-corrected
+clock register (`network-topology.md` concern 6, "Mesh time authority"; the
+register itself lives on the mesh-core Ring-0 seam that concern splits out) —
+**not** raw `SystemTime::now()`, at the type's native nanosecond resolution
+(`chrono::DateTime<Utc>` is nanosecond-precision internally; nothing here
+truncates it for display). This is the operator's own framing of "the
+semaphore," verbatim (#112): *"when you try to acquire it, creates a UTC
+timestamp down to the nanosecond — whoever gets it."* Reading the corrected
+register rather than an uncorrected per-node clock buys exactly one thing,
+stated honestly: it **shrinks, but does not eliminate**, the odds that two
+owner nodes minting twin instances at nearly the same instant land on a
+genuine `created_at` tie in the merge reconciler (concern 6) — the
+deterministic `InstanceId` tiebreak still exists for the residual case, and
+boundary 6 ("clocks are naive") stands: this is a better-corrected wall clock,
+not a causal or vector clock, and a skewed/lagging neighbor can still win a
+close tiebreak (network-topology.md's own honesty note on its filtering).
+**This is a different timestamp from replicated-kv's `Version.ts_ms`** (the
+HLC ratchet that governs the *KV envelope's* own LWW merge/apply decision for
+the `locks/` keyspace entries these records ride in — kept exactly as
+designed, unchanged by this note, replicated-kv.md concern 1). `created_at`/
+`granted_at` are lock-domain fields *inside* that entry's value, used only for
+locks' own tiebreak/ordering logic — reading `MeshClock` here threads no new
+dependency: it is the same Ring-0-adjacent register replicated-kv's HLC ratchet
+already reads (network-topology.md concern 6's register/control-loop split),
+so locks gains a more-honest timestamp without gaining a new party.
 
 ### 3. Owner death ≡ partition ≡ flap: ONE divergence mechanism (the "infinite circumstances" answer)
 
@@ -212,6 +251,33 @@ deliberately rejected until a real consumer needs it.
 > node ever." Nothing below is redesigned now; this concern's
 > deterministic reconciler + `PartitionMergeExceeded` surface is where
 > that discussion will attach.
+
+> **PARKED — do not decide (OQ-1, ledger §B.1/§C, restated here.)** Whether a
+> dedicated authority node exists, whether it lives in the cloud, and whether
+> it blesses anything beyond lock conditions are the operator's to settle —
+> not this file's. What THIS file's boundary already is, and stays, regardless
+> of how OQ-1 resolves: **locks works among the nodes that can currently reach
+> each other, full stop** — grants, flushes, and the reconciler below operate
+> only over the live-reachable set (concern 2) or fail fast under
+> `Strictness::WholeFleet` (concern 4); there is no dependency on any
+> authority, cloud or otherwise, anywhere in the acquire/renew/merge path, and
+> none is threaded in by this note. The operator's **no-authority
+> merge-delegation alternative** (INTENT #163 — a per-mesh write-blessing
+> semaphore, with partition-merge resolution pushed back to each affected
+> application rather than a central node) is listed here as the **open
+> fork**, not adopted: this concern's deterministic reconciler +
+> `PartitionMergeExceeded` surface already *is* the no-central-authority shape
+> (every daemon reconciles independently from converged KV, per-application
+> resolution via the error, concern 6 below) — but whether it ever grows into
+> the more general "one node asks each affected application" semaphore
+> `BlessingTarget` describes is the parked question, not a foregone
+> conclusion. Concretely: `chassis.md` concern 7 already defaults its
+> `BlessingTarget` seam (the client-half outbox for consistency-requiring
+> changes, INTENT #157) to **this exact reconciler surface**, stubbed and
+> one-line-swappable to a future cloud authority without rewriting chassis or
+> any other contract — locks is the boring-provisional target, not a
+> commitment to be the permanent one. No `authority` crate, no
+> `authority-blessing` contract family, exists or is implied by this file.
 
 Every daemon's locks lib subscribes to the `locks/` keyspace
 (`KvHandle::subscribe`). When resync after a rejoin (bidirectional, both sides
@@ -325,12 +391,25 @@ after a GC TTL; sweep discipline mirrors service-registry's tombstone rules.
 - **any service ↔ mesh.locks** via **`locks-api`** — acquire/release/renew/query
   + the partition-merge error type; cross-cutting, surface-schema-style (ONE
   shared document, every service a party — wave2-plan §3b + flag §5.4). Known
-  parties today: `queues` (event-ID semaphores, in-process but same schema),
-  `cron` (run-anywhere dedup), `execution-engine` (distributed trigger
-  coordination — reaches locks over the wire via its host app's mesh-client,
-  since shared libs are not contract parties), `vdb` (promotion locks, INTENT
-  #86), `vfs`/`gc` (lock-with-expiry on managed entries — candidate
-  convergence, flagged). *(authored: scaffold/contracts/locks-api.md)*
+  parties today, **updated for the wave-3 batch-3 queues/cron fold**
+  (`queues.md` concern 10 — `cron` is now a tombstone, absorbed into
+  `TriggerSource::Schedule`, so it is no longer a separate party here):
+  - **`queues`**, riding the *same* event-ID semaphore composition for **two**
+    distinct call sites, both consumers of this file's identical
+    acquire/release surface, neither a new mechanism: (1) the **queue-pull**
+    discovery-claims-ownership model (INTENT #112 — every processor races to
+    acquire the per-event semaphore rather than one leased owner, "reliability
+    over speed"; the UTC-nanosecond acquisition timestamp above (concern 2) is
+    this file's answer to the operator's own framing of that race); and (2)
+    the **absorbed schedule evaluator's single-fire** semaphore (`queues.md`
+    concern 10 — an `Anywhere`-target occurrence races the identical
+    `Acquire{slug: occurrence_id, threshold: 1}` shape cron used to call
+    directly; cron itself no longer exists as a party, only `queues` does).
+  - `execution-engine` (distributed trigger coordination — reaches locks over
+    the wire via its host app's mesh-client, since shared libs are not
+    contract parties), `vdb` (promotion locks, INTENT #86), `vfs`/`gc`
+    (lock-with-expiry on managed entries — candidate convergence, flagged).
+  *(authored: scaffold/contracts/locks-api.md)*
 - **`replicated-kv`** — **internal-lib seam, not a contract edge** (compiled-in
   sibling, INTENT #29 exception). locks consumes `KvHandle` (get / put /
   subscribe) **plus one seam it REQUIRES beyond mesh-core's sketch:**
@@ -345,7 +424,12 @@ after a GC TTL; sweep discipline mirrors service-registry's tombstone rules.
   (routing + flush-set computation + `self_offline` awareness); sibling lib,
   not a contract edge. mesh-core's `MeshContext` must expose this view to
   Ring 3 (flagged — the mesh-core seam list currently gives Ring 3 only
-  `KvHandle`).
+  `KvHandle`). **Wave-3 addition:** also the in-process read of `MeshClock`
+  (the corrected-wall-clock register `network-topology.md` concern 6 measures
+  and mesh-core's Ring-0 holds) for `created_at`/`granted_at` stamping
+  (concern 2) — the identical register replicated-kv's HLC ratchet already
+  reads (INTENT #112/#116), so this is not a new dependency, only a second use
+  of one already flagged for Ring-3 exposure above.
 - **`pubsub-relay`** — locks emits observability/notification events on the
   reserved topic prefix **`locks.*`** (`locks.merge.<slug>`,
   `locks.consolidated.<slug>`, `locks.expired.<slug>`) as a normal internal
