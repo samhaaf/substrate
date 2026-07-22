@@ -3,12 +3,13 @@
 ## Parties
 
 - **mesh** (`supervision`, the daemon side — authoritative view) — signals restarts
-- **every service** (via `mesh-client`, the client half) — reports interruptibility, yields
+- **every service** (via `chassis`, the client half — formerly `mesh-client`,
+  absorbed, see `components/mesh-client.md`) — reports interruptibility, yields
 
 Cross-cutting, surface-schema-style: ONE shared document, every service is a
 party (wave2-plan §5.4). Struct vocabulary is homed in `types::restart` +
 `types::error::supervision`; the daemon behavior is `supervision`'s, the client
-behavior is `mesh-client`'s.
+behavior is `chassis`'s.
 
 ## Purpose
 

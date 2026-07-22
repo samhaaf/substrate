@@ -2,7 +2,8 @@
 
 ## Parties
 
-- **every service** (via `mesh-client`) — publisher and/or subscriber
+- **every service** (via `chassis` — formerly `mesh-client`, absorbed, see
+  `components/mesh-client.md`) — publisher and/or subscriber
 - **mesh** (`pubsub-relay`, the L1 daemon facet on `:3649`) — the relay
 
 Cross-cutting, surface-schema-style: ONE shared document, every service is a

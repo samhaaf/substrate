@@ -4,7 +4,8 @@
 Any device / service (cc, org, **inference**, vfs, kg, projects, secrets, the
 `mesh` CLI) ↔ its **LOCAL** `mesh.service-registry` daemon, over `:3649`
 (rides mesh-core's `mesh-transport` envelope). The client half is compiled
-into every service as part of `mesh-client`; the server half is
+into every service as part of `chassis` (formerly `mesh-client`, absorbed —
+see `components/mesh-client.md`); the server half is
 `lib/mesh::registry`, a keyspace tenant of `replicated-kv`.
 *(gateway removed from the party list 2026-07-18 — merged into mesh; the
 dashboard origin is mesh's own surface now.)*

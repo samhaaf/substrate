@@ -10,7 +10,14 @@ taxonomy (`SubstrateError`/`Result<T>`), the `Promise`/`PromiseSender` handoff
 primitive, and — new in wave 2 — the shared vocabulary of the OS-wide protocols
 that every service speaks: the WS pub/sub envelope, the standardized typed
 event, the boring surface schema, the graceful-restart messages, and the
-enriched mesh-node identity/capabilities. Organized **one module per domain**.
+enriched mesh-node identity/capabilities; and — new in wave 3 — the
+**mesh-transport outcome switch** (the #154 outermost `success / error /
+promise` switch every inter-service exchange resolves to), the **first-class
+wire `Promise`** (#152 — a promise id that later fulfils by push or fetch, whose
+enum shape is what makes "handle the promise case" a compiler obligation), and
+the **required delivery-persistence policy** (#155 — the save-failed-deliveries
+yes/no flag every published event must carry). Organized **one module per
+domain**.
 It owns **no I/O, no async business logic, no service behavior, and no opinion
 about how any other crate uses these types** — it is pure vocabulary. Every
 `scaffold/contracts/<edge>.md` schema section is expressed IN TERMS OF this
@@ -27,6 +34,20 @@ Wave-2 status: **UNLOCKED (INTENT #26)** — the round-3 as-is freeze is gone;
 additions and updates are welcome, governed by the anti-dumping-ground
 guardrails below (which stand and gain a fourth). Everything in this pass is
 designed for real, to `implementation-ready`.
+
+Wave-3 status: this pass folds the **comms-stack** vocabulary that wave 2 left
+unfolded — the #154 envelope switch, the #152 wire promise, the #113 sender
+version stamp (extended onto the transport layer), and the #155 delivery-
+persistence field. Three additions are governed by the guardrails below and
+land as ONE new module (`transport.rs`, the mesh-transport vocabulary) plus one
+small cross-cutting module (`delivery.rs`) plus one field on the existing
+`pubsub.rs` — no grab-bag. **Boundary held (design-around OQ-1, PARKED):**
+`types` adds **no authority-node and no blessing-queue types** this wave. The
+blessing-queue message shapes are chassis's to design, against an **abstract
+blessing-target** — `types` deliberately holds nothing that names, locates, or
+privileges an authority node, so that either the no-central-node
+merge-reconciler path (#163) or a future cloud authority can be chosen later
+without a change here.
 
 ## Primary design concerns
 
@@ -90,6 +111,35 @@ crate at once). Four guardrails, in order of teeth:
    to the sender** telling it to update. This is the runtime data that makes
    supervision's version floors and compatibility restarts enforceable at the
    message level (see `supervision.md` concern 9).
+
+   **Wave-3 extension (INTENT #113, onto the transport layer).** The sender
+   stamp is not new data — it already rides `Provenance.service_version` — but
+   wave 3 makes it load-bearing on the #154 transport switch: because every
+   `MeshReply`/`Envelope` embeds `Provenance`, the outer switch is
+   version-attributed for free, and the two runtime consequences #113 names get
+   FIRST-CLASS wire types in `transport.rs`: a floored message is rejected with
+   a matchable `WireError { domain: "mesh", code: "version_below_floor", … }`
+   (mirroring `MeshError::VersionBelowFloor` in `error/mesh.rs` — a wire code,
+   not a silent drop), and the one-version-back-compat "please update" signal is
+   the `PleaseUpdate` struct a receiver attaches back to a sender it is
+   tolerating. No new stamping effort per service; the daemon (chassis) stamps
+   provenance once, as today.
+
+   **Wave-3 LOCKED-nuance (INTENT #155) — a REQUIRED field is not an
+   additive-optional field.** #155 demands the delivery-persistence choice be
+   *required* ("a required field indicating whether failed deliveries should be
+   saved… we can't just be silently dropping things"), which is in tension with
+   guardrail 4's "every new field `#[serde(default)]`." The reconciliation, and
+   the ONLY sanctioned exception shape: the field is **required at the type
+   boundary** — its type (`delivery::DeliveryPersistence`) derives **no
+   `Default`**, so a publisher cannot construct a published event without
+   consciously choosing — while its serde attribute supplies a **safe-side
+   decode fallback for older senders** (`#[serde(default = "…save_failed")]`),
+   so a message from a node predating the field decodes to `SaveFailed` (persist,
+   never drop), never to a silent-drop default. "Required to author, safe to
+   decode." This is the one place the additive-optional rule bends, and it bends
+   toward resiliency, exactly as #155 asks. It is NOT a license to add more
+   no-default wire fields elsewhere.
 
 **Sharper instance of concern 3 — the error taxonomy restructuring (now built
 for real).** `SubstrateError` is today ONE flat enum growing by domain-tagged,
@@ -221,6 +271,11 @@ pub struct Envelope<P = serde_json::Value> {
     pub topic: Topic,
     pub published_at: DateTime<Utc>,
     pub provenance: Provenance,
+    // REQUIRED (INTENT #155): the publisher's save-failed-deliveries choice.
+    // No `Default` on the type => must be chosen; serde decode-fallback is the
+    // safe side (SaveFailed) for older senders. See guardrail 4 wave-3 nuance.
+    #[serde(default = "delivery::DeliveryPersistence::save_failed")]
+    pub delivery: delivery::DeliveryPersistence,
     pub payload: P,                // frequently Event<..>, but any typed struct
 }
 
@@ -385,6 +440,157 @@ not defined now** — it enters `node.rs` when `vfs` is designed (batch 3) and t
 `vfs-mesh` contract names it, satisfying the inclusion test then rather than
 speculatively today.
 
+## New wave-3 modules (all `implementation-ready`)
+
+Same rules as the wave-2 modules: Rust-flavored sketches, exact field names are
+the harmonizer's to final-tune, shapes buildable as written. Both new modules
+are wire-crossing, so guardrail 4 applies in full (the `delivery.rs` required
+field is the sanctioned "required to author, safe to decode" exception above).
+
+### `transport.rs` — the mesh-transport switch, wire promise, and version-floor wire types (INTENT #154, #152, #113)
+
+This is the home of the **#154 envelope**: the operator's "outermost layer is a
+switch — success / error / promise — then a schema which specific
+inter-application messages inherit from going inward." It is deliberately a
+**distinct type from `pubsub::Envelope`** — the two are different layers over the
+same WS transport: `pubsub::Envelope` is the fire-and-forget fan-out wrapper;
+`transport::MeshReply` is the outcome of a request/response exchange (the
+universal loopback/RPC reply, INTENT #152). Keeping them separate is required by
+the ledger (the wave-2 "envelope" grep is the pub/sub one, not this switch) and
+by concern 3 — two domains, two modules.
+
+```rust
+/// INTENT #154 — the outermost switch every inter-service EXCHANGE resolves to.
+/// The `T` is the "schema which specific inter-application messages inherit from"
+/// going inward: a request/response edge monomorphizes `MeshReply<MyResponse>`;
+/// mesh's generic relay carries `MeshReply<serde_json::Value>`.
+///
+/// THIS ENUM IS THE ENFORCEMENT (INTENT #152 "every inter-service request must
+/// have a handler for the promise case"): any caller that `match`es a reply is
+/// compiler-forced, Rust-exhaustive-switch style, to write the `Promise` arm —
+/// promise-handling is non-optional BY CONSTRUCTION, not by convention. This is
+/// the "type vocabulary for that enforcement" the daemon (chassis) leans on.
+pub enum MeshReply<T = serde_json::Value> {
+    Success(T),
+    Error(WireError),
+    Promise(PromiseTicket),
+}
+
+/// Wire-safe error: preserves the "errors stringify at the boundary" invariant
+/// (guardrail 1 — `types` never learns another crate's error type) while giving
+/// the caller a MATCHABLE `code`. `domain` mirrors the error-taxonomy submodule
+/// names ("mesh" | "inference" | "store" | …); `code` is the machine key
+/// (e.g. "version_below_floor", INTENT #113).
+pub struct WireError {
+    pub domain: String,
+    pub code: String,
+    pub message: String,
+    #[serde(default)] pub retriable: bool,
+    #[serde(default)] pub details: serde_json::Value,
+}
+```
+
+**The first-class wire promise (INTENT #152).** This is NOT the in-process
+`Promise`/`PromiseSender` in `promise.rs` (that is a `tokio::oneshot` handoff,
+wire-exempt). The wire promise is a durable *id* that crosses the mesh; its
+value arrives later by push or fetch. Two distinct domains, two distinct
+homes — the module descriptions say so explicitly to keep the vocabulary honest.
+
+```rust
+pub struct PromiseId(pub Uuid);
+
+/// Returned inside `MeshReply::Promise` when a service can't answer instantly
+/// (INTENT #152 "mesh returns a PROMISE; the caller moves on").
+pub struct PromiseTicket {
+    pub promise_id: PromiseId,
+    pub issued_at: DateTime<Utc>,
+    pub delivery: PromiseDelivery,                 // how the value comes back
+    // INTENT #155 "Promise resolution notices ride this too": the resolution
+    // notice inherits the same save-failed-deliveries durability choice.
+    #[serde(default = "delivery::DeliveryPersistence::save_failed")]
+    pub persistence: delivery::DeliveryPersistence,
+}
+
+pub enum PromiseDelivery {
+    Push { topic: Topic },   // value pushed back over WS on this topic (INTENT #152)
+    Fetch,                   // caller fetches by `promise_id` later
+}
+
+/// The later fulfillment — pushed on the `Push` topic, or returned from a fetch.
+/// A promise never resolves to another promise (no infinite regress), so this is
+/// a two-plus-pending switch, NOT a re-use of `MeshReply`.
+pub enum PromiseResolution<T = serde_json::Value> {
+    Fulfilled(T),
+    Failed(WireError),
+    Pending,                 // a fetch issued before the value is ready
+}
+```
+
+**Version-floor wire types (INTENT #113).** The sender name+version already rides
+`Provenance` (unchanged); wave 3 adds the two runtime consequences #113 names as
+matchable wire vocabulary here rather than as stringly leaves:
+
+```rust
+/// Attached back to a sender whose message a receiver is tolerating under the
+/// one-version-back-compat rule (INTENT #113 "attach a warning back to the
+/// sender telling it to update"). Rides back on the reply's provenance/warnings
+/// channel; carries no behavior.
+pub struct PleaseUpdate {
+    pub service: String,
+    pub have: SemVer,
+    pub floor: SemVer,                       // the version the receiver wants
+    pub reason: VersionFloorReason,          // Compatibility | Security | Policy
+    #[serde(default)] pub deadline_hint: Option<DateTime<Utc>>,
+}
+pub enum VersionFloorReason { Compatibility, Security, Policy }
+// A message BELOW the floor is not warned but REJECTED, as the matchable
+// `WireError { domain: "mesh", code: "version_below_floor", .. }` above.
+```
+
+**Boundary (design-around OQ-1, PARKED).** `transport.rs` names no
+authority/blessing types. A consistency-requiring exchange that needs blessing is
+still, on the wire, just a `MeshReply` (its `Promise` arm covers "answer later");
+WHO blesses and WHERE lives entirely in chassis against an abstract
+blessing-target. `types` stays authority-agnostic so #163's no-central-node
+merge-reconciler path and a future cloud authority are both reachable without a
+change here.
+
+### `delivery.rs` — delivery-persistence policy (INTENT #155)
+
+A cross-cutting concern (referenced by `pubsub::Envelope` AND
+`transport::PromiseTicket`), so per concern 3 it earns its OWN small module
+rather than being bolted onto either.
+
+```rust
+/// INTENT #155 — the save-failed-deliveries choice. REQUIRED on every published
+/// event and stamped on every promise ticket. Deliberately derives NO `Default`
+/// (a publisher must choose; see guardrail 4 wave-3 nuance), but exposes a
+/// safe-side constructor used as the serde decode-fallback so older senders
+/// never decode to a silent drop.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DeliveryPersistence {
+    /// Failed deliveries are persisted for later retry/inspection — no silent
+    /// drop. The safe side; the decode-fallback for pre-#155 senders.
+    SaveFailed,
+    /// Best-effort fan-out; a failed delivery is dropped — an EXPLICIT choice,
+    /// never a default.
+    LossyDrop,
+}
+impl DeliveryPersistence {
+    /// serde decode-fallback + the "resiliency-first" default the safe side.
+    pub fn save_failed() -> Self { DeliveryPersistence::SaveFailed }
+}
+```
+
+`delivery.rs` names **only the yes/no choice**, not the mechanism. WHERE a saved
+delivery goes — the distributed KV-backed cache for intermediate/promise
+responses (INTENT #155), and specifically whether saved deliveries are enqueued
+into `queues` — is **behavior owned by `mesh` / `pubsub-relay`, and is NOT
+decided here** (that consolidation is PARKED, OQ-3 — "didn't seem very boring";
+the mechanism must stay un-mergeable with a one-line change). `types` supplies
+the flag and stops. This keeps the type flippable regardless of how the parked
+question resolves.
+
 ## Relationships / edges
 
 `types` is **not a two-party contract edge** — it has no runtime
@@ -392,11 +598,12 @@ request/response of its own; it is the shared vocabulary every OTHER edge in the
 contract graph is defined in terms of, and shared-lib consumption is explicitly
 NOT a contract edge (wave2-plan §3 note; INTENT #45). It is compiled into all 44
 modules. What it owns relative to the contract graph: the **struct halves of the
-cross-cutting protocol contracts** — `pubsub-protocol`, `surface-schema`,
-`restart-protocol`, and the event/provenance vocabulary inside `queues-api` and
+cross-cutting protocol contracts** — `mesh-transport` (NEW, wave 3),
+`pubsub-protocol`, `surface-schema`, `restart-protocol`, and the
+event/provenance vocabulary inside `queues-api` and
 `node-state-poll`/`service-lookup` are all *written in* these `types` structs.
-Those proposals are in the section below; the per-pair contract round reconciles
-the mesh/service sides against them.
+Those proposals are in the wave-2 and wave-3 contract sections below; the
+per-pair contract round reconciles the mesh/service sides against them.
 
 Carried-forward decision points, now resolved or explicitly deferred:
 
@@ -414,11 +621,12 @@ Top-level shared lib (`lib/types`). No parent, no children.
 
 `implementation-ready` — for the existing crate, the four disciplinary
 guardrails, the error-module restructuring (target end-state fully specified;
-the rollout is RESOLVED migrate-now-in-one-sweep, INTENT #138), and all five new
+the rollout is RESOLVED migrate-now-in-one-sweep, INTENT #138), all five new
 wave-2 modules (`provenance`, `event`, `pubsub`, `surface`, `restart`) plus the
-`node.rs` split. The struct shapes are buildable as written; the per-pair
-contract round tunes exact field names and the mesh-side behavior, not the
-vocabulary.
+`node.rs` split, and the two new wave-3 modules (`transport`, `delivery`) plus
+the one added `Envelope.delivery` field. The struct shapes are buildable as
+written; the per-pair contract round tunes exact field names and the mesh-side
+behavior, not the vocabulary.
 
 ## Assigned design-depth
 
@@ -437,8 +645,13 @@ construction sites, and a wide change at the ONE seam wants care; (2) applying
 guardrail 4's serde
 attributes (`#[serde(default)]`, no `deny_unknown_fields`, `#[serde(other)]`
 arms) uniformly across the wire-crossing modules — easy to get individually,
-easy to forget one, so it wants a checklist pass. Neither needs a design-depth
-pass; both are conformance-checkable.
+easy to forget one, so it wants a checklist pass. The wave-3 `transport`/
+`delivery` modules are the same pure-data shape; the one subtlety a fast model
+must not smooth away is `delivery::DeliveryPersistence` deriving **no `Default`**
+while still carrying the `#[serde(default = "…save_failed")]` decode-fallback
+(the "required to author, safe to decode" exception) — deriving `Default` here
+would silently defeat INTENT #155's "no silent drops." Neither carve-out needs a
+design-depth pass; all are conformance-checkable.
 
 ---
 
@@ -465,4 +678,51 @@ Also a party to (as struct home, authored elsewhere): `system-state` —
 Option<u32>` extension is adopted there in dual form (best-effort convenience
 scalar on the snapshot + the authoritative `kernel-confidence` query),
 acknowledged in this file's body. → `scaffold/contracts/system-state.md`
+
+---
+
+## Proposed contracts (wave 3)
+
+`types` owns the **struct half** of the wave-3 comms-stack vocabulary; the
+contract *files* are authored/reconciled by their owning units (mesh-transport,
+pubsub-relay). These are proposals — the shape `types` puts forward — not
+finalized reconciliations. Where a proposal touches a contract this unit does not
+own, it is a proposal to that contract's owner, flagged here.
+
+- **`mesh-transport` (NEW — proposed to the mesh-transport / chassis units).**
+  The #154 outcome switch and #152 wire promise. Struct half grounded by
+  `transport.rs`: `MeshReply<T>` (`Success | Error | Promise`), `WireError`,
+  `PromiseTicket` / `PromiseId` / `PromiseDelivery` / `PromiseResolution`,
+  `PleaseUpdate` / `VersionFloorReason`. Proposed edge shape: every
+  request/response exchange over the mesh replies with a `MeshReply<Response>`;
+  the caller side is compiler-forced to handle the `Promise` arm (the #152
+  contract-level "must handle the promise case" is realized as enum
+  exhaustiveness, not a lint). → target `scaffold/contracts/mesh-transport.md`
+  (owned by the mesh-transport unit; this is the type-vocabulary proposal it
+  binds to).
+  - **Chassis seam (design-around OQ-1, PARKED).** The blessing-queue message
+    types are **NOT** proposed here — they belong to chassis against an abstract
+    blessing-target. A blessed exchange, on the wire, is just a `MeshReply` whose
+    `Promise` arm defers the answer; `types` proposes nothing that names an
+    authority node. Kept flippable for both the #163 no-central-node path and a
+    future cloud authority.
+
+- **`pubsub-protocol` (amendment — proposed to the pubsub-relay unit).** One
+  REQUIRED field added to the published `Envelope`: `delivery:
+  DeliveryPersistence` (grounded by `delivery.rs`), the #155 save-failed-
+  deliveries yes/no choice. Proposed reconciliation notes: (a) the field is
+  required-to-author / safe-to-decode (no `Default`, `SaveFailed` serde
+  fallback) — never a silent-drop default; (b) `types` names only the yes/no
+  flag — the persistence MECHANISM (distributed KV cache; whether saved
+  deliveries enqueue into `queues`) stays with mesh/pubsub-relay and is MARKED
+  needs-explanation (OQ-3, PARKED), so the flag and the mechanism can be
+  un-merged independently. → target `scaffold/contracts/pubsub-protocol.md`
+  (owned by the pubsub-relay unit).
+
+- **Promise-resolution notice (rides `pubsub-protocol`).** A fulfilled/failed
+  wire promise is delivered as an `Envelope<PromiseResolution<..>>` on the
+  ticket's `Push` topic (or fetched by `promise_id`), inheriting the ticket's
+  `DeliveryPersistence` (INTENT #155 "promise resolution notices ride this
+  too"). No new contract file — a documented use of `pubsub-protocol` +
+  `mesh-transport`.
 
