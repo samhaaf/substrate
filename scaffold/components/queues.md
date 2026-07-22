@@ -10,6 +10,18 @@ the wave-2 batch note — **settles the declarative-trigger data model** the
 `types` designer flagged as ours (batch 1, `types.md` "queues-api" boundary flag)
 and that the batch-4 `execution-engine` designer must consume unchanged.
 
+**Wave-3 fold (ledger batch 3, D2/OQ-3/OQ-6).** Three changes land here, none of
+which alters the LOCKED declarative-trigger vocabulary (#101/#103): (a) **`cron`
+is absorbed** as a `Schedule` trigger *source* (concern 10) — `components/cron.md`
+and `contracts/cron-api.md` are tombstoned into this file and `queues-api.md`
+(INTENT #56/#91/F6b); the Ring-4 cron evaluator collapses into this Ring-3 lib
+with no new dependency. (b) queues **consumes `types::delivery` vocabulary**, but
+the queue side of `SaveFailed` is **native durability** — concern 11 writes the
+honest one-page explanation of the PARKED queues-as-pubsub-with-persistence
+consolidation (OQ-3) **without resolving it**. (c) **keeper→keeper messages ride
+queues durably** (approvals must not vanish) — concern 12 states the contract seam
+to the batch-6 keeper runtime **only**, not the (PARKED, OQ-6) approval protocol.
+
 ## Charter
 
 `queues` is the **durable, at-least-once event-delivery fabric buried inside the
@@ -106,15 +118,42 @@ share.
 // types::trigger  (shape authored here; module lives in `types`)
 pub struct Trigger {
     pub trigger_id: TriggerId,
-    pub queue: QueueName,             // the source queue (queues); a table/graph binding for exec-engine adapters
-    pub handler: HandlerRef,          // the 1:1 dispatch target
+    pub source: TriggerSource,        // WAVE-3 FOLD: Queue(event-driven) | Schedule(time-driven, absorbed cron)
+    pub handler: HandlerRef,          // the 1:1 dispatch target (incl. Emit, the cron-emission variant)
     pub filter: FilterExpr,           // declarative — filters the subject document
-    pub assembly: AssemblyTemplate,   // declarative — builds the handler payload
+    pub assembly: AssemblyTemplate,   // declarative — builds the handler/emitted payload
     pub semaphore: SemaphoreChoice,   // per-trigger event-ID-semaphore choice (INTENT #95/#101)
     pub idempotency: IdempotencyMode, // handler-side contract hint (concern 5)
     pub redrive: Option<Redrive>,     // per-trigger override of the queue default (concern 6)
+    #[serde(default = "default_true")]
+    pub enabled: bool,                // WAVE-3 FOLD: pause/resume a trigger (absorbs CronJob.enabled)
     pub registered_by: Slug,
     pub version: LwwVersion,          // (wall_clock, node_id) — LWW like registry entries
+}
+
+// WAVE-3 FOLD (concern 10): a trigger's SOURCE is now an enum — the only change
+// the cron absorption makes to the model. Queue = today's behavior verbatim.
+pub enum TriggerSource {
+    Queue(QueueName),                 // event-driven: fires per matching event landing in this queue
+    Schedule(ScheduleSource),         // time-driven: fires per scheduled occurrence (absorbed cron)
+}
+pub struct ScheduleSource {           // vocabulary moved intact from the tombstoned cron-api
+    pub schedule: Schedule,           // Cron{expr,tz} | Every{interval,anchor} | Once{at}
+    pub target: FireTarget,           // Anywhere (single-fire, raced) | Node(NodeId) (pinned)
+    pub misfire: MisfirePolicy,       // Skip | FireOnWake { grace, coalesce }
+}
+pub enum FireTarget { Anywhere, Node(NodeId), #[serde(other)] Unknown }
+pub enum Schedule {
+    Cron  { expr: String, #[serde(default)] tz: Option<String> },
+    Every { interval: Duration, #[serde(default)] anchor: Option<DateTime<Utc>> },
+    Once  { at: DateTime<Utc> },
+    #[serde(other)] Unknown,          // fail-safe: an older node never fires an unknown kind
+}
+pub enum MisfirePolicy {
+    Skip,
+    FireOnWake { #[serde(default)] grace: Option<Duration>,
+                 #[serde(default = "default_true")] coalesce: bool },
+    #[serde(other)] Unknown,
 }
 
 pub enum FilterExpr {
@@ -139,6 +178,9 @@ pub enum HandlerRef {
     Service { slug: Slug, route: String },  // push-deliver over mesh transport, await ack
     Topic(Topic),                           // deliver as a pubsub Envelope (fire-and-forget handlers)
     ExecFn { engine: Slug, function: String }, // execution-engine Deno/SQL handler
+    Emit { queue: QueueName, event_type: EventType }, // WAVE-3 FOLD: emit the assembled payload as
+                                            // an EVENT into a queue — the cron emission (concern 10),
+                                            // also a generic event-router action for Queue-source triggers
 }
 pub enum SemaphoreChoice { None, EventId, Custom(SemaphoreKeyTemplate) }
 pub enum IdempotencyMode { HandlerIdempotent, DedupByEventId, AtMostOnceBestEffort }
@@ -146,7 +188,19 @@ pub enum IdempotencyMode { HandlerIdempotent, DedupByEventId, AtMostOnceBestEffo
 
 `Rollup(RollupRef)` is the "assembly may call rollup" hook (INTENT #101), reusing
 rollup's LOCKED raw-vs-reference insert types (INTENT #94) — the reference stays a
-declarative pointer, never inlined code.
+declarative pointer, never inlined code. **The assembly-calls-rollup path is
+UNCHANGED by the wave-3 fold** (ledger item d): a `Schedule`-source trigger
+assembles its emitted payload with the identical `AssemblyTemplate`, so a
+scheduled fire can call rollup at assembly exactly as an event-driven trigger can.
+
+**Subject binding for a `Schedule` source (concern 10).** An event-driven
+(`Queue`) trigger binds an `Event` into the subject document (above). A
+`Schedule` trigger binds the **fired occurrence**:
+`{ "type": "schedule.fired", "payload": <ScheduleSource static payload>,
+"meta": { occurrence_id, scheduled_for, fired_at, fire_node, catch_up } }`. The
+`FilterExpr`/`AssemblyTemplate` AST is identical — a third subject binding
+alongside `queues`' event and `execution-engine`'s row/node change (concern 2),
+so cron folds in *without a second evaluator language*.
 
 ### 3. SQS-modeled message lifecycle (INTENT #89) — boring on purpose
 
@@ -284,6 +338,174 @@ never a dependency and never a delivery guarantee (pub/sub is lossy by contract)
 Off by default; enabling it makes queue depth / in-flight / dead-letter counts
 visible on the boring surface schema without coupling the two libs.
 
+### 10. Scheduled triggers — cron absorbed as a `Schedule` trigger source (WAVE-3 FOLD, INTENT #56/#91/F6b)
+
+The wave-2 `cron` lib (`components/cron.md`, now a tombstone) is folded in here.
+The observation that makes it boring: cron was already *"decide when to fire, then
+emit a standardized event — nothing more,"* and a trigger was already *"filter +
+assemble a subject → dispatch."* The only difference was the **source of firing**.
+So a trigger's `queue: QueueName` field generalizes to `source: TriggerSource`
+(concern 2), and cron becomes `TriggerSource::Schedule(ScheduleSource)`. Nothing
+else in the trigger model changes; the LOCKED declarative-trigger and per-trigger-
+semaphore vocabulary (#101/#103) is untouched (ledger item b). What this buys and
+how the semantics carry over intact:
+
+- **The two FireTarget flavors carry over verbatim.** `FireTarget::Node(N)` is
+  evaluated only by node N's schedule evaluator (exactly one candidate firer, no
+  semaphore); `FireTarget::Anywhere` is raced by every reachable daemon and made
+  single-fire by the semaphore below. One field on `ScheduleSource`, not two API
+  paths — the same virtualized-vs-pinned split as mesh addressing (#59).
+- **Single-fire via the deterministic event-ID semaphore — the SAME mechanism
+  queues already has (#71/#95).** A run-anywhere occurrence is content-addressable:
+  `occurrence_id = uuid_v5(SCHEDULE_NS, trigger_id ++ scheduled_for.rfc3339())`.
+  The firing daemon acquires the `locks` semaphore keyed by `occurrence_id`
+  (threshold 1) before firing; the loser daemons drop silently. The **same
+  `occurrence_id` becomes the emitted event's `event_id`**, so if the trigger emits
+  (below) and a downstream trigger opts into `SemaphoreChoice::EventId`, both the
+  fire-side single-fire and the consume-side ~exactly-once de-dup against one
+  identical key. Cron never invented a concurrency primitive; now it literally
+  reuses queues' `locks` composition (concern 4). CAP honesty is identical: two
+  partitions may each fire an `Anywhere` occurrence under a partition-twin
+  semaphore; because both carry the identical `event_id`, the emit can collapse to
+  one delivery on merge if the target queue dedups by `event_id` (concern 4's
+  `PartitionConflict` backstop applies to the emitted delivery).
+- **The schedule evaluator becomes a Ring-3 concern inside queues, needing no new
+  dependency.** Each daemon runs one periodic evaluator that scans `enabled`
+  `Schedule`-source triggers, computes due occurrences in `(cursor, now]` per the
+  flavor + misfire rules, acquires the semaphore for `Anywhere`, and fires. cron
+  was Ring 4 and rode `locks` + `replicated-kv` + `service-registry` + `queues`;
+  queues (Ring 3) already rides `locks` (sibling), `replicated-kv` (Ring 2), and
+  `service-registry` (sibling), and it *is* the emit target — so the fold
+  **removes a ring level** (`mesh-core.md` § Internal layering: Ring 4 loses
+  `cron`), a strict simplification. Clock handling stays naive wall-clock per node
+  (#32); skew only changes *which* node wins the semaphore, never *whether* an
+  occurrence double-fires.
+- **Fire cursor lives in a separate keyspace — a deliberate refinement over cron.**
+  cron wrote `last_fired` back into the `CronJob` row by LWW. A schedule trigger
+  instead advances its cursor in `queues/schedule-state/<trigger_id>` (LWW,
+  advisory, self-healing: a stale cursor just recomputes occurrences and re-attempts
+  already-taken semaphores — a safe no-op). Rationale: a fire must never LWW-race a
+  concurrent *definition* edit to the same trigger row. The `MisfirePolicy`
+  (`Skip` default vs `FireOnWake { grace, coalesce }`) and the `catch_up: true`
+  flag on catch-up fires are unchanged; catch-up occurrences ride the same
+  occurrence-keyed semaphore, so "fire once on wake" is single-fire across the
+  fleet for free.
+- **The pg_cron-replacement decomposition (#91) is unchanged, now one lib.** A
+  schedule trigger's `HandlerRef::Emit { queue, event_type }` publishes the
+  assembled `schedule.fired` event into a target queue (never onto lossy pub/sub —
+  scheduled work needs durability); a downstream event-driven trigger filters and
+  assembles it; a stack/VDB handler runs the SQL. queues touches no database; the
+  three-stage decomposition (schedule → trigger → handler) is intact. *(The more
+  aggressive collapse — a schedule trigger dispatching `Service`/`ExecFn`
+  **directly**, skipping the queue hop — is expressible with the same struct but is
+  NOT the folded default: emitting an event preserves cron's fan-out property, keeps
+  handlers database-agnostic, and matches the ledger's "a cron firing is just a
+  scheduled event emission." Direct dispatch is left available, not adopted.)*
+
+### 11. Delivery-persistence — queues durability is NATIVE; the pubsub `IntermediateCache` relationship (INTENT #155 / PARKED OQ-3)
+
+queues consumes the `types::delivery::DeliveryPersistence` vocabulary (batch-1
+`types`), but on the queue side the flag is **near-vacuous by construction**: a
+queue message is *already* durably persisted in `replicated-kv` and retried at-
+least-once with a DLQ (the whole charter). "Save failed deliveries" is what queues
+*is* — `DeliveryPersistence::SaveFailed` describes queues' native behavior, and
+`LossyDrop` has no queue meaning (queues never silently drops; the closest analog,
+dead-lettering, is itself a durable save). So queues neither reads nor branches on
+the field for its own traffic; the field is meaningful only for **pub/sub**, which
+*can* be lossy and must opt into durability. This asymmetry is the whole reason the
+consolidation the operator flagged is a live question rather than a settled one —
+and per the ledger (item c, §C OQ-3) this concern's job is to write **one honest
+page** explaining what that consolidation would and would not mean, **without
+deciding it**.
+
+**The consolidation, stated precisely (F5 / SB7a).** pub/sub's `SaveFailed`
+retention target is the abstract `IntermediateCache` seam (`pubsub-relay.md`
+concern 9): a would-be-dropped envelope is teed into the cache and re-offered on
+reconnect. The parked proposal is to **back that seam with `queues`** — i.e. a
+failed `SaveFailed` pub/sub delivery is `SendEvent`-ed into a durable queue keyed
+by the intended recipient, and drained on reconnect. Today the seam's boring
+provisional is instead a distributed KV-backed cache (INTENT #155's own words),
+kept deliberately un-merged.
+
+**What the consolidation WOULD buy (the genuine pull):**
+- *One durability engine.* No second "intermediate-response cache" concept; queues'
+  already-designed at-least-once + dedup-by-id + retention/TTL + DLQ machinery backs
+  both explicit queue traffic and pub/sub's save-failed path. Less surface area.
+- *Exactly-once-ish for saved pub/sub deliveries for free*, via the same event-ID
+  semaphore (concern 4), if a recipient wants it.
+- *A single mental model:* "anything that must not vanish is a queue message."
+
+**What it WOULD NOT mean / the honest costs (why it "didn't seem very boring"):**
+- **It does NOT make pub/sub durable.** The broker stays lossy; `LossyDrop` is
+  untouched; only the opt-in `SaveFailed` tee changes its backing store. The two
+  wire protocols (`pubsub-protocol` fan-out vs `queues-api` trigger/handler/ack)
+  stay **separate contracts** — the consolidation is only about *where saved
+  deliveries land*, never about merging the APIs.
+- **It inverts the mesh ring layering — the concrete un-boring core.**
+  `pubsub-relay` is **Ring 1**; `queues` is **Ring 3** (`mesh-core.md` § Internal
+  layering: "a ring may consume only lower rings"). queues→pubsub (the observability
+  tee, concern 9) is Ring 3 → Ring 1, *allowed*. But backing pubsub's cache with
+  queues is **pubsub (Ring 1) → queues (Ring 3)** — a lower ring consuming a higher
+  one, skipping past `replicated-kv` and `locks`. That is the sharpest layering
+  inversion in the mesh, and it makes pub/sub's liveness-oriented resiliency depend
+  on the *entire* durable-queue subsystem (visibility timeouts, redrive, DLQ,
+  cc-escalation) — far more machinery than a save-and-re-offer cache needs. The
+  distributed-KV backing keeps the dependency minimal (a KV put/get near Ring 2)
+  and the layering closer to honest.
+- **Semantic mismatch.** A `SaveFailed` re-offer is *"hold this exact envelope until
+  the recipient reconnects, then replay it"* — a per-recipient retained log with a
+  cursor. A queue is *pull / dispatch / visibility-timeout / ack / redrive / DLQ*.
+  Forcing a save-failed pub/sub envelope through the queue lifecycle raises awkward
+  questions with no natural answer: does an un-drained save-failed envelope
+  dead-letter? does it cc-escalate? what is its visibility timeout when there is no
+  handler, only a future re-subscribe? The shapes do not line up.
+- **The genuinely shared substrate is LOWER than either.** Both queues' native
+  durability and pub/sub's `SaveFailed` cache want the *same* primitives: a durable
+  per-key store, dedup-by-id, at-least-once replay, TTL/eviction — and both already
+  sit **above `replicated-kv` (Ring 2)**. So the boring common ground, if any is
+  wanted, is "both durability paths share the `replicated-kv` substrate and the
+  dedup-by-id + TTL discipline," **not** "pub/sub enqueues through the whole queues
+  lib." The un-boring version routes pub/sub through a Ring-3 lib; the boring
+  version would share a Ring-2 primitive. That is the precise distinction for the
+  operator to react to.
+
+**Stance (NEEDS-EXPLANATION, not decided — §C OQ-3).** queues does **not** adopt
+the consolidation and does **not** thread a pub/sub dependency into itself; the
+`IntermediateCache` seam stays off the contract graph (`pubsub-relay.md`). If the
+operator un-parks OQ-3 in favor of the queues backing, the change is additive and
+local: pub/sub's seam impl calls `SendEvent` on a recipient-keyed queue and drains
+via `ReceiveDeliveries` on reconnect — a one-binding swap, exactly the reversibility
+the ledger requires. Until then both framings stay un-merged.
+
+### 12. Keeper→keeper messages ride queues durably — contract seam only (INTENT #149/#88/#127; PARKED OQ-6)
+
+The batch-6 **keeper** runtime (`components/keeper.md`, the wave's central L6
+design, replaces `org`) needs keeper-to-keeper **proposals and approvals** to
+survive thread compaction **exactly-once** — *"approvals must not vanish"* (ledger
+item e; synthesis F-4/B-r4; §C OQ-5/OQ-6). That durability requirement lands here:
+such messages ride **durable queues**, exactly-once via the event-ID semaphore
+(concern 4), the same guarantee cron and the pg_cron path use. queues provides the
+seam; it does **not** design the protocol.
+
+- **What queues contracts (the seam).** A keeper-message queue family (boring
+  provisional name `keeper.<keeper_id>.inbox`, one durable queue per keeper) carrying
+  typed keeper-message events; delivery is at-least-once with `SemaphoreChoice::EventId`
+  for the exactly-once approval semantics; the message's `event_id` is the idempotency
+  key so a re-delivered approval applies once. The keeper runtime (batch 6) is the
+  **consumer** — it registers the triggers/handlers that drain its inbox and drive
+  its propose→approve→dispatch loop. This is an ordinary use of `queues-api`; no new
+  wire contract, only a documented consumer relationship (below).
+- **What queues MUST NOT decide (PARKED OQ-6, §C).** The keeper-to-keeper message +
+  approval **protocol** — the #88 negotiation state machine (propose → deliberate →
+  counter → tweak → agree), #127's approval gate, the human-in-loop vs no-human
+  variants (#149 beat 11), and which bundle-curation writes an approval triggers —
+  is *"needs its own conversation."* queues leaves the keeper runtime a
+  `propose→approve→dispatch` placeholder; the approval *wire* is a named-but-
+  unspecified seam. queues guarantees only that whatever messages the protocol emits
+  **do not vanish across compaction**, because they are durable queue events. The
+  message payload types are the keeper design's to author (`types::keeper` or a
+  keeper-local module), consumed by queues opaquely like any event payload.
+
 ## Relationships / edges
 
 Contract edges (cross-process WS through the local `:3649` daemon). Internal-lib
@@ -302,23 +524,46 @@ seams per `mesh-core.md`, **not** contract edges (INTENT #45).
   time; queues calls rollup over mesh. queues is the *consumer*; `rollup` (batch 4)
   authors `rollup-mesh` (+ its own registration). Consumer-side note below.
   *(authored: scaffold/contracts/rollup-mesh.md)*
+- **keeper (batch 6, L6) → mesh.queues** via `queues-api` — the keeper runtime is a
+  **consumer**: keeper-to-keeper proposals/approvals ride a durable per-keeper inbox
+  queue, exactly-once via the event-ID semaphore, so approvals survive compaction
+  (concern 12). Contract **seam only**; the approval protocol is PARKED (OQ-6).
+  keeper.md (batch 6) authors the consumer side; no new wire contract here.
 - **`types`** — library dependency, NOT a contract edge: `Event`, `EventType`,
   `Provenance` (existing) + the new `types::trigger` module (`Trigger`, `FilterExpr`,
   `AssemblyTemplate`, `SemaphoreChoice`, `HandlerRef`, …) whose shape this design
-  authors. Proposed to the batch-1 `types` designer via the `queues-api` boundary
-  flag they raised.
+  authors, now **extended by the wave-3 fold** with `TriggerSource`, `ScheduleSource`,
+  `Schedule`, `FireTarget`, `MisfirePolicy` (absorbed from the tombstoned `cron`
+  lib's own vocabulary into `types::trigger`) and the `HandlerRef::Emit` variant.
+  Also consumes
+  **`types::delivery::DeliveryPersistence`** (concern 11) — but queues' durability is
+  native, so the flag is near-vacuous on the queue side. All proposed to the batch-1
+  `types` designer; the fold additions are flagged for the harmonizer to land in
+  `types::trigger`.
 - **`locks`** (Ring-3 sibling) — the event-ID semaphore composition (concern 4;
-  the queue-owner-lease alternative died with the fork — INTENT #112). Consumed in-process
-  via `locks`' `trait` seam; `locks` owns `locks-api` and the partition-merge error
-  type. Co-batched (batch 2, `queues ⇄ locks`) — I depend on that error type and
-  the acquire/release surface; flagged for mid-batch draft-sharing.
+  the queue-owner-lease alternative died with the fork — INTENT #112) **and** the
+  absorbed schedule evaluator's occurrence-keyed single-fire semaphore (concern 10).
+  Consumed in-process via `locks`' `trait` seam; `locks` owns `locks-api` and the
+  partition-merge error type. Co-batched (batch 2, `queues ⇄ locks`) — I depend on
+  that error type and the acquire/release surface; flagged for mid-batch draft-sharing.
 - **`replicated-kv`** (Ring-2) — durable queue/message/delivery/trigger metadata via
-  namespaced LWW keyspaces. Consumed via the `KvHandle` seam; not a contract edge.
-- **`pubsub-relay`** (Ring-1) — the opt-in `queue.*` observability tee (concern 9).
-  In-process; not a contract edge.
+  namespaced LWW keyspaces, **plus** the absorbed schedule store (trigger rows) and
+  the `queues/schedule-state/<trigger_id>` fire cursor (concern 10). Consumed via the
+  `KvHandle` seam; not a contract edge.
+- **`service-registry`** (Ring-3 sibling) — consumed in-process by the absorbed
+  schedule evaluator for **self identity** (`FireTarget::Node(N)` fires only when
+  self == N) and the **peer set** (validating a `Node(N)` target). Not a contract
+  edge. (New with the wave-3 cron fold; was a cron dependency, now internal to queues.)
+- **`pubsub-relay`** (Ring-1) — the opt-in `queue.*` observability tee (concern 9),
+  a Ring-3 → Ring-1 consume (allowed). Distinct from the **PARKED reverse** relationship
+  (concern 11 / OQ-3): backing pub/sub's `IntermediateCache` with queues would be
+  Ring-1 → Ring-3, a layering inversion — **NOT adopted**, seam kept off the contract
+  graph. In-process; not a contract edge either way.
 - **`execution-engine`** (batch 4, L4) — NOT a queues contract edge; the binding is
-  the **shared `types::trigger` data model** (concern 2). Flagged for batch-4
-  co-design: execution-engine must consume it unchanged.
+  the **shared `types::trigger` data model** (concern 2), whose `TriggerSource` now
+  also carries `Schedule`. execution-engine still uses only `TriggerSource::Queue`
+  bindings (its adapters); flagged for batch-4 co-design: it must consume the folded
+  model unchanged.
 
 ## Nesting
 
@@ -335,7 +580,12 @@ trigger data model + subject-generic filter/assembly, the SQS-modeled lifecycle 
 `QueueBackend` seam, the `locks` event-ID-semaphore composition with the
 partition-merge CAP-honesty path, the per-trigger semaphore/idempotency/redrive
 choices, DLQ-is-just-a-queue with cc escalation as a declarative DLQ trigger, and
-the pub/sub tee are all decided and specified. The three proposed contract *wire
+the pub/sub tee are all decided and specified. **Wave-3 fold (concerns 10–12) is
+likewise implementation-ready:** the `TriggerSource::Schedule` absorption of cron
+(FireTarget flavors + occurrence-keyed single-fire + misfire + `Emit` decomposition,
+all carried over intact), the native-durability treatment of `types::delivery` with
+the honest OQ-3 explanation left un-decided, and the keeper-inbox durability seam
+(protocol PARKED) are all specified to fill. The three proposed contract *wire
 shapes* (`queues-api`, `cc-escalation` DLQ half, `rollup-mesh` consumer view) are
 **approach-sketched** — fields authored, reconciled in the per-pair round
 with `locks` (error type), `rollup` (assembly-resolve API), `execution-engine`
@@ -387,6 +637,11 @@ are superseded by them.
     round 1, INTENT #112): replicated-everywhere + event-ID semaphore — the
     model the schema assumed is confirmed; single-owner-node-with-failover is
     rejected. See concern 4 for the operator's verbatim rationale.
+  - **WAVE-3 FOLD (batch 3):** `queues-api` now **absorbs `cron-api`** (tombstoned)
+    — the `Schedule` trigger source, `FireTarget`/`Schedule`/`MisfirePolicy`
+    vocabulary, schedule-trigger management (register / enable-disable / run-now),
+    and the deterministic-`event_id` emit. See `queues-api.md` § "Proposed
+    contracts (wave 3)". No change to the LOCKED declarative-trigger vocabulary.
 - `cc-escalation` (producers mesh.queues + execution-engine → consumer cc;
   one union `EscalationRequest` shape) — queues authors the `DeadLetter` arm,
   fired by an ordinary DLQ trigger. → `scaffold/contracts/cc-escalation.md`
@@ -447,3 +702,41 @@ observability tee) — see `scaffold/contracts/pubsub-protocol.md`.
 - **Shared trigger model (batch-4 guard):** `execution-engine` binds a row-change
   subject into the same `FilterExpr`/`AssemblyTemplate` and evaluates identically to
   a queues event subject (one data model, two subject bindings — concern 2).
+
+**Wave-3 fold conformance (cron absorbed — concern 10):**
+- **Run-anywhere single-fire across nodes:** two daemons both evaluate an `Anywhere`
+  `Schedule` trigger due at the same nominal time; the `locks` occurrence semaphore
+  (keyed by `uuid_v5(SCHEDULE_NS, trigger_id ++ scheduled_for)`) admits **exactly
+  one** emit; the loser drops silently. The emitted event's `event_id` equals the
+  `occurrence_id`.
+- **Run-on-node pinning:** a `Node(N)` `Schedule` trigger is fired only by N's
+  evaluator; other daemons hold the definition but never fire it; while N is offline
+  the occurrence defers per `MisfirePolicy`, not an error.
+- **Misfire fire-on-wake single-fire:** a fleet asleep across k occurrences of an
+  `Anywhere` `FireOnWake { coalesce: true }` trigger fires **one** catch-up on wake
+  (`catch_up: true`), single-fire via the missed-occurrence semaphore; `Skip` fires
+  none of the missed, only the next upcoming.
+- **Fire cursor never races a definition edit:** advancing `queues/schedule-state/
+  <trigger_id>` on fire and concurrently `UpdateTrigger`-ing the same trigger's
+  schedule converge independently (separate keyspaces, both LWW) — no lost edit, no
+  lost fire.
+- **pg_cron decomposition end-to-end:** a `Schedule` trigger with `HandlerRef::Emit`
+  publishes `schedule.fired` into a target queue; a downstream `Queue`-source trigger
+  filters that `event_type` and dispatches a `vdb` handler — the tombstoned cron
+  example runs unchanged (see `queues-api.md` example data).
+- **Deterministic-id stability across versions:** the `occurrence_id` recipe yields
+  byte-identical uuids on two different builds for the same `(trigger_id,
+  scheduled_for)` — the cross-node single-fire + consume-side dedup anchor (a
+  breaking change if it ever differs).
+- **Unknown-schedule fail-safe:** a daemon deserializing a `Schedule::Unknown` /
+  `MisfirePolicy::Unknown` (newer kind) **never fires it**; an `Anywhere` such job is
+  transparently fired by a capable node; a `Node(N)`-pinned such job on an incapable
+  N surfaces the flagged "silently never fires" sharp edge (gate new kinds on fleet
+  capability).
+
+**Wave-3 delivery-persistence (concern 11):**
+- **`SaveFailed` is native on the queue side:** a queue `SendEvent` marked
+  `DeliveryPersistence::SaveFailed` behaves identically to today (already durable);
+  `LossyDrop` on a queue send is rejected/ignored as meaningless (queues never
+  silently drops) — the flag has no queue-side branch, proving the asymmetry that
+  keeps OQ-3 a live, un-merged question.

@@ -1,8 +1,8 @@
 # Contract: service-lookup
 
 ## Parties
-Any device / service (cc, org, **inference**, vfs, kg, projects, secrets, the
-`mesh` CLI) ↔ its **LOCAL** `mesh.service-registry` daemon, over `:3649`
+Any device / service (cc, **inference**, vfs, kg, projects, secrets, the keeper
+runtime, the `mesh` CLI) ↔ its **LOCAL** `mesh.service-registry` daemon, over `:3649`
 (rides mesh-core's `mesh-transport` envelope). The client half is compiled
 into every service as part of `chassis` (formerly `mesh-client`, absorbed —
 see `components/mesh-client.md`); the server half is
@@ -23,9 +23,9 @@ by static URL (INTENT #58/#59). Registration is instance-keyed
 tombstoned on graceful deregister; resolution is a purely LOCAL
 `replicated-kv` read (the keyspace is fully replicated — "anywhere you access
 mesh is exactly the same," INTENT #35), then addressing-class policy over the
-slug's live instance set. Designed cheap and broadly queryable (org resolves
-the whole map; dashboard-serving discovers every service to fetch surface
-schemas).
+slug's live instance set. Designed cheap and broadly queryable (the keeper
+runtime resolves the whole map; mesh-core's dashboard surface discovers every
+service to fetch surface schemas).
 
 ## Schema
 Records live in `types::registry` and cross the wire between nodes (they
@@ -52,7 +52,7 @@ pub struct Endpoint {
     #[serde(default)] pub health_path: Option<String>, // e.g. "/health"
 }
 pub enum AddressingClass {
-    Singleton,   // exactly one live instance mesh-wide (db, cc, kg, projects, org, secrets)
+    Singleton,   // exactly one live instance mesh-wide (db, cc, kg, projects, secrets)
     NodeScoped,  // one live instance per node (gc :8430, per-node vfs leg, inference api)
     FleetAlias,  // RESOLVE-TIME policy on a slug (inference) — NOT a stored record; see notes
     #[serde(other)] UnknownAddressing,
@@ -60,7 +60,7 @@ pub enum AddressingClass {
 pub struct Lease {
     pub registered_at: DateTime<Utc>,
     pub expires_at:    DateTime<Utc>,  // naive wall-clock; renew extends it (INTENT #32)
-    pub ttl_secs:      u32,            // renewal-interval hint for mesh-client
+    pub ttl_secs:      u32,            // renewal-interval hint for chassis
     pub generation:    u64,            // ++ per FRESH (re)registration on this node (restart/zombie key)
 }
 pub enum RecordState { Live, Tombstone { reason: DeregisterReason } }
@@ -217,8 +217,54 @@ policy. The registry side adopts.**
 - **Deviation from the old stub.** The wave-1 stub said "`register(slug,
   host:port)` / `resolve(slug) -> endpoint`" with a bare `host:port`. This
   contract uses `Endpoint{scheme,host,port,health_path?}` (a browsable URL) so
-  `mesh service open <slug>` works and dashboard-serving can health-check —
-  the operator's headline CLI ask (INTENT #24).
+  `mesh service open <slug>` works and the mesh dashboard surface can
+  health-check — the operator's headline CLI ask (INTENT #24).
+  (`dashboard-serving` folded into mesh-core, ledger D5/F9b.)
+
+**Wave-3 folds (this pass — shape clarifications, no wire-struct rename):**
+
+- **`FlipEndpoint` atomicity + the brief dual-registration window (INTENT #76).**
+  The keyspace invariant is **exactly one Live `ServiceRecord` per `(slug, node)`**
+  — this is what makes a port-handoff atomic (`resolve` never sees two fronted
+  endpoints and never sees none). A handoff is **one LWW `put`** on the single key
+  that bumps `Lease.generation` and swaps `Endpoint` old→new; there is never a
+  second *Live* record for one key. The "dual" during a same-node rolling update
+  is therefore a **process-level** window (two processes briefly alive), not a
+  keyspace one. `FlipEndpoint` returns `Flipped { superseded }` synchronously so
+  supervision knows which port to down. `supervision.md` concern 5's step-1 prose
+  ("a *second, distinct registry entry* — same slug, new endpoint") reconciles to
+  **"the same key's next `generation`, adopted by the flip `put`"** — flagged for
+  the harmonizer; no keyspace change (generation-in-key was rejected as less
+  boring, ledger §C). Two boring disciplines both land on the same single-key
+  write: a supervision-driven `FlipEndpoint` (new instance boots in a
+  standby/handoff `SpawnSpec` mode that defers self-registration; supervision
+  probes its port directly, then flips), or a self-registering new instance whose
+  fresh `Register` on the same key *is* the flip (and drives the registry's
+  `ZombieSuspected` signal for the superseded endpoint). The registry does **not**
+  health-check on flip — it trusts supervision's verify-then-flip ordering.
+
+- **Sender version stamping (INTENT #113) — division of labour.** `ServiceMeta.
+  service_version` on the record is the registry's version **inventory** (register/
+  flip-time metadata; supervision reads it via `ResolveAll`/`List` to compute
+  floors + plan pairwise-compatible rolling updates). It is NOT the per-message
+  stamp: that rides `Provenance.service_version` on the transport envelope
+  (`types::provenance`, stamped once by chassis). **Version-floor enforcement + the
+  `PleaseUpdate` back-signal is a receiver-EDGE policy** (chassis / the per-contract
+  edge), surfaced as a matchable `WireError { domain:"mesh", code:"version_below_
+  floor", … }` and a `PleaseUpdate` warning back to a tolerated one-version-behind
+  sender (`types::transport`, `contracts/mesh-transport.md`) — **never a
+  `service-lookup` operation and never a silent drop.** The registry stores the
+  truth the floor is computed from; it never gatekeeps a message.
+
+- **Client half is `chassis` (INTENT #156, ledger D1).** Every operation here is a
+  `chassis` sub-surface (the Parties line already reads chassis); `mesh-client` is
+  retired into it. No wire change — a naming pin only.
+
+- **PARKED OQ-1 held.** `Register`/`Renew`/`Deregister`/`FlipEndpoint` are plain
+  replicated-kv writes with **no** authority/blessing party on any edge.
+  Registering a slug another node already owns converges by LWW (a non-conflict,
+  Error cases above). Consistency-requiring *application* changes route through
+  chassis's abstract blessing-target seam, entirely separate from this contract.
 
 ## Example data
 The example world: nodes **macbook** and **pi**, project **demo**, model

@@ -17,11 +17,22 @@ The two-way graceful-restart / supervision choreography built into EVERY service
 from the beginning (INTENT #76 continuous interruptibility, #77 the LOCKED
 4-level ladder). The service continuously reports interruptibility; mesh signals
 a restart need at a laddered priority and drives port-handoff + kill. The
-protocol rides the `mesh-client` persistent bidirectional WS (mandatory — mesh
-must *push* an unsolicited restart signal) and multiplexes over the
-`pubsub-protocol` transport as typed control frames. Restart is **primarily
-node-local** (a service is supervised by its OWN local daemon), but a control
-frame may be relayed cross-node during a skew window.
+protocol rides `chassis`'s one persistent bidirectional WS to the local daemon
+(mandatory — mesh must *push* an unsolicited restart signal) as ordinary
+`Request`/`Response` `Frame`s in `mesh-transport`'s multiplexing sense (wave-3
+correction: this is **not** a `pubsub-protocol` control frame — restart signals
+are daemon-initiated `Request`s over the same socket pub/sub rides, distinct
+from the `Publish`/`EventDelivery` data-path kinds; see `contracts/mesh-transport.md`
+§3 `MsgKind`). Restart is **primarily node-local** (a service is supervised by
+its OWN local daemon), but a control frame may be relayed cross-node during a
+skew window.
+
+**Adjacent seam, not this contract's.** How mesh-core decides *when* to ask
+supervision to bring a slug up, and how it learns the result is ready to route
+to, is the **`ensure_up` + readiness** primitive between `mesh-core` and
+`supervision` — an in-process seam, not a wire contract, authored in
+`components/supervision.md` concern 11. This file is strictly the wire protocol
+between the daemon and a *service the daemon already knows about*.
 
 ## Schema
 
@@ -66,7 +77,7 @@ enum SupervisionServerMsg {
 }
 ```
 
-### Service → daemon (`SupervisionClientMsg`, client half via mesh-client)
+### Service → daemon (`SupervisionClientMsg`, client half via `chassis`)
 
 ```rust
 enum SupervisionClientMsg {
@@ -76,19 +87,64 @@ enum SupervisionClientMsg {
 }
 ```
 
-### Client-side handler contract (mesh-client, in-process)
+### Client-side handler contract (`chassis`, in-process) — wave-3 reconciled
+
+**Superseded (recorded, not dropped).** This section originally specified the
+bare `mesh-client` seam `trait RestartParticipant { async fn on_restart(&self,
+priority: RestartPriority) -> Yielded; }`. `chassis` (batch 1/wave 3) is now the
+authoritative client-half author and ships the richer seam below; `chassis.md`
+concern 5 already flags the supersession, this file adopts it as the wire
+contract's own record so the two files never drift again.
 
 ```rust
-trait RestartParticipant {
-    async fn on_restart(&self, priority: RestartPriority) -> Yielded;
+trait RestartPolicy {
+    async fn on_restart(&self, priority: RestartPriority, req: &RestartRequest) -> Wound;
+    fn interruptibility(&self) -> watch::Receiver<Interruptibility>; // the continuous feed
 }
+enum Wound { Yielding, Saved }   // maps 1:1 onto RestartResponse::{Yielding, Saved}
 ```
-Ladder behavior: **L1 `WaitForIdle`** — no handler call; the `Idle` feed IS the
-signal. **L2 `FinishAndRelinquish`** — call `on_restart`, await, reply `Yielding`
-then (on completion) proceed to yield. **L3 `SaveWindow`** — call `on_restart`
-under `save_deadline`; reply `Saved` on completion **or** yield anyway when the
-deadline elapses (best-effort save). **L4 `Kill`** — not delivered to the
-handler; the process is killed.
+
+Two changes from the superseded shape, both adopted: (1) `on_restart` receives
+the full `&RestartRequest` (not just the bare `priority`) so a policy can read
+`save_deadline`/`reason` — a `SaveWindow` policy otherwise has no way to know
+its own deadline; (2) the continuous `Interruptibility` feed (previously modeled
+only as the wire push `SupervisionClientMsg::InterruptibilityUpdate`) is now
+named as part of the *same* trait a service implements, via a `watch::Receiver`
+— chassis reads this feed and is what actually emits `InterruptibilityUpdate` on
+change; the service never touches the wire message directly. `Yielded` (an
+undefined placeholder type in the superseded shape) is replaced by the concrete
+two-arm `Wound` enum.
+
+Ladder behavior, unchanged in shape, restated against `RestartPolicy`: **L1
+`WaitForIdle`** — no handler call; the `interruptibility()` feed IS the signal
+(chassis relays it as `InterruptibilityUpdate`, supervision reads it — no
+`on_restart` invocation happens at L1). **L2 `FinishAndRelinquish`** — chassis
+calls `on_restart(L2, req)`, awaits, sends `RestartReply(Yielding)` immediately
+and again on completion. **L3 `SaveWindow`** — chassis calls `on_restart(L3,
+req)` under `req.save_deadline`; sends `RestartReply(Saved)` on completion **or**
+yields anyway when the deadline elapses (best-effort save — chassis, not the
+policy, enforces the deadline; see `chassis.md` concern 5's "never blocks the
+daemon forever" correctness rule). **L4 `Kill`** — not delivered to the handler;
+the process is killed; chassis offers only a best-effort `SIGTERM` hook, never a
+`RestartPolicy` callback.
+
+**The severity-in / service-decides-how doctrine (INTENT #156, folded here).**
+"The service has to determine how it shuts itself down. Requests are requests."
+The signal that crosses this wire is *only* the severity (`RestartPriority` +
+`RestartRequest`) — supervision never prescribes *how* a service winds down at
+L1–L3, only *that* it must, and by when. `supervision` (and, through it, mesh)
+**REQUESTS**; it never **FORCES** compliance below L4 — a policy that overruns
+its deadline or panics is not punished mid-ladder, it is simply superseded by the
+daemon's own escalation (restart-protocol.md's "Error cases" `RestartTimeout`) or,
+at the ceiling, killed outright (L4, the one level requiring no participation and
+granting no latitude). *What* a given service reports as `Idle` vs
+`CriticalSection`, and the concrete wind-down a policy performs, are governed by
+a dedicated restart-interrupt-signal philosophy (INTENT #119, OQ-27) developed
+via critic-pattern in a Substrate plugin — **NOT decided here**. Until that
+philosophy lands, per-app `RestartPolicy` implementations (notably
+`inference.md` concern 4's benchmark-priority-0-sweep-reports-`Idle` stance)
+stand **applied provisionally, pending the restart philosophy** — the same
+deferral `supervision.md` concern 3 records for the daemon side.
 
 ## Error cases
 
@@ -133,10 +189,28 @@ not `SuperError`.
 - Restart frames carry the `types` guardrail-4 discipline (`serde(default)`, no
   `deny_unknown_fields`) because a daemon on one node may relay a control frame to
   a service reached through another during the skew window.
-- **Coupled to the mixed-version transport floor:** a breaking `pubsub-protocol` /
-  `mesh-transport` `proto` bump is exactly what drives `RestartReason::Compatibility`
-  restarts across the fleet — the mechanism by which the whole fleet rolls to a new
-  transport floor (concern-9 v1 answer). Binary delivery (INTENT #33) stays OPEN.
+- **Coupled to the mixed-version transport floor:** a breaking `mesh-transport`
+  `proto` bump (or an inbound `min_peer_version` floor, `mesh-transport` §1
+  `Hello.min_peer_version`) is exactly what drives `RestartReason::Compatibility`
+  restarts across the fleet — the mechanism by which the whole fleet rolls to a
+  new transport floor (concern-9 v1 answer). A floored sender gets the wire-level
+  `WireError{ code: "version_below_floor" }` / `MeshError::VersionBelowFloor`
+  (`mesh-transport` §Error cases) plus a `PleaseUpdate`/`VersionAdvisory`
+  back-compat warning — this is the **SETTLED** (ledger §A row 32, INTENT #113)
+  machinery that makes a version floor *enforceable at the message level*, and
+  what supervision's compatibility-restart decision (concern 9) *reacts to*, not
+  what it designs. Binary delivery (INTENT #33) stays OPEN.
+- **PENDING BLESSING, not settled (OQ-31, ledger §B.3):** the settled part is
+  narrow — that the 4-level ladder + sender version stamping + version floors
+  ARE the mixed-version mechanism (INTENT #113 "the conversation is moot").
+  **Not settled:** concern-9's specific v1 protocol built on top of that —
+  organic-newest-wins as the fleet's *default* desired version (vs. an
+  operator-pinned alternative) and the no-coordinated-drain-all-then-flip
+  choice — is a **designer position awaiting the operator's blessing**, not a
+  locked decision. It is deliberately a **one-line-swappable placeholder** (the
+  ledger §C global rule): the existing `version/pin/<slug>` operator-pin escape
+  hatch is exactly that swap, needing no protocol change if newest-wins is
+  un-blessed in favor of always-pinned.
 
 ## Reconciliation notes
 

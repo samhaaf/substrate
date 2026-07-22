@@ -27,15 +27,25 @@ trigger that dictates the payload, not the event"); handlers hold the code.
 ```rust
 pub struct Trigger {
     pub trigger_id: TriggerId,
-    pub queue: QueueName,             // source queue (queues) — or a table/graph binding for exec-engine
-    pub handler: HandlerRef,          // the 1:1 dispatch target
+    pub source: TriggerSource,        // WAVE-3 FOLD: Queue(event-driven) | Schedule(time-driven, absorbed cron)
+    pub handler: HandlerRef,          // the 1:1 dispatch target (incl. Emit)
     pub filter: FilterExpr,           // declarative — filters the subject document
-    pub assembly: AssemblyTemplate,   // declarative — builds the handler payload
+    pub assembly: AssemblyTemplate,   // declarative — builds the handler/emitted payload
     pub semaphore: SemaphoreChoice,   // per-trigger event-ID-semaphore choice (INTENT #95/#101)
     pub idempotency: IdempotencyMode, // handler-side contract hint
     pub redrive: Option<Redrive>,     // per-trigger override of the queue default
+    #[serde(default = "default_true")]
+    pub enabled: bool,                // WAVE-3 FOLD: pause/resume (absorbs CronJob.enabled)
     pub registered_by: Slug,
     pub version: LwwVersion,          // (wall_clock, node_id) — LWW like registry entries
+}
+
+// WAVE-3 FOLD — a trigger's source is now an enum (the only model change the cron
+// absorption makes). See "Proposed contracts (wave 3)" below for ScheduleSource /
+// Schedule / FireTarget / MisfirePolicy and HandlerRef::Emit.
+pub enum TriggerSource {
+    Queue(QueueName),                 // event-driven: fires per matching event (today's behavior)
+    Schedule(ScheduleSource),         // time-driven: fires per scheduled occurrence (absorbed cron)
 }
 
 pub enum FilterExpr {
@@ -60,17 +70,22 @@ pub enum HandlerRef {
     Service { slug: Slug, route: String },     // push-deliver over mesh transport, await ack
     Topic(Topic),                              // deliver as a pubsub Envelope (fire-and-forget)
     ExecFn { engine: Slug, function: String }, // execution-engine Deno/SQL handler
+    Emit { queue: QueueName, event_type: EventType }, // WAVE-3 FOLD: emit assembled payload as an
+                                               // event into a queue (the cron emission; also a router action)
 }
 pub enum SemaphoreChoice { None, EventId, Custom(SemaphoreKeyTemplate) }
 pub enum IdempotencyMode { HandlerIdempotent, DedupByEventId, AtMostOnceBestEffort }
 ```
 
 A `FilterExpr` evaluates over — and an `AssemblyTemplate` reads from — a generic
-JSON **subject document** plus well-known meta fields. Each engine binds its
-subject in: `queues` binds an `Event` → `{ "type": <event_type>, "payload": <P>,
-"meta": { event_id, occurred_at, provenance } }`; `execution-engine` (batch 4)
-binds a row/node change → `{ "table"|"node_type", "op", "old", "new", "meta" }`.
-The AST + template are identical — **one trigger data model, two subject bindings.**
+JSON **subject document** plus well-known meta fields. Each source/engine binds its
+subject in: a `Queue`-source trigger binds an `Event` → `{ "type": <event_type>,
+"payload": <P>, "meta": { event_id, occurred_at, provenance } }`; a `Schedule`-source
+trigger (WAVE-3 fold) binds the fired occurrence → `{ "type": "schedule.fired",
+"payload": <static payload>, "meta": { occurrence_id, scheduled_for, fired_at,
+fire_node, catch_up } }`; `execution-engine` (batch 4) binds a row/node change →
+`{ "table"|"node_type", "op", "old", "new", "meta" }`. The AST + template are
+identical — **one trigger data model, three subject bindings.**
 
 ### Queue management + lifecycle
 
@@ -91,9 +106,13 @@ enum QueuesClientMsg {
     EnsureQueue { name: QueueName, config: QueueConfig },   // idempotent
     DeleteQueue { name: QueueName },
     SendEvent  { queue: QueueName, event: Event },          // returns event_id; idempotent on event_id
-    RegisterTrigger   { trigger: Trigger },                 // static-validated on receipt
+    RegisterTrigger   { trigger: Trigger },                 // static-validated on receipt (Queue OR Schedule source)
     UpdateTrigger     { trigger: Trigger },                 // LWW by trigger.version
     DeregisterTrigger { trigger_id: TriggerId },
+    SetTriggerEnabled { trigger_id: TriggerId, enabled: bool }, // WAVE-3 FOLD: absorbs CronRequest::Enable
+    RunTriggerNow     { trigger_id: TriggerId },            // WAVE-3 FOLD: absorbs CronRequest::RunNow — fires a
+                                                            // Schedule trigger off-schedule; still single-fire (Anywhere)
+    ListTriggers      { source_kind: Option<SourceKind>, owner: Option<Slug> }, // filter by Queue|Schedule (absorbs CronRequest::List)
     // handler-delivery (SQS-style ack; push-dispatch is primary, pull kept for parity)
     AckDelivery  { delivery_id: DeliveryId },               // success -> delete
     NackDelivery { delivery_id: DeliveryId, retry_after: Option<Duration> },
@@ -179,6 +198,16 @@ Non-errors by design: `SendEvent` to a queue with no matching triggers succeeds
   like registry entries (INTENT #32).
 - **Breaking:** changing the deterministic subject-document binding, or the
   meaning of `SemaphoreChoice::EventId` (the cross-node exactly-once key).
+- **WAVE-3 FOLD additions (additive-safe):** `Trigger.source` replaces the wave-2
+  `Trigger.queue` field with `TriggerSource::Queue(q)` (identical old behavior) |
+  `TriggerSource::Schedule(..)`; `HandlerRef::Emit`; `Trigger.enabled`
+  (`#[serde(default)]`). `Schedule`/`FireTarget`/`MisfirePolicy` each reserve
+  `#[serde(other)] Unknown` and are **fail-safe** (an unknown variant never fires).
+  This is a pre-production reshape (INTENT #138 — no production use yet), so the
+  `queue → source` migration is mechanical, not a compatibility break.
+- **Breaking (fold):** the schedule `event_id` recipe `uuid_v5(SCHEDULE_NS,
+  trigger_id ++ scheduled_for.rfc3339())` — the cross-node single-fire + consume-side
+  dedup anchor; must be identical on every node and version (carried from cron-api).
 
 ## Reconciliation notes
 
@@ -214,17 +243,50 @@ Non-errors by design: `SendEvent` to a queue with no matching triggers succeeds
   queue-pull semaphore collisions between disjoint partitions aren't a real
   worry — if the event reached both nodes, those nodes were connected. No schema
   change required; the contract as written IS the locked model.
+- **`cron-api` absorption (WAVE-3 FOLD, ledger D2; INTENT #56/#91/F6b): RESOLVED —
+  the two `FireTarget` flavors and the single-fire-via-event-ID-semaphore semantics
+  carry over intact** as a `TriggerSource::Schedule`. `cron-api.md` and
+  `components/cron.md` are tombstoned into this contract / `queues.md` concern 10;
+  the vocabulary map is one-for-one (see `cron-api.md`). Ring simplification: the
+  Ring-4 cron evaluator collapses into this Ring-3 lib with no new dependency (it
+  already rode `locks`/`kv`/`registry`). The full schema is in "Proposed contracts
+  (wave 3)" below.
 
 ## Example data
 
-A nightly rollup fires on the shared example world. `cron` on node **pi** emits
-`stack.analytics.nightly-rollup.tick` into queue `demo.analytics.jobs`; a trigger
-filters it and assembles a handler payload for the `vdb` service.
+A nightly rollup fires on the shared example world — the full pg_cron leg, now
+**two triggers in one lib**: (A) a `Schedule`-source trigger emits
+`stack.analytics.nightly-rollup.tick` into queue `demo.analytics.jobs`; (B) a
+`Queue`-source trigger filters it and assembles a handler payload for `vdb`. The
+firing node (here **pi**) wins the occurrence semaphore.
 
-The registered trigger:
+**(A) The schedule trigger** (absorbs the tombstoned `cron-api` job — the emitter):
+```jsonc
+{ "trigger_id": "vdb/analytics/nightly-rollup",
+  "source": { "type": "Schedule", "schedule": { "Cron": { "expr": "0 3 * * *", "tz": "UTC" } },
+              "target": "Anywhere",
+              "misfire": { "FireOnWake": { "grace": "PT6H", "coalesce": true } } },
+  "handler": { "type": "Emit", "queue": "demo.analytics.jobs",
+               "event_type": "stack.analytics.nightly-rollup.tick" },
+  "filter": "Always",
+  "assembly": { "root": { "type": "Object", "fields": {
+      "db":   { "type": "Literal", "value": "analytics" },
+      "task": { "type": "Literal", "value": "nightly_rollup" } } } },
+  "semaphore": "EventId",
+  "idempotency": "DedupByEventId",
+  "enabled": true,
+  "registered_by": "vdb",
+  "version": { "wall_clock": 1721448000000, "node_id": "macbook" } }
+// On fire, occurrence_id = event_id = uuid_v5(SCHEDULE_NS,
+//   "vdb/analytics/nightly-rollup" ++ "2026-07-19T03:00:00Z"). The Anywhere
+// occurrence semaphore admits exactly one emit; pi wins and publishes the event.
+```
+
+**(B) The consuming trigger** (event-driven — unchanged from wave 2, `queue` field
+now expressed as `source: Queue`):
 ```jsonc
 { "trigger_id": "trg-77a1",
-  "queue": "demo.analytics.jobs",
+  "source": { "type": "Queue", "queue": "demo.analytics.jobs" },
   "handler": { "type": "Service", "slug": "vdb", "route": "/run-rollup" },
   "filter": { "type": "EventType", "match": { "Exact": "stack.analytics.nightly-rollup.tick" } },
   "assembly": { "root": { "type": "Object", "fields": {
@@ -234,6 +296,7 @@ The registered trigger:
   "semaphore": "EventId",
   "idempotency": "DedupByEventId",
   "redrive": { "dlq": "demo.analytics.jobs.dlq", "max_receive_count": 5 },
+  "enabled": true,
   "registered_by": "vdb",
   "version": { "wall_clock": 1721448000000, "node_id": "macbook" } }
 ```
@@ -261,3 +324,104 @@ Partition-conflict path: if **macbook** and **pi** partitioned and each dispatch
 this event under a UUID-twin semaphore, on merge `locks` raises
 `PartitionMergeExceeded` and the outcome surfaces as
 `{ "outcome": "PartitionConflict" }` — not a silent double-dead-letter.
+
+---
+
+## Proposed contracts (wave 3)
+
+This unit owns the **trigger-shape change** the cron fold requires, so it is
+proposed here (the shape is homed in `types::trigger`; `types` houses it —
+flagged for the harmonizer to land the additions). Three folds land, none
+altering the LOCKED declarative-trigger / per-trigger-semaphore vocabulary
+(#101/#103).
+
+### 1. `cron-api` ABSORBED — the `Schedule` trigger source (ledger D2; INTENT #56/#91/F6b)
+
+`contracts/cron-api.md` is **tombstoned into this contract**. A trigger's source
+becomes an enum; the cron vocabulary moves into `types::trigger` intact:
+
+```rust
+pub struct ScheduleSource {            // moved from the tombstoned cron lib into types::trigger
+    pub schedule: Schedule,            // Cron{expr,tz} | Every{interval,anchor} | Once{at}
+    pub target: FireTarget,            // Anywhere (single-fire, raced) | Node(NodeId) (pinned)
+    pub misfire: MisfirePolicy,        // Skip | FireOnWake { grace, coalesce }
+}
+pub enum FireTarget { Anywhere, Node(NodeId), #[serde(other)] Unknown }
+pub enum Schedule {
+    Cron  { expr: String, #[serde(default)] tz: Option<String> },   // 5/6-field
+    Every { interval: Duration, #[serde(default)] anchor: Option<DateTime<Utc>> },
+    Once  { at: DateTime<Utc> },       // one-shot; self-disables after fire
+    #[serde(other)] Unknown,           // FAIL-SAFE: an older node never fires an unknown kind
+}
+pub enum MisfirePolicy {
+    Skip,                              // default: abandon occurrences missed while unavailable
+    FireOnWake { #[serde(default)] grace: Option<Duration>,
+                 #[serde(default = "default_true")] coalesce: bool },
+    #[serde(other)] Unknown,
+}
+pub enum SourceKind { Queue, Schedule }   // ListTriggers filter discriminant
+```
+
+**The emitted occurrence event** (a `Schedule` trigger with `HandlerRef::Emit`
+publishes it into `emit.queue`; `Event`/`Provenance` from `types`):
+
+```rust
+// event_id is DETERMINISTIC — the cross-node single-fire key AND the consume-side
+// dedup key:  event_id = occurrence_id = uuid_v5(SCHEDULE_NS, trigger_id ++ scheduled_for.rfc3339())
+struct ScheduleFired {
+    trigger_id: TriggerId,
+    scheduled_for: DateTime<Utc>,      // nominal fire time (deterministic key)
+    fired_at: DateTime<Utc>,           // actual wall-clock of firing
+    fire_node: NodeId,                 // node that won the occurrence semaphore
+    catch_up: bool,                    // true for a FireOnWake catch-up fire
+    payload: serde_json::Value,        // the ScheduleSource static payload, passed through
+}
+```
+
+**Management folds into the existing client messages** (no separate `CronRequest`):
+`RegisterTrigger`/`UpdateTrigger` carry a `Schedule`-source `Trigger`;
+`SetTriggerEnabled` = cron `Enable`; `RunTriggerNow` = cron `RunNow` (fires an
+off-schedule occurrence, still single-fire); `ListTriggers { source_kind:
+Some(Schedule) }` = cron `List`. Runtime fire state lives server-side in
+`queues/schedule-state/<trigger_id>` (LWW cursor), not on the trigger row (so a
+fire never LWW-races a definition edit — a refinement over cron's in-row
+writeback). See `cron-api.md` for the full one-for-one vocabulary map.
+
+**Errors fold into `QueuesError`:** `InvalidSchedule { detail }` (unparseable
+expr / zero interval / `Once` in the past); `UnknownTargetQueue` and `UnknownNode`
+lean **soft/accept** (register a schedule before its queue exists; `Node(N)` may be
+a currently-offline walk-along Pi — #84); `NotOwner`; `VersionConflict`.
+
+**Version sensitivity (carried from cron-api):** the deterministic `event_id`
+recipe is a **breaking, fleet-coordinated** contract detail — it MUST be computed
+identically on every node and version. `Schedule`/`FireTarget`/`MisfirePolicy` each
+reserve `#[serde(other)] Unknown` and a daemon **must not fire** an `Unknown`
+variant. Sharp edge (flagged, carried over): a `Node(N)`-pinned schedule using a
+kind N cannot parse would silently *never* fire — gate new schedule kinds on
+fleet-wide capability, or pin such jobs only to capable nodes.
+
+### 2. Delivery-persistence is NATIVE on the queue side (INTENT #155; PARKED OQ-3)
+
+`SendEvent` events carry `types::delivery::DeliveryPersistence`, but a queue is
+**already durable/at-least-once by contract**, so `SaveFailed` *is* queues' native
+behavior and `LossyDrop` has no queue meaning (queues never silently drops). The
+field is therefore near-vacuous on this contract — no queue-side branch. It is
+meaningful only for `pubsub-protocol`. Whether pub/sub's `SaveFailed`
+`IntermediateCache` is **backed by queues** (the F5/SB7a consolidation) is **PARKED
+OQ-3, MARKED NEEDS-EXPLANATION** — see `queues.md` concern 11 for the one-page
+honest explanation (the ring-layering inversion pubsub Ring-1 → queues Ring-3, the
+API/semantic mismatch, and the boring shared-`replicated-kv`-substrate reframe).
+**Not decided here**; the seam stays off the contract graph, un-mergeable with a
+one-line change.
+
+### 3. Keeper-inbox durability — contract seam only (INTENT #149/#88/#127; PARKED OQ-6)
+
+The batch-6 keeper runtime is a **consumer** of this contract: keeper-to-keeper
+proposals/approvals ride a durable per-keeper inbox queue (boring provisional
+`keeper.<keeper_id>.inbox`), at-least-once with `SemaphoreChoice::EventId` for
+exactly-once approval semantics, so approvals survive compaction ("approvals must
+not vanish"). This contract provides only the **seam** — an ordinary queue + the
+exactly-once guarantee; the message payload types and the propose→deliberate→approve
+**protocol** are the keeper design's (PARKED OQ-6, "needs its own conversation"),
+authored in `keeper.md` / a keeper payload module and carried by queues opaquely.
+No new wire contract; recorded as a consumer relationship.

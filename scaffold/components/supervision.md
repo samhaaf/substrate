@@ -1,13 +1,32 @@
 # supervision
 
-**Status:** NEW (wave 2). **Nesting:** internal lib of mesh (module
-`lib/mesh::supervision`), Ring-3 in mesh-core's internal layering (rides
+**Status:** REFRESHED (wave 3; NEW at wave 2). **Nesting:** internal lib of mesh
+(module `lib/mesh::supervision`), Ring-3 in mesh-core's internal layering (rides
 `replicated-kv` + `service-registry`, consumes mesh-core's `ProcessControl`
 seam). **Prior art / grounding:** `mesh.md` concerns 6, 8, 12, 13; mesh-core's
 Ring architecture + the five DOWN-seam traits (`ProcessControl`, `Subsystem`,
 `Resolver`, `KvHandle`, `Supervisor`); `types::restart` (the LOCKED restart
-message vocabulary); `mesh-client`'s restart-protocol client half. INTENT
-#45/#57/#66/#76/#77/#86/#98.
+message vocabulary); `chassis`'s restart-protocol client half (the wave-3
+successor to `mesh-client`'s). INTENT #45/#57/#66/#76/#77/#86/#98.
+
+**Wave-3 addendum.** This pass reconciles supervision against three wave-3
+siblings and folds one philosophy-fold clarification: (a) **the mesh-core
+coordination seam** — `mesh-core.md` concern 10's patch-through-on-restart
+names an `ensure_up`-shaped ask and a "readiness signal" it needs from
+supervision without specifying either; concern 11 below designs both, picking
+the boring primitive (observation over the existing `service-registry` lease
+flip, not a new push callback); (b) **chassis as the confirmed service-side
+party** — `chassis.md` concern 5's `RestartPolicy`/`Wound` seam is reconciled
+against `restart-protocol.md`'s wire contract (drift found and fixed there:
+the contract still carried the pre-chassis `RestartParticipant`/`Yielded`
+sketch); (c) the **#156 severity-in/service-decides doctrine** is made
+explicit here as a first-class framing, not just implied by the ladder table;
+(d) concern 9's mixed-version framing is corrected to distinguish what INTENT
+#113 actually SETTLED (the ladder + version stamping/floors ARE the
+mechanism) from what remains **PENDING BLESSING** (ledger OQ-31: the specific
+organic-newest-wins v1 rollout protocol built on top). Grounding added:
+`chassis.md` (wave 3), `mesh-core.md` (wave 3) concern 10,
+`contracts/mesh-transport.md`, ledger OQ-27/OQ-31/§C.
 
 ## Charter
 
@@ -41,7 +60,7 @@ crash policy (concern 8). It does not store the version/requirement/lease record
 (supervision reads them in-process). It does not replicate those records —
 that is **`registry-replication`** (a.k.a. `kv-replication`). It does not own the
 restart message *structs* (**`types::restart`**) nor the *client half* of the
-protocol (**`mesh-client`**). It is **not a package manager or installer**
+protocol (**`chassis`**, wave 3's successor to `mesh-client`). It is **not a package manager or installer**
 (INTENT #45): it does not fetch, build, or place binaries — it consumes "a
 compatible binary for slug X is present on this node" as an input; how binaries
 arrive and get cached per-node is the git-based-distribution idea (INTENT #33),
@@ -103,7 +122,7 @@ shouldn't be interrupted"). supervision consumes this as **live, volatile
 per-service state** — deliberately NOT in replicated-kv (like pubsub interest, it
 tracks the live connection and is rebuilt on reconnect; a stale replicated "busy"
 flag would be a correctness hazard). It is delivered over the persistent
-`mesh-client` connection as `restart-protocol` frames (concern 4). The vocabulary
+`chassis` connection as `restart-protocol` frames (concern 4). The vocabulary
 is `types::restart::Interruptibility`:
 
 ```rust
@@ -138,8 +157,9 @@ concern 10): a database in a critical write is a `CriticalSection`.
 
 The two-way `restart-protocol` (INTENT #77, ladder LOCKED round-9 at exactly four
 levels — concern 13 of mesh.md). supervision owns the **daemon-side policy and
-state machine**; `types::restart` owns the structs; `mesh-client` owns the client
-callback; mesh-core's `ProcessControl` owns the kill. The ladder, canonical
+state machine**; `types::restart` owns the structs; `chassis` owns the client
+callback (the `RestartPolicy` seam, wave 3 — see `restart-protocol.md`'s
+reconciled client-side contract); mesh-core's `ProcessControl` owns the kill. The ladder, canonical
 naming from `types::restart::RestartPriority`:
 
 | # | Level | Service participates? | supervision behaviour |
@@ -166,6 +186,23 @@ a service to yield (that would let one wedged service block a compatibility roll
 across the fleet), and must *never* skip straight to kill when a graceful path
 was requested and is progressing. The state machine is per-restart, keyed by
 `request_id`.
+
+> **The severity-in / service-decides-how doctrine (INTENT #156, made explicit
+> here).** "The service has to determine how it shuts itself down. Requests are
+> requests." The three things supervision ever puts on the wire are the
+> *severity* (`RestartPriority`), the *reason*, and (at L3) a *deadline* — never
+> a prescription of *how* the service should wind down. Framed as a single rule:
+> **supervision REQUESTS, it never FORCES compliance below L4.** L1–L3 each give
+> the service a real say — wait for it to report `Idle` on its own schedule
+> (L1), let it finish and relinquish on its own timing (L2), give it a save
+> window it controls the use of (L3) — and a service that misses its window is
+> not punished mid-negotiation, it is simply escalated one step (above) or, at
+> the L4 ceiling, killed outright with no further latitude. L4 is the one and
+> only level that is a pure force, by design — the ladder's whole point is that
+> everything *before* L4 is a request. `chassis.md` concern 5 and
+> `restart-protocol.md`'s reconciled client-side contract are the service-side
+> statement of this same doctrine — see there for the concrete `RestartPolicy`
+> seam.
 
 ### 5. Port-handoff update choreography (INTENT #76)
 
@@ -258,22 +295,38 @@ framing** (which placed stickiness + squatter-kill inside supervision) — see
 Friction points; the split follows mesh-core's already-designed exclusive
 ownership of OS primitives, and keeps supervision purely policy.
 
-### 9. Pairwise-compatibility rolling update + the mixed-version protocol — CONFIRMED (friction-round 1, INTENT #113)
+### 9. Pairwise-compatibility rolling update + the mixed-version protocol — PARTIALLY CONFIRMED, one layer PENDING BLESSING (friction-round 1, INTENT #113; wave-3 correction, ledger OQ-31)
 
 INTENT #66 wants minimal-restart rolling updates with pairwise deps and left
-**the update protocol between nodes running mixed versions OPEN**. The v1
-answer below is now **CONFIRMED by the operator** — his framing: "the
-conversation is moot" — **the restart-priority system IS the answer**, tied
-explicitly to the LOCKED 4-level ladder (concern 4): **non-critical updates
-wait for idle** (`WaitForIdle`/routine levels — mixed versions in the interim
-are fine, that's the point of the design); **critical incompatible updates go
-out to every instance at HIGH priority** (the L3 `Compatibility` push, INTENT
-#77). Organic-newest-wins rollout stands. On top of it the operator added a
-NEW LOCKED cross-cutting requirement — **sender version stamping on every
-mesh-crossing message** (name + version, receiver version floors, one-version
-back-compat + please-update warning) — homed in `types`/`pubsub-protocol`/
-`queues-api`, consumed here as the data that makes version floors enforceable.
-The protocol:
+**the update protocol between nodes running mixed versions OPEN**. Wave-3
+correction against the ledger (§B.3 OQ-31): the operator's #113 **"the
+conversation is moot"** confirms a *narrow* claim — **the restart-priority
+system IS the mixed-version mechanism** — not the full v1 protocol supervision
+proposes on top of it. Two layers, kept explicitly distinct from here on:
+
+- **SETTLED (ledger §A row 32; INTENT #113, operator-confirmed).** The 4-level
+  ladder (concern 4) IS how mixed versions are handled: **non-critical updates
+  wait for idle** (`WaitForIdle`/routine levels — mixed versions in the interim
+  are fine, that's the point of the design); **critical incompatible updates go
+  out to every instance at HIGH priority** (the L3 `Compatibility` push, INTENT
+  #77). Also SETTLED and LOCKED: **sender version stamping on every
+  mesh-crossing message** (name + version, receiver version floors, one-version
+  back-compat + please-update warning) — homed in `types`/`mesh-transport`
+  (`Hello.min_peer_version`, `WireError{version_below_floor}`, `PleaseUpdate`)
+  /`queues-api`, consumed here as the data that makes version floors
+  enforceable.
+- **PENDING BLESSING (ledger §B.3 OQ-31), NOT settled.** *Which* version the
+  fleet organically converges on by default — the specific "organic-newest-
+  wins, LWW-by-registration, with an optional operator pin" v1 rollout
+  protocol below — is a **designer position**, not an operator-confirmed
+  decision. #113's "moot" framing was about the ladder-is-the-mechanism
+  question; it did not bless this specific default-selection policy. Marked
+  PENDING per the ledger's global design-around rule (§C): kept a
+  one-line-swappable placeholder, with the `version/pin/<slug>` operator pin
+  as the literal escape hatch if newest-wins is un-blessed in favor of
+  always-pinned.
+
+The v1 protocol (candidate, PENDING BLESSING per the above):
 
 **The core move: there is no flag-day and no global barrier. Mixed-version
 safety comes from additive-only contracts, and each node's supervision
@@ -321,14 +374,21 @@ independently reconciles a globally-eventually-consistent desired state.**
    present, it marks the service `Degraded` and surfaces it (dashboard + cc) —
    **never silently runs an incompatible pairing.**
 
-6. **Dispositions after friction-round 1 (INTENT #113):** (a) binary delivery +
-   per-node build cache (INTENT #33) — still OPEN, supervision's hard
-   dependency, out of scope; (b) organic-newest-wins as the default rollout
-   trigger (+ optional operator pin) — **CONFIRMED** ("the conversation is
-   moot"; the restart-priority ladder is the mechanism); (c) coordinated
-   (drain-all-then-flip) breaking rolls — **CONFIRMED never-coordinate**: a
-   critical incompatible update is instead a **high-priority (L3) push to
-   every instance**, which is the ladder doing the coordination organically.
+6. **Dispositions after friction-round 1 (INTENT #113), corrected wave-3 (ledger
+   OQ-31):** (a) binary delivery + per-node build cache (INTENT #33) — still
+   OPEN, supervision's hard dependency, out of scope; (b) **organic-newest-wins
+   as the default rollout *trigger*** (+ optional operator pin) —
+   **PENDING BLESSING (OQ-31)**, NOT confirmed — #113's "the conversation is
+   moot" confirmed that *the restart-priority ladder is the mechanism*, which
+   is a different, narrower claim than *newest-wins is the right default
+   selection policy*; the latter is this file's own designer proposal, kept
+   one-line-swappable behind the operator pin; (c) **no coordinated
+   drain-all-then-flip breaking roll — CONFIRMED, this part follows directly
+   from the SETTLED ladder** (INTENT #66's pairwise-minimal-restart requirement
+   + #113's ladder-is-the-mechanism): a critical incompatible update is a
+   **high-priority (L3) push to every instance**, which is the ladder doing the
+   coordination organically — no new coordination primitive is proposed, so
+   there is nothing here beyond what #113 already settled.
 
 ### 10. Databases-as-services genericity (INTENT #86) — design note, not a VDB design
 
@@ -342,6 +402,93 @@ concern-5 port-handoff specialized with a `locks`-held write barrier around
 verify→flip. supervision designs the generic shape; it does **not** design VDB —
 it only guarantees the protocol is general enough to inherit.
 
+### 11. The mesh-core coordination seam — `ensure_up` + readiness (wave 3, NEW)
+
+`mesh-core.md` concern 10 (patch-through-on-restart, INTENT #152) names a
+dependency on supervision it never designed: when the Dispatcher resolves a
+target whose service is down, "it asks `supervision` … to **ensure `slug` is up
+on `node`**," then parks the frame "awaiting a **readiness signal**." Both the
+ask and the signal are designed here, because park-and-patch cannot be built
+without them and neither has a home elsewhere.
+
+**The ask — `ensure_up`, fire-and-forget, no new state machine.** `ensure_up`
+is a single additional method on the `trait Supervisor` seam supervision
+already exposes UP to mesh-core's Bootstrapper (concern 2):
+
+```rust
+trait Supervisor {
+    fn boot_plan(&self) -> Vec<BootStage>;                       // concern 2, existing
+    fn ensure_up(&self, slug: Slug, node: NodeId);                // NEW, concern 11
+}
+```
+
+`ensure_up` is deliberately **not** `async fn … -> Ready` and returns nothing —
+it is a nudge, not a request/response call. Internally it does nothing novel:
+it folds `slug` into the should-be-running set (concern 6) if it is not
+already there, and lets the **existing** boot-order (concern 2) and
+crash-restart (concern 7) machinery do the actual `ProcessControl.spawn`. If
+`slug` is already up, already booting, or already crash-looping, `ensure_up` is
+a no-op or a re-affirmation of state already in flight — it is idempotent by
+construction because it feeds the same should-be-running reconciliation every
+other boot/restart path feeds. There is no `ensure_up`-specific state to leak
+or double-fire.
+
+**The readiness signal — design choice: OBSERVE the registry, don't invent a
+callback.** Two shapes were on the table:
+
+1. **A callback:** supervision calls back into mesh-core's Dispatcher (or
+   completes a future it handed out) when the ensured service is up, so the
+   Dispatcher knows to unpark the held frame.
+2. **An observation:** the Dispatcher watches `service-registry`'s
+   `(slug, node)` record (the same `kv.subscribe` primitive
+   `service-registry.md` concern 7 already uses for zombie-suspicion) and
+   unparks the frame the moment a fresh **`Live`** record with a bumped
+   `generation` appears for that key — i.e. the ordinary registration
+   `chassis` performs at its own bring-up (concern 1 there), which happens
+   regardless of whether the process was just spawned by `ensure_up`,
+   adopted, or was already running.
+
+**Picked: (2), the observation — the boring one.** Reasons, stated plainly:
+- **No new channel, no new race.** A callback needs its own delivery guarantee
+  (what if supervision's callback fires before the Dispatcher finished parking
+  the frame? what if mesh restarts mid-flight and the callback registration is
+  lost?) — exactly the kind of state a second coordination path always grows.
+  The registry subscription is a mechanism that already exists, is already
+  eventually-consistent-safe (LWW + `generation`), and is already the thing
+  supervision itself watches for zombie-suspicion — reusing it adds zero new
+  failure modes.
+- **Idempotent and late-join-safe for free.** A Dispatcher that starts
+  watching *after* the target already came back up simply reads the current
+  `Live` record immediately (registry reads are LWW state, not an event that
+  can be missed) — a callback scheme would need an explicit "did I miss it"
+  reconciliation path that the observation gets for free.
+- **Keeps ownership clean.** supervision owns *whether/when* to bring a slug
+  up (policy); it does **not** need to also own *telling the Dispatcher it's
+  ready* — that would duplicate what `service-registry` already broadcasts.
+  The Dispatcher, which already resolves `Address`es against the registry
+  (mesh-core concern 2), is the natural, already-existing subscriber.
+- **Matches the ledger's global rule** (§C): the observation is the
+  more-boring, un-invent-a-mechanism option; a bespoke callback would be the
+  non-boring alternative this design steers away from.
+
+**Consequence for mesh-core.md concern 10 (recorded here, not edited there —
+mesh-core.md is a sibling-owned file):** "readiness" is not a value supervision
+returns or pushes; it is the Dispatcher's own read of
+`service-registry`'s live record for `(slug, node)`. supervision's contribution
+is exactly and only `ensure_up`'s should-be-running nudge; everything after
+that — spawning, registering, and the Dispatcher noticing — runs through
+machinery each already owns (supervision's boot/crash-restart, `chassis`'s
+bring-up, `service-registry`'s LWW record + subscribe, mesh-core's Dispatcher).
+
+**Boundary.** supervision does **not** own: the parked-frame buffer or its
+deadline (mesh-core's, concern 10 there); the registry subscribe mechanics or
+the `Live`/`generation` semantics (`service-registry`'s, concerns 4/7); the
+decision of *what counts as* the target being ready beyond "a fresh live
+registration exists" (that IS the definition — supervision does not layer a
+health-check or readiness-probe concept on top; a registered-but-unhealthy
+service is `service-registry`'s/mesh-core's problem via the normal handoff
+health-check path, concern 5, not a second readiness notion here).
+
 ## Relationships / edges
 
 supervision's cross-process **contract edge** is `restart-protocol`; everything
@@ -351,20 +498,25 @@ not a contract edge — INTENT #29/#45).
 - **every service ↔ mesh** via `restart-protocol` — the two-way 4-level
   graceful-restart / interruptibility / port-handoff choreography. supervision is
   the authoritative **daemon-side** party; the struct home is `types::restart`,
-  the client half is `mesh-client`, the kill/handoff execution is mesh-core.
-  Cross-cutting, surface-schema-style (one shared document, every service a
-  party). *(authored: scaffold/contracts/restart-protocol.md)*
+  the client half is `chassis` (wave 3; formerly `mesh-client`), the kill/handoff
+  execution is mesh-core. Cross-cutting, surface-schema-style (one shared
+  document, every service a party). *(authored: scaffold/contracts/restart-protocol.md)*
 - **service-registry** (sibling lib) — supervision **reads** version/requirement/
-  lease/endpoint records and **writes** the LWW registry flip during a handoff.
-  In-process via `trait Resolver` + a KV keyspace, NOT a contract edge. Proposes
-  an *additive facet* of the `service-lookup` registration payload (version +
-  `requires`) — flagged to service-registry, authored there.
+  lease/endpoint records and **writes** the LWW registry flip during a handoff;
+  wave 3 adds **observes** — the `ensure_up`/readiness seam (concern 11) watches
+  the same `(slug, node)` record via `kv.subscribe` that zombie-suspicion already
+  drains. In-process via `trait Resolver` + a KV keyspace, NOT a contract edge.
+  Proposes an *additive facet* of the `service-lookup` registration payload
+  (version + `requires`) — flagged to service-registry, authored there.
 - **replicated-kv** (sibling lib) — the `ServiceManifest`/version keyspace
   persistence + anti-entropy. In-process `trait KvHandle`; replication is
   `registry-replication`/`kv-replication` (not supervision's contract).
 - **mesh-core** (parent shell) — consumes `trait ProcessControl`
   (spawn/signal/adopt/discover) and provides `trait Supervisor` (boot plan,
-  restart choreography) UP to the Bootstrapper. In-process trait seams.
+  restart choreography, and — wave 3, concern 11 — `ensure_up(slug, node)`) UP
+  to the Bootstrapper/Dispatcher. In-process trait seams; the readiness half of
+  the `ensure_up` ask is answered by mesh-core observing `service-registry`
+  directly (concern 11), not by a call back into supervision.
 - **cc** via `cc-escalation` (consumed, not authored) — crash-loop /
   incompatibility investigations ride the same escalation shape as DLQ /
   loop-depth (INTENT #70/#89). Authored by queues/cc; supervision is a producer.
@@ -378,32 +530,37 @@ mesh-core's internal layering (mesh-core §1): rides `replicated-kv` (Ring 2) +
 `service-registry` (Ring 3 peer), consumes mesh-core Ring-0 `ProcessControl`,
 and is composed by the Bootstrapper via `trait Subsystem`/`trait Supervisor`.
 Never a standalone crate (INTENT #54). The client half of its protocol is
-`mesh-client`, a separate shared lib.
+`chassis` (wave 3; the successor shared lib to `mesh-client`).
 
 ## Thoroughness level
 
 **implementation-ready** — the `ServiceManifest`/requirement model, boot-order
 derivation, the interruptibility state model, the 4-level ladder state machine +
-level-selection + escalation rules, the six-step port-handoff choreography, the
+level-selection + escalation rules (now with the severity-in/service-decides
+doctrine made explicit, concern 4), the six-step port-handoff choreography, the
 zombie-kill decision boundary, the crash-restart backoff + crash-loop policy, the
-two-tier supervision-tree split, and the **operator-confirmed** v1 mixed-version
-protocol (friction-round 1, INTENT #113) are all
+two-tier supervision-tree split, and the **mesh-core coordination seam**
+(`ensure_up` + registry-observation readiness, concern 11, NEW wave 3) are all
 decided and specified against frozen seams (mesh-core's `ProcessControl`/
 `Supervisor`, `types::restart`, `service-registry`'s LWW registry). **Genuinely
 downstream / left open:** (a) binary delivery + build cache (INTENT #33) — an
-out-of-scope hard dependency, not a gap in this module; (b) — resolved: the
-concern-9.6 policy choices are confirmed per INTENT #113; (c) exact backoff
-constants + crash-loop window (fill-time tuning knobs, not design forks); (d) the
-`restart-protocol` wire is `approach-sketched` here and reconciled in the per-pair
-round with `types`/`mesh-client`/mesh-core.
+out-of-scope hard dependency, not a gap in this module; (b) **corrected wave 3**
+— concern-9.6's mixed-version *default-selection* policy (organic-newest-wins)
+is **PENDING BLESSING (ledger OQ-31)**, not confirmed; only the ladder-is-the-
+mechanism claim and the never-coordinate consequence are settled (concern 9);
+(c) exact backoff constants + crash-loop window (fill-time tuning knobs, not
+design forks); (d) the `restart-protocol` wire is implementation-ready and
+reconciled against `chassis`'s authoritative client-half shape (wave 3; drift
+found and fixed in `contracts/restart-protocol.md`).
 
 ## Assigned design-depth
 
 **Opus**, single Component-Designer pass (this file), grounded in `mesh.md`
 (concerns 6, 8, 12, 13), `mesh-core.md` (Ring architecture + `ProcessControl`/
-`Supervisor`/`Subsystem` seams), `types.md` (`restart.rs`), `mesh-client.md`
-(restart-protocol client half), `service-registry.md`, and INTENT
-#45/#57/#66/#76/#77/#84/#86/#98.
+`Supervisor`/`Subsystem` seams, and wave-3 concern 10's patch-through/mediation),
+`types.md` (`restart.rs`), `chassis.md` (wave-3 restart-protocol client half,
+concern 5), `service-registry.md`, and INTENT
+#45/#57/#66/#76/#77/#84/#86/#98/#119/#152/#156/#163, ledger OQ-27/OQ-31/§C.
 
 ## Suggested fill-model
 
@@ -430,4 +587,38 @@ formerly in this section are superseded by the authored contracts.
 - `restart-protocol` (mesh ↔ every service) — the 4-level ladder, interruptibility feed, boot ordering, port-handoff choreography (supervision is the daemon side). → `scaffold/contracts/restart-protocol.md`
 
 Also a party to (authored elsewhere / cross-cutting): `pubsub-protocol` — see `scaffold/contracts/`.
+
+## Proposed contracts (wave 3)
+
+supervision owns one in-process seam addition this wave — an extension of the
+existing `trait Supervisor` boundary with mesh-core (not a new wire contract;
+`mesh-core.md` is the sibling-owned consumer, so this is recorded here as a
+proposal for the harmonizer to fold into `mesh-core.md`'s own text, per concern
+11):
+
+```rust
+trait Supervisor {
+    fn boot_plan(&self) -> Vec<BootStage>;         // existing (concern 2)
+    fn ensure_up(&self, slug: Slug, node: NodeId); // NEW (concern 11) — fire-and-forget,
+                                                     // idempotent should-be-running nudge
+}
+```
+
+- **What's proposed:** the single `ensure_up` method, and the design ruling
+  that the corresponding **readiness signal is NOT a new callback** — mesh-core's
+  Dispatcher observes `service-registry`'s existing `(slug, node)` live-record
+  subscription (the same primitive `service-registry.md` concern 7 already
+  exposes for zombie-suspicion) rather than supervision inventing a push
+  channel back to the Dispatcher. See concern 11 for the full reasoning.
+- **What this does NOT change:** no new wire struct, no new contract file, no
+  new party. `trait Supervisor` is already an in-process seam (Ring-3 lib to
+  mesh-core's Bootstrapper); this is an additive method on it, consistent with
+  `types` guardrail patterns for additive, non-breaking extension even though
+  it is in-process rather than wire-crossing.
+- **Reconciliation flag for the harmonizer:** `mesh-core.md` concern 10
+  currently narrates the `ensure_up`/readiness relationship in prose without
+  naming a method or a mechanism; this proposal is the concrete fill. No
+  drift was found in mesh-core.md's *framing* (it already leans toward
+  "observe the registry," never proposing a callback) — this file makes that
+  framing a named, typed primitive.
 

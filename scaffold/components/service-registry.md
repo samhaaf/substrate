@@ -8,6 +8,26 @@ formats. **Nesting:** internal lib of mesh (`lib/mesh::registry`), Ring 3 in
 mesh-core's layering (rides `replicated-kv`, Ring 2). Never a standalone service
 (INTENT #54).
 
+**Wave-3 fold (this pass).** Three folds land, no structural change to the
+record model or resolve policy: (1) **sender version stamping (INTENT #113)** is
+made explicit as a *division of labour* — the registry is the version *inventory*
+(`ServiceMeta.service_version` per instance), the transport layer carries the
+*per-message* stamp (`Provenance.service_version`, `types::transport`), and
+**version-floor enforcement + the `PleaseUpdate` back-signal is a receiver-EDGE
+policy owned by chassis / the per-contract edge — NOT the registry** (concern 6,
+extended). (2) The registering party is **`chassis`** everywhere (`mesh-client`
+retired into it, ledger D1); the client half of `service-lookup` is a chassis
+sub-surface. (3) The **update-flow hooks** get registry-side mechanics: the
+atomic `flip_endpoint`, the **brief dual-registration window semantics**, and the
+zombie-detection feed are specified against supervision's port-handoff
+choreography (INTENT #76) and mesh-core's `ProcessControl` (INTENT #57) — concern
+7, expanded and reconciled. The per-node `inference` `NodeScoped` registration +
+`FleetAlias`-as-resolve-policy is **LOCKED (wave-2 resolution)** and is not
+reopened. **PARKED OQ-1 held:** registration / renew / deregister / flip involve
+**no** authority or blessing — they are plain LWW writes on `replicated-kv`;
+consistency-requiring *application* changes route through chassis's blessing
+queue, never through registration (concern 8).
+
 ## Charter
 
 `service-registry` is **THE wiring seam** of the operating system: the
@@ -102,7 +122,7 @@ pub struct Endpoint {                 // refines "slug -> host:port": a browsabl
 }
 
 pub enum AddressingClass {
-    Singleton,   // exactly one live instance mesh-wide (db, cc, kg, projects, org, secrets)
+    Singleton,   // exactly one live instance mesh-wide (db, cc, kg, projects, secrets)
     NodeScoped,  // one live instance per node (gc :8430, per-node vfs leg, inference api)
     FleetAlias,  // resolve-time POLICY on the inference slug (-> local mesh :3649) — NOT a stored record; concern 5 as relaxed
 }
@@ -139,8 +159,9 @@ remote owner is mesh-core's Dispatcher job *after* resolve returns the endpoint.
   expiry (concern 4). This is why lease expiry is *data*, not a mutation.
 
 Two broad-query methods beyond single resolve, because `service-lookup` is
-explicitly "cheap and broadly queryable" (org resolves the whole service map,
-dashboard-serving discovers every service to fetch surface schemas):
+explicitly "cheap and broadly queryable" (the keeper runtime resolves the whole
+service map, mesh-core's dashboard surface discovers every service to fetch
+surface schemas):
 
 ```rust
 fn resolve_all(&self, slug: &Slug) -> Result<Vec<ServiceRecord>>; // all live instances of a slug
@@ -154,7 +175,8 @@ must not resurrect a dead one.
 
 - **Lease + heartbeat.** Registration carries a TTL; the owner renews via a
   periodic `renew` (heartbeat) that re-`put`s the record with a fresh
-  `lease.expires_at`. `mesh-client` drives renewal on the service's behalf.
+  `lease.expires_at`. **`chassis` drives renewal on the service's behalf** (the
+  daemon-wrapper's lease task, ledger D1 — `mesh-client` retired into chassis).
   Missing renewals → `expires_at` passes → record filtered at read time.
 - **`generation`** bumps on every *fresh* registration of `(slug, node)` (a new
   process, not a renewal). It is the restart-detection / zombie-disambiguation key
@@ -175,7 +197,7 @@ must not resurrect a dead one.
 pub struct Lease {
     pub registered_at: DateTime<Utc>,
     pub expires_at:    DateTime<Utc>,  // naive wall-clock; renew extends it (INTENT #32)
-    pub ttl_secs:      u32,            // renewal-interval hint for mesh-client
+    pub ttl_secs:      u32,            // renewal-interval hint for chassis
     pub generation:    u64,            // ++ per fresh (re)registration on this node
 }
 pub enum RecordState { Live, Tombstone { reason: DeregisterReason } }
@@ -197,6 +219,11 @@ a friction point, not silently accepted.
 > `completion-router.md` concern 8 and `inference.md` concern 2 independently
 > proposed the same replacement, and the registry adopts. Authoritative
 > resolution: `scaffold/contracts/service-lookup.md` §Reconciliation notes.
+>
+> **Wave-3 note: this resolution is LOCKED and is NOT reopened this pass.** The
+> per-node `NodeScoped` `inference` registration + `FleetAlias`-as-resolve-time-
+> policy split is carried forward verbatim; wave-3's version-stamp and update-flow
+> folds touch neither the fleet keyspace nor the resolve policy.
 
 The adopted shape:
 
@@ -249,6 +276,36 @@ pub struct Dependency { pub slug: Slug, pub req: VersionReq } // e.g. inference 
   registry data, not a stored field — keeping the registry boring and the ordering
   policy in one place (supervision).
 
+**Sender version stamping (INTENT #113) — the division of labour (wave-3 fold).**
+#113 has three moving parts, and it is a correctness point that the registry owns
+exactly ONE of them:
+
+1. **Version INVENTORY — the registry (this module).** `ServiceMeta.service_version`
+   is the *declared running build* of each `(slug, node)` instance, replicated
+   with the record. It is the authoritative answer to "what version is running
+   where," and the read surface (`resolve_all`, `list`) supervision consumes to
+   compute floors and plan pairwise-compatible rolling updates. It is registration
+   metadata, refreshed at register/flip — **not** a per-message field.
+2. **Per-MESSAGE stamp — the transport layer, NOT here.** Every mesh message
+   carries the sending service's name + version on `Provenance.service_version`
+   (`types::transport` / `types::provenance`), stamped once by **chassis** on the
+   outbound frame (INTENT #113 LOCKED; `types.md` wave-3). The registry neither
+   stamps nor reads this; it is a property of the envelope, not of a registration.
+3. **Version-floor ENFORCEMENT + `PleaseUpdate` back-signal — a RECEIVER-EDGE
+   policy, owned by chassis / the per-contract edge, NOT the registry.** A receiver
+   may enforce a floor ("I only accept messages from service-version ≥ X"); a
+   below-floor message is rejected at the edge with a catchable
+   `WireError { domain:"mesh", code:"version_below_floor", … }` (mirrors
+   `MeshError::VersionBelowFloor`), and a one-version-back-compat message is
+   tolerated *with* a `PleaseUpdate` warning attached back to the sender — never a
+   silent drop (`types::transport::{WireError, PleaseUpdate}`, `types.md` wave-3).
+   **The registry is referenced by this policy but does not run it:** the floor a
+   receiver enforces is *derived* from the registry's inventory (what versions are
+   live) plus the receiver's own compatibility rule; the enforcement executes on
+   chassis's inbound edge, per contract. The registry stores the truth the floor
+   is computed from; it never gatekeeps a message. This keeps the registry a pure
+   directory and puts message-time policy where the message is (the edge).
+
 ### 7. Zombie-killing support + port-handoff — detect & signal, don't kill (INTENT #57/#76)
 
 The registry is the *discovery half* of two process-hygiene duties; mesh-core's
@@ -269,17 +326,68 @@ The registry is the *discovery half* of two process-hygiene duties; mesh-core's
       -> Result<Endpoint /* the superseded old endpoint */>;
   ```
 
+- **Brief dual-registration window semantics (wave-3 fold — the reconciliation).**
+  The keyspace invariant is **exactly one Live `ServiceRecord` per `(slug, node)`
+  key** — this is what MAKES the flip atomic (a resolver never sees two fronted
+  endpoints and never sees none). So during a same-node rolling update the "dual"
+  is a **process-level** window (two processes briefly alive), *not* a keyspace
+  window (there is never a second Live record for one key). The registry represents
+  the whole handoff as **one LWW `put`** on the single `(slug, node)` key:
+
+  - **Before the flip:** the record points at the OLD endpoint. `resolve` returns
+    old — correct, old is still serving. The new process may already be bound and
+    healthy on its new port, but supervision verifies that by **probing the port
+    directly** (it knows the port from its `SpawnSpec`), *not* via a registry entry
+    — so the new instance need not be registered to be verified.
+  - **The flip:** one `flip_endpoint` `put` (or the new instance's own fresh
+    `Register` on the same key) swaps endpoint old→new and **bumps `generation`**.
+    LWW makes it a single atomic cut-over; `resolve` returns new from the next read.
+    There is no intermediate state where the slug points at nothing or at both.
+  - **After the flip:** the OLD endpoint is now unreferenced by the record. The
+    record's `generation` bump is the marker that a supersession happened; it feeds
+    zombie-detection (next bullet). supervision then downs the old process; the
+    registry entry already points only at new.
+
+  **Reconciliation with `supervision.md` concern 5 (flagged for the harmonizer).**
+  supervision's step-1 prose says the new instance "registers itself (a *second,
+  distinct registry entry* — same slug, new endpoint)." Under the `(slug, node)`
+  single-key model that is **not** a second *Live record* — it is the same key's
+  **next `generation`**, adopted by the flip `put`. The registry deliberately holds
+  ≤1 Live record per `(slug, node)`; the atomicity guarantee depends on it. Two
+  boring disciplines both land on the same single-key write, and the registry
+  supports both:
+  - **supervision-driven flip:** new instance boots in a handoff/standby mode
+    (carried in `SpawnSpec`) that **defers self-registration**; supervision probes
+    its port, then issues `FlipEndpoint` — one `put`, returns the superseded
+    endpoint synchronously so supervision knows which port to down.
+  - **self-registering flip:** the new instance's chassis registers on the same
+    `(slug, node)` key with a fresh `generation` + new endpoint; that `put` *is*
+    the flip (higher generation / fresher clock wins), and the registry emits
+    `ZombieSuspected` for the superseded endpoint (next bullet) — no separate
+    `FlipEndpoint` call, but no synchronous superseded-endpoint return either, so
+    supervision learns the old port from the zombie signal instead.
+
+  The registry never health-checks on flip — it is a dumb LWW store and **trusts
+  supervision's verify-then-flip ordering** (supervision confirms the new instance
+  healthy before flipping; the registry only records the cut). Flagged so the
+  harmonizer aligns supervision's "second entry" wording with the single-key
+  invariant; no keyspace change is proposed (generation-in-key was considered and
+  rejected as less boring — one-line-reversible per ledger §C global rule).
+
 - **Zombie-killing (INTENT #57): the registry emits the signal.** "When a service
   restarts and re-registers on a new port, the old still-running copy must be
   discovered and killed." The registry `subscribe`s to its own keyspace (via
   `kv.subscribe`); when a `(slug, node)` record's `endpoint`/`generation` changes,
   it emits a `ZombieSuspected { slug, node, superseded: Endpoint, pid: Option<u32> }`
-  on a channel `supervision` drains. mesh-core then `ProcessControl.discover(superseded)`
-  (by held PID if it spawned the service, else by probing the stale endpoint's
-  identity/pidfile) and kills it. **The registry never kills a process** — it
-  provides the "here is an endpoint nothing points at anymore, and here is the PID
-  if we know it" fact. This keeps the OS-kill authority solely in mesh-core
-  (matching its `ProcessControl` ownership) and the *policy* in supervision.
+  on a channel **`supervision` drains**. supervision *decides* (its
+  should-be-running reconciliation, supervision.md concern 6) and commands
+  **mesh-core's `ProcessControl.discover(superseded)`** (by held PID if mesh
+  spawned the service, else by probing the stale endpoint's identity/pidfile after
+  the flip) → `signal(pid, SIGTERM)`→grace→`SIGKILL` (mesh-core concern 4). **The
+  registry never kills a process and never decides** — it provides the "here is an
+  endpoint nothing points at anymore, and here is the PID if we know it" fact. This
+  is the clean three-way split: registry *detects & signals* the entry-level
+  supersession, supervision *decides*, mesh-core *executes* the OS-level kill.
 
   Zombie-suspicion is distinct from three neighbors, all deliberately separate:
   *lease expiry* (a stale *entry*, self-healed at read time), *squatter-killing*
@@ -287,15 +395,39 @@ The registry is the *discovery half* of two process-hygiene duties; mesh-core's
   restart* (a *deliberate* replacement). The registry owns only the entry-level
   signal.
 
+### 8. Registration is authority-free — PARKED OQ-1 held
+
+`register` / `renew` / `deregister` / `flip_endpoint` are **plain LWW writes on
+`replicated-kv`**. None of them consults, requires, or emits any *blessing* or
+*authority* decision — there is no authority party on any registry edge, and the
+registry threads no authority dependency anywhere. This is deliberate and it
+respects **PARKED OQ-1** (ledger §B.1/§C — the authority-node-vs-no-central-node
+question is the operator's to settle, not a wave-3 call).
+
+The distinction to keep crisp: **registration is directory maintenance, not a
+consistency-requiring change.** A service announcing "I am `db` at `:5432`, v1.5"
+is eventually-consistent bookkeeping that converges by naive LWW on partition
+merge (concern 1) — two partitions each re-registering the same slug is a
+**non-conflict** (service-lookup Error cases: "registering a slug another node
+already owns is allowed and converges by LWW"). It never needs blessing. The
+*application* changes that DO require consistency blessing (a write that two
+partitions must not both commit) route through **chassis's blessing-queue seam**
+against an **abstract blessing-target** (chassis concern 7) — a path that is
+entirely separate from the registry and stays one-line-swappable between #163's
+no-central-node `locks` merge-reconciler and a future cloud authority. The
+registry deliberately holds **nothing** that names, locates, or privileges an
+authority node, so either resolution of OQ-1 lands without a change here.
+
 ## Relationships / edges
 
 Contract edges (cross-process WS/wire, rides mesh-core's `mesh-transport` frame on
 `:3649`):
 
-- **any device/service (cc, org, inference, vfs, kg, projects, secrets, the mesh
-  CLI) ↔ service-registry** via `service-lookup` — register / renew / deregister /
-  resolve / resolve_all / list; THE wiring seam. Client half is `mesh-client`.
-  (scaffold/contracts/service-lookup.md)
+- **any device/service (cc, inference, vfs, kg, projects, secrets, the keeper
+  runtime, the mesh CLI) ↔ service-registry** via `service-lookup` — register /
+  renew / deregister / resolve / resolve_all / list; THE wiring seam. **Client
+  half is `chassis`** (the daemon-wrapper every service links; `mesh-client`
+  retired into it, ledger D1). (scaffold/contracts/service-lookup.md)
 - **cc ↔ service-registry** via `service-registration` — cc as a first-class
   registrant+resolver; an *instance* of `service-lookup`, called out because cc
   is both. No distinct schema (an instance of `service-lookup`).
@@ -319,8 +451,9 @@ Internal-lib seams (compiled-in, NOT contract edges — INTENT #29/#45):
 - **provides UP** `trait Resolver` (mesh-core's Dispatcher + CLI ride it) and
   `trait Registrar` (register/renew/deregister/flip); plus the `ZombieSuspected`
   channel `supervision` drains and the `resolve_all`/`list` read surface
-  `dashboard-serving` (surface-schema discovery) and `supervision`
-  (version/boot-order) consume.
+  **mesh-core's dashboard surface** (surface-schema discovery — `dashboard-serving`
+  folded into mesh-core, ledger D5/F9b) and `supervision` (version/boot-order)
+  consume.
 - **sibling, must-not-conflate:** `completion-router`'s `NodeRegistry` (fleet
   routing health/load/inventory) and `network-topology` (peer on/off feed) are
   *distinct tables*; the registry holds the per-node `NodeScoped` `inference`
@@ -331,9 +464,10 @@ Internal-lib seams (compiled-in, NOT contract edges — INTENT #29/#45):
 
 Parent: mesh (mesh-core) | Children: none. Server side is `lib/mesh::registry`,
 Ring 3 in mesh-core's layering (rides `replicated-kv` at Ring 2). The shared
-client half (`register`/`resolve`/`renew`) is part of `mesh-client`'s surface —
-services get it from the same thin boot lib, not a separate crate (confirmed at
-skeleton time).
+client half (`register`/`resolve`/`renew`) is part of **`chassis`**'s surface —
+services get it from the same daemon-wrapper lib they link to become a service,
+not a separate crate (`mesh-client` retired into `chassis`, ledger D1; confirmed
+at skeleton time).
 
 ## Thoroughness level
 
@@ -351,11 +485,21 @@ long-expired records — a fill-time knob, not a design fork.
 
 ## Assigned design-depth
 
-Opus, single strong-model Component-Designer pass (this file), grounded in the
+Opus, single strong-model Component-Designer pass (wave 2), grounded in the
 wave-1 `service-registry.md` + `mesh.md` Concern 1, the batch-1 designs
 (`mesh-core.md` seams, `types.md` node/endpoint vocabulary, `pubsub-relay.md`
 provenance discipline), the live `lib/mesh/{discovery,config,lib}.rs`, and INTENT
 items 32/45/57/58/59/66/76.
+
+**Wave-3 fold pass (this pass, Opus)** — grounded additionally in the batch-1
+`types.md` (`transport.rs`: `MeshReply`/`WireError`/`PleaseUpdate`, `provenance.rs`
+`service_version`) and `chassis.md` (client-half absorption of `mesh-client`, the
+blessing-queue seam), the batch-2 `mesh-core.md` (concern 4 zombie/ProcessControl)
+and `supervision.md` (concern 5 port-handoff, concern 6 zombie decision), and the
+wave-3 intent ledger §A rows 32/62, §C OQ-1. Folds: #113 version-stamp division of
+labour (concern 6), chassis-as-registrant (throughout), the update-flow mechanics
++ dual-registration window semantics + zombie feed (concern 7), OQ-1 hold (concern
+8). No structural change to the record model or resolve policy.
 
 ## Suggested fill-model
 
@@ -392,4 +536,43 @@ formerly in this section are superseded by the authored contracts.
 - `kv-replication` (mesh daemon ↔ mesh daemon) — the registry is a keyspace TENANT of the one replication protocol; `registry-replication` is a superseded tombstone. → `scaffold/contracts/kv-replication.md`
 
 Also a party to (cross-cutting): `restart-protocol` (registry flip in port-handoff), `surface-schema` — see `scaffold/contracts/`.
+
+---
+
+## Proposed contracts (wave 3)
+
+This unit owns `service-lookup`; wave 3 makes three **shape-level clarifications**
+to it (no wire-struct rename — the `RegistryRequest`/`RegistryResponse`/
+`ServiceRecord` set is unchanged). Proposed to the harmonizer; details authored
+into `scaffold/contracts/service-lookup.md` §Reconciliation notes:
+
+1. **`FlipEndpoint` atomicity + the brief dual-registration window (INTENT #76).**
+   The keyspace invariant is **≤1 Live `ServiceRecord` per `(slug, node)`**; a
+   port-handoff is **one atomic LWW `put`** (bump `generation`, swap `endpoint`),
+   never two coexisting Live records. `FlipEndpoint` returns the superseded
+   `Endpoint` synchronously (supervision-driven path); a self-registering new
+   instance produces the same cut via a fresh `Register` + a `ZombieSuspected`
+   signal instead. **Reconciles `supervision.md` concern 5's "second distinct
+   registry entry"** to "the same key's next `generation`" — flagged for the
+   harmonizer; no keyspace change proposed (generation-in-key rejected as less
+   boring, ledger §C).
+
+2. **Sender version stamping (INTENT #113) — division of labour recorded on the
+   edge.** `ServiceMeta.service_version` is the registry's version *inventory*
+   (register/flip-time metadata, the read surface supervision consumes). The
+   *per-message* stamp lives on `Provenance.service_version` (transport, chassis
+   stamps it), and **version-floor enforcement + the `PleaseUpdate` back-signal is
+   a receiver-EDGE policy owned by chassis / the per-contract edge** (`types::
+   transport::{WireError code "version_below_floor", PleaseUpdate}`), NOT a
+   `service-lookup` operation. Recorded so no reader mistakes the registry for the
+   message-time gate. → cross-refs `contracts/mesh-transport.md`.
+
+3. **Client half is `chassis` (INTENT #156, ledger D1).** Every `service-lookup`
+   client operation (`register`/`renew`/`deregister`/`resolve`/`resolve_all`/
+   `list`/`FlipEndpoint`) is a `chassis` sub-surface; `mesh-client` is retired.
+   The contract's Parties line already reads `chassis`; this pins the component
+   side to match.
+
+**Held (not proposed): PARKED OQ-1.** No authority/blessing party is added to any
+registry edge (concern 8). Registration stays a plain replicated-kv write.
 
