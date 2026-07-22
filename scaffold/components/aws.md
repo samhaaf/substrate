@@ -1,12 +1,21 @@
 # aws
 
 **Status:** NEW (round-9 lock, 2026-07-19); **wave-2 full design pass
-(2026-07-19).** **Nesting:** top-level app-crate (L2). This file promotes the
-prior round-9 requirements-only stub to a designed component: the internal
-adapter architecture, the credential/encryption boundaries, the bulk-transfer
-problem under single-port locality, the not-built-now posture, and the four
-contract pairs wave2-plan assigns aws (`aws-mesh`, `aws-vfs`, `aws-vdb`,
-`aws-secrets`).
+(2026-07-19); wave-3 refresh (unit `aws-refresh`, 2026-07-22).** **Nesting:**
+top-level app-crate (L2). This file promotes the prior round-9
+requirements-only stub to a designed component: the internal adapter
+architecture, the credential/encryption boundaries, the bulk-transfer problem
+under single-port locality, the not-built-now posture, and the four contract
+pairs wave2-plan assigns aws (`aws-mesh`, `aws-vfs`, `aws-vdb`,
+`aws-secrets`). **This wave-3 pass** (a) re-grounds the shell on `chassis`
+now that `mesh-client` has retired into it (ledger D1), (b) reconfirms the
+adapter-aggregation surface and the presigned-URL flow **unchanged**, (c)
+records the **cloud node** (INTENT #110/#157, ledger OQ-14) as the open
+design item it is — what each candidate shape would require from `aws`'s
+surface, decided by neither designer nor this file, and (d) adds the
+**billing-pull seam for `spend`** as an anticipated, design-only contract.
+Nothing new is built this pass (INTENT #105 still governs); this remains a
+conceptual/contract-level refresh.
 
 > **SUPERSESSION NOTE (round-9, preserved):** this crate corrects the earlier
 > "S3 crate/adapter" phrasing and the rounds-4–5 "S3 adapter lives inside
@@ -25,10 +34,13 @@ our adapters, with a WebSocket interface for pushing to, reading from, and
 pulling against AWS in exactly the ways we need."
 
 `aws` **IS** a mesh service like any other: it is an app-crate (`bin/aws`
-daemon + `lib/aws` internal adapter libs) that embeds `mesh-client`, registers
-the slug `aws`, speaks `mesh-transport`/`pubsub-protocol` over the local
-`:3649` daemon (single-port locality, INTENT #58), publishes a boring surface
-schema, and participates in the restart protocol. It is addressed
+daemon + `lib/aws` internal adapter libs) that links **`chassis`**
+(wave-3 — the daemon-wrapper lib `mesh-client` retired into, ledger D1;
+`components/chassis.md`) in its `full` profile, registers the slug `aws` via
+chassis's bring-up sequence, speaks `mesh-transport`/`pubsub-protocol` over
+the local `:3649` daemon (single-port locality, INTENT #58), publishes a
+boring surface schema, and participates in the restart protocol through
+chassis's `RestartPolicy` seam. It is addressed
 **virtualized** (`AnyNode { slug: "aws" }`) — consumers don't care which node
 runs it; mesh routes to wherever the singleton instance lives (the node with
 good internet egress). It holds AWS account credentials **only** by fetching
@@ -83,7 +95,11 @@ discipline as mesh (INTENT #55). Three rings, strictly bottom-up:
 
 ```
 Ring 0  aws SHELL (bin/aws + lib/aws root)
-        · mesh-client boot: register slug "aws", open the :3649 session
+        · chassis boot (wave-3, replaces mesh-client): serve::<AwsContracts>
+          brings the daemon online, registers slug "aws", opens the :3649
+          session, and forces every message arm the generated aws contracts
+          declare — a compile error if aws leaves one unhandled (chassis
+          concern 2/3)
         · RequestRouter: dispatch an inbound mesh-transport Request by
           (adapter, op) to the right adapter module; stream large bodies
         · CredentialProvider: fetch AWS account creds from `secrets` on
@@ -268,6 +284,107 @@ parent — so a data engineer can see the full chain from a handler touch to an
 S3 object landing. Provenance is *lighter* here than in VDB (this is transport,
 not the database plane) but present from the start.
 
+### 10. Billing-pull seam for `spend` (wave-3, design-only)
+
+`spend`'s consolidation pass (INTENT #166 Q10/#41/#68) names AWS billing as
+its third cost source, pull-shaped like every other source, and flags that
+`aws` "has no billing/cost adapter yet and none is built in v1"
+(`spend.md`'s own words). This pass records the shape from `aws`'s side so
+the two files agree on one seam rather than drifting into two:
+
+- **What it would be:** a Cost-Explorer-shaped Ring-2 adapter (`billing`,
+  alongside `s3`/`rds`/`lambda`/`secretsmgr`) that `spend` queries over the
+  standard mesh request path (never a bespoke transport) for cost/usage
+  figures grouped by **AWS cost-allocation tag**.
+- **What it needs upstream of it existing:** every AWS resource `aws`
+  provisions (S3 buckets/objects, RDS instances, Lambda functions) would need
+  a `keeper_id` (+ optional `environment_id`) cost-allocation tag applied at
+  provisioning time, so a billing figure resolves to `spend`'s `SpendScope`
+  without `spend` inventing its own AWS resource inventory. That tagging
+  discipline is a dependency of the `billing` adapter, not something `aws`
+  does today — its current adapters (S3/RDS+Lambda/SM) apply no
+  cost-allocation tags.
+- **Enforcement stays out of `aws`, same as everywhere else in `spend`'s
+  design:** `aws` (if it ever grows `billing`) only *reports* what AWS itself
+  billed; any budget/alarm control stays an AWS-side (or operator-side)
+  concern surfaced through the adapter, never enforced by `aws` in-process
+  (mirrors concern 7's passive-peer posture).
+- **Not built now.** Per INTENT #105, this is named and shaped, not
+  scheduled; it becomes real only when `aws` itself leaves the not-built-now
+  posture (concern 6) and someone actually wants AWS spend numbers.
+
+### 11. The cloud node — OPEN, design-around only (INTENT #110/#157; ledger OQ-14)
+
+**Not decided here.** The operator raised the cloud node as "topics for
+discussion," not a locked shape (INTENT #110), and OQ-14 keeps it explicitly
+open. This concern records **what each candidate shape would require from
+`aws`'s surface** — a design-around, not a choice between them.
+
+The tension the operator named himself: "our entire mesh structure is
+designed around each node being a physical device," and a cloud node bends
+that either by being virtualized compute (no persistent process) or by being
+a real-but-tiny always-on box. Two shapes have been named; `aws` must stay
+buildable toward **either** without committing to one:
+
+**Shape A — Lambda + API Gateway (incl. WebSockets) + S3, a *virtualized*
+mesh node** (the operator's stated preference, INTENT #110: "I prefer
+compute via Lambda behind the API Gateway service... storage being S3 — a
+virtualization layer for a node that connects into a VPC"). What this would
+require of `aws`, if chosen:
+  - A **new Ring-2 adapter surface for API Gateway WebSocket management**
+    (`apigatewaymanagementapi`-shaped: post-to-connection, track/expire
+    connection ids) — not one of today's four adapters. This is the load-
+    bearing gap: chassis's bring-up sequence (register / heartbeat / persistent
+    socket) assumes a **long-lived process**; Lambda invocations are
+    stateless and short-lived, so a Lambda-hosted "node" cannot simply link
+    `chassis` unmodified. Either chassis grows a Lambda-invocation profile
+    (state checkpointed between invocations, likely into the existing
+    `lambda` adapter's territory) or the virtualized node speaks a narrower,
+    purpose-built protocol that `aws` bridges into ordinary mesh frames on
+    its behalf — an open design question in its own right, out of scope for
+    this file to resolve.
+  - **State persistence to S3 (or a fast KV) between invocations** — a
+    Lambda has no local disk/process memory to hold `chassis`'s outbox,
+    subscriptions, or connection registry across calls; something durable
+    has to carry them. This reuses `aws`'s existing S3 mechanics (concern 5)
+    but is a new *consumer* of them (the node's own runtime state, not VFS
+    overflow or KV snapshots) — a third S3 tenant alongside `aws-vfs` and
+    `aws-mesh`, not yet contracted.
+  - The existing `lambda` adapter (today: VDB handler deploy/invoke,
+    design-only) would need to grow a **long-poll/keep-warm or
+    connection-bridging** capability if this node is expected to behave like
+    an always-reachable mesh peer rather than a cold-started function.
+
+**Shape B — a small always-on box (e.g. T2-nano) as an ordinary Tailscale
+node** (the operator's earlier, simpler instinct, INTENT #110: "even just a
+T2 nano to be a node in the tailscale network that's always available and
+hosted in the cloud"). What this would require of `aws`, if chosen:
+  - A **new Ring-2 adapter for EC2 lifecycle** (provision/start/stop/
+    describe the instance) — also not one of today's four adapters, but a
+    much smaller addition: standard instance provisioning, no
+    connection-bridging problem.
+  - **No change to `chassis` or to any existing contract.** The box is a
+    boring physical-style node like any other (Pi, laptop): it links
+    `chassis` in its normal `full` profile, holds one persistent WS to its
+    own local mesh daemon, and is addressed like every other node.
+    `aws`'s role is purely provisioning/lifecycle (bring the box up, keep it
+    billed and patched) — it is not in the node's runtime path at all once
+    the box exists, unlike Shape A where `aws`-owned adapters (API Gateway,
+    Lambda, S3-as-state) sit *inside* the node's own operation.
+  - The backup-locker drop (INTENT #109's disaster-recovery target) and any
+    "our AWS cloud basically be like one node" framing (#110) attach to this
+    box the same way they'd attach to any node — no special `aws` contract
+    beyond the ordinary `aws-mesh` snapshot leg.
+
+**What this file commits to, either way:** no `authority`-flavored or
+`cloud-node`-flavored contract is authored yet; no adapter above assumes it
+will be needed; `aws`'s Ring-2 adapter list (concern 1) stays exactly
+`s3`/`rds`/`lambda`/`secretsmgr`(/`sqs`-someday) until the operator picks a
+shape, at which point either `apigatewaymanagementapi`+S3-state (Shape A) or
+`ec2` (Shape B) is added as one bounded new adapter — the Ring-based
+architecture (concern 1) was designed exactly so this decision is a
+localized addition, not a restructuring.
+
 ## Relationships / edges
 
 - **mesh** via `aws-mesh` — `aws` registers/resolves like any service
@@ -295,9 +412,19 @@ not the database plane) but present from the start.
   `components/kg.md`).
 - **queues** (anticipated, no stub this wave) — mesh's SQS-modeled queues
   deploying onto real SQS route through `aws` when built; rides `aws-mesh`.
+- **spend** via `spend-aws` — **NEW (anticipated wave-3, design-only)**. The
+  billing-pull seam: `spend` queries `aws` for AWS cost/billing figures,
+  tagged by `keeper_id`(+`environment_id`); `aws` would need a
+  Cost-Explorer-shaped adapter it does not have yet (no billing/cost surface
+  exists among today's S3/RDS+Lambda/Secrets-Manager adapters). Not buildable
+  until `aws` grows that leg; named here so the edge is shaped when that day
+  comes (`spend.md`'s own `## Proposed contracts` names the same pair as
+  `spend-aws` — kept as one contract, not two). *(anticipated:
+  scaffold/contracts/spend-aws.md — not yet authored)*
 
 Internal-lib dependencies (compiled in, NOT contract edges, INTENT #29/#45):
-`mesh-client` (boot/register/resolve + the transport client half), `types`
+`chassis` (wave-3, replaces `mesh-client` — boot/register/resolve + the
+transport client half + the promise/outbox/blessing-queue seams), `types`
 (shared vocabulary — `Slug`, `NodeId`, `Endpoint`, `Provenance`, and the aws
 request/response structs I propose below land in a `types::aws` module), and
 the official AWS SDK for Rust crates (a third-party lib dependency).
@@ -320,7 +447,10 @@ while its *contracts* are implementation-ready. The transfer-mode default is
 **CONFIRMED** (presigned direct-upload for bulk, friction-round 1 — INTENT
 #114, concern 3); genuinely open: everything downstream
 of a live account (RDS/Lambda provisioning shapes firm up when VDB's cloud
-target is actually built).
+target is actually built). **Wave-3 additions stay at the same split**: the
+`spend` billing-pull seam (concern 10) and the cloud-node shapes (concern 11)
+are named and design-around only — no schema, no adapter, no decision —
+until the operator picks a direction.
 
 ## Assigned design-depth
 
@@ -333,7 +463,8 @@ transport/addressing seams, `pubsub-relay.md`'s envelope), and INTENT items
 ## Suggested fill-model
 
 **implementation-ready contracts + stub implementation → cheap model OK for
-the stub.** The v1 deliverable is: register via `mesh-client`, publish surface
+the stub.** The v1 deliverable is: register via `chassis` (wave-3, replaces
+`mesh-client`), publish surface
 schema, answer the contract with `AwsDisabled`/metadata — near-transcription of
 the frozen contract, well within a cheap model. When an adapter goes `Live`
 later, that adapter's fill wants a **mid model** (the S3 presigned/relay
@@ -355,4 +486,48 @@ formerly in this section are superseded by the authored contracts.
 - `aws-secrets` (secrets ↔ aws) — SM push (design-only) + AWS creds fetch + S3 CSE keys + the genesis-key rule. → `scaffold/contracts/aws-secrets.md`
 
 Also a party to (authored elsewhere / cross-cutting): `restart-protocol`, `service-lookup` — see `scaffold/contracts/`. (`vdb-secrets` is related but aws is deliberately NOT a party: the RDS connection secret flows vdb ↔ secrets; aws returns only the endpoint.)
+
+---
+
+## Anticipated contracts (wave 3, L6)
+
+`aws` itself stays an L2 app-crate (unchanged), but this refresh pass adds no
+new *built* contracts — only lower-layer bindings and one candidate seam that
+the wave-3 batches / harmonizer should carry forward. Listed with purpose +
+rough shape, per the wave's L6 convention:
+
+- **`chassis` (client-half, replaces `mesh-client`).** *Purpose:* the daemon
+  bring-up, registration, restart-severity callbacks, promise machinery, and
+  outbox/blessing-queue mechanics `aws` now gets "for free" instead of
+  `mesh-client`'s narrower wiring handle. *Rough shape:* `aws` links
+  `chassis` (`full` profile — it is a normal, always-registered service, not
+  a walk-along thin client), implements the generated `Contract` trait for
+  each of `aws-vfs`/`aws-mesh`/`aws-vdb`/`aws-secrets`(/future `spend-aws`),
+  and supplies a `RestartPolicy` (aws's own wind-down: finish in-flight
+  transfers, no ongoing critical section beyond an active PUT/GET). No
+  behavior change from wave-2 beyond the compile-time exhaustiveness chassis
+  adds. → `scaffold/components/chassis.md`.
+- **`mesh-transport` (via chassis, not authored by `aws`).** *Purpose:* the
+  success/error/promise outer switch and the versioned transport `Frame`
+  every `aws` request/response already rides. *Rough shape:* `aws`'s handlers
+  return `Reply::Now`/`Reply::Promise` for slow operations (e.g. a long
+  Glacier `Restore`, concern 5) exactly like any other service — no
+  aws-specific extension. → `scaffold/contracts/mesh-transport.md`
+  *(to be authored by its owning unit)*.
+- **`spend-aws` (spend → aws, billing pull) — NEW, design-only.** *Purpose:*
+  the honest billing-pull seam so `spend`'s per-keeper cost picture includes
+  AWS (concern 10 above). *Rough shape:* `spend` queries a future `billing`
+  Ring-2 adapter for Cost-Explorer-style figures grouped by cost-allocation
+  tag (`keeper_id`+`environment_id`); `aws` returns read-only cost rows, never
+  enforces anything. Not built until `aws` grows the `billing` adapter — this
+  file and `spend.md` now name the identical contract so a future pass has
+  one shape to build, not two competing ones. → `scaffold/contracts/spend-aws.md`
+  *(not yet authored — anticipated)*.
+- **Cloud-node candidate seams (OPEN, ledger OQ-14 — NOT a contract yet).**
+  *Purpose:* record, without choosing, what a future cloud-node design would
+  bind onto `aws`'s Ring-2 adapter list. *Rough shape:* either a new
+  `apigatewaymanagementapi` + S3-as-state adapter pair (Shape A, virtualized
+  node) or a new `ec2` lifecycle adapter (Shape B, boring always-on box) —
+  see concern 11. Neither is a contract file today; both are one bounded
+  Ring-2 addition away, by design.
 

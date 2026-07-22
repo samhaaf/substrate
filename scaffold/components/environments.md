@@ -3,8 +3,27 @@
 **Status:** L6 STUB TRACK — design notes + anticipated data contracts only.
 **NOT IMPLEMENTING NOW.** This file captures operator intent and pins the
 minimal data shapes its neighbors need in v1; it is not an implementation-ready
-design. **Nesting:** top-level (hierarchy vs. `cicd` OPEN).
+design. **Nesting:** top-level (hierarchy vs. `cicd` OPEN). **Wave-3 refresh
+(repo-environments-refresh unit, batch 6):** kept deliberately SHARP but
+UN-DESIGNED — PARKED per ledger OQ-2 ("we're not there yet"). No new
+mechanism decided this pass; the only wave-3 additions are (1) the operator's
+#164 complexity sketch recorded verbatim below as the standing deep-dive
+agenda, and (2) confirming `EnvRef` and the `repo-environments` minimal shape
+are unchanged and still load-bearing for `repo`.
 **Thoroughness: requirements-only.**
+
+> **Deep-dive agenda (INTENT #164, verbatim — PARKED, do not resolve here).**
+> "Environments: FULL dedicated deep-dive required, not yet." Complexity
+> sketch, operator's words: a project has 1+ repos; repos have branches;
+> branches deploy into cloud environments; those have their own secrets and
+> resources; an environment is **"a bunch of configurations that also attach
+> to branches and topological nodes and point to collections of resources and
+> domain configurations."** "We'll have to turn our full attention to it.
+> We're not there yet." This is the exact agenda the dedicated round must
+> cover — environment↔repo cardinality, the "strange" environments-branches
+> relationship, feature load-balancing/MABs (INTENT #75/#83) — recorded here
+> so it isn't re-derived or diluted by a future designer; nothing below
+> resolves it.
 
 > **Load-bearing caveat.** `environments` is stub-track, but `repo`'s v1
 > secrets-injection / branch-attachment capability presupposes a minimal
@@ -87,11 +106,15 @@ replicated-store row. Requirements:
 - **cicd** — consumes environments; hierarchy OPEN (see design notes). No stub
   until decided.
 
-## Anticipated contracts (wave 2, stub track)
+## Anticipated contracts (wave 3, L6)
 
-Content is deferred until environments leaves the stub track — EXCEPT
-`repo-environments`, whose v1-facing shape is pinned precisely below because
-repo's v1 capability depends on it.
+Carried forward unchanged from the wave-2 stub-track pass; reconfirmed here per
+the L6 track rule (INTENT #173c — design the contracts with lower layers
+concretely, keep internals at design-notes depth). Content is deferred until
+environments leaves the stub track — EXCEPT `repo-environments`, whose
+v1-facing shape is pinned precisely below because repo's v1 capability depends
+on it. **`EnvRef` remains the one shared identity across repo/secrets/vdb/cc;
+nothing in this pass changes it.**
 
 ### `repo-environments` (repo ↔ environments) — PINNED v1-facing shape
 
@@ -100,8 +123,8 @@ repo's v1 capability depends on it.
   (INTENT #75). repo names the attachment + fires the declarative trigger;
   environments owns the environment concept and pipeline attachment; cicd runs
   the pipeline.
-- **Shared identity (pinned, must match repo.md line 312 and secrets.md's
-  `SecretScope::Environment`):**
+- **Shared identity (pinned, must match repo.md's `EnvRef` struct — concern 7 —
+  and secrets.md's `SecretScope::Environment`):**
   ```rust
   pub struct EnvRef { pub project: String, pub env: String }
   ```
@@ -117,7 +140,7 @@ repo's v1 capability depends on it.
   pub enum EnvRole { Green, Blue, Stage, Other(String) }
   pub struct PipelineRef { /* opaque handle into cicd; environments does not run it */ }
   ```
-- **Inbound from repo (pinned to repo.md's proposal, lines 610-615):**
+- **Inbound from repo (pinned to repo.md concern 7's proposal):**
   ```rust
   struct AttachBranch  { repo: String, branch_or_worktree: String, env: EnvRef }
   struct DeployedEvent { repo: String, ref_name: String, env: EnvRef,

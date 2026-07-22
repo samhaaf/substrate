@@ -27,6 +27,36 @@ layered strictly ON TOP; **never absorbs it** (INTENT #49, LOCKED).
 > (crate vs facet-of-cc) is resolved to the extent that the crate stays,
 > as a conceptual placeholder.
 
+> **Wave-3 refresh (2026-07-22, unit `agents-cc-refresh`).** Vocabulary lock
+> lands (ledger #172): the topological node is **keeper**, its persistent
+> shared knowledge is the **bundle**, per-thread ephemeral memory is the
+> **workspace**, the daemon wrapper is **chassis**. Where this file previously
+> said "org," "coordinator/owner," or "seed," read **keeper**/**bundle**. This
+> pass adds three things INTENT #167/#137 imply but the wave-2 stub did not
+> yet spell out, all still requirements-only (no schemas, `agents` stays
+> stub-track):
+> 1. **The runtime-choice seam** — a keeper's thread does not have to run on
+>    cc. INTENT #146 already frames initialization as bundle-assembled and
+>    runtime-agnostic ("possibly through a rollup producing the initial
+>    prompt"); this pass names the seam through which a keeper picks the
+>    custom-agent runtime instead, and confirms `agents` (not `org`, which is
+>    dissolved) is where that pick is exercised. See "Runtime choice" below.
+> 2. **The custom-agent egress seams through `secrets` and `spend`** — a
+>    custom agent calling OpenRouter directly still needs a credential
+>    (`secrets`, use-without-seeing) and still wants its usage attributed to a
+>    keeper (`spend`'s `SpendScope`, ledger #166 Q10); wave 2 named the
+>    OpenRouter/inference egress but not these two supporting edges.
+> 3. **Modality-tagged completions** — `inference` (batch 5, INTENT #166
+>    Q12) now tags `/v1/completions` requests with a `Modality` (T2T today,
+>    S2T/T2S next); `agents-inference` inherits the tag for free (same
+>    surface), noted below so a custom agent choosing a non-text modality is
+>    visibly in scope, not an oversight.
+>
+> None of this promotes `agents` off the stub track or invents a runtime for
+> "custom agent" (open question 5, unchanged) — it only shapes the contracts
+> a stub-track crate needs so `cc`, `inference`, `secrets`, and `spend` stay
+> correctly shaped for a future consumer, per the L6 rule (INTENT #173c).
+
 ## Charter
 
 `agents` is the **future generalization umbrella over agent TYPES** — the
@@ -107,8 +137,10 @@ Held to the operator's words — no invented scope. Best current read:
     (`v1-completion-api`) DIRECTLY — not through cc** (INTENT #137,
     superseding the earlier reading of cc.md's `llm-calls` reservation as a
     broker path; `llm-calls` remains at most an optional metering surface).
-  - **converse / negotiate / org-structure** → the emergent coordinator
-    layer (formerly `org` — dissolved, INTENT #132; see org.md), NOT here.
+  - **converse / negotiate / org-structure** → the emergent **keeper**
+    layer (formerly `org` — dissolved, INTENT #132; ledger #172 locks the
+    node's name as **keeper**; see org.md's tombstone and the anticipated
+    `components/keeper.md`), NOT here.
 
 Open on purpose (see below): whether **converse** — driving a turn, streaming
 output — is an `agents`-owned verb or stays a straight passthrough to cc's
@@ -117,17 +149,74 @@ stream. The operator hasn't said; this stub does not decide it.
 ## Import surface (anticipated — all mesh-mediated, never Cargo-linked)
 
 Every dependency is a top-level app reached over the wire (WS/CLI) through mesh
-(INTENT #29); only `types` + `mesh-client` are compiled-in shared libs.
+(INTENT #29); only `types` + `chassis` are compiled-in shared libs (wave-3:
+`mesh-client` retires into `chassis`, ledger D1 — `agents` links `chassis`
+like every other future crate, not the old `mesh-client`).
 
 | Consumes | Via | Why |
 |----------|-----|-----|
 | `cc` | `agents-cc` | the Claude-Code agent type ONLY: process supervision, handle namespace, metering, limits (INTENT #137) |
-| `inference` | `agents-inference` (rides `v1-completion-api`; direct, not cc-brokered — INTENT #137) | completions for custom agent types that choose models |
-| OpenRouter | via `openrouter-mgmt` / provider-native | direct completion egress for custom agent types (INTENT #137) |
+| `inference` | `agents-inference` (rides `v1-completion-api`; direct, not cc-brokered — INTENT #137; wave-3: the request may carry a `Modality` tag, batch-5 inference.md concern 7 — T2T today, S2T/T2S next) | completions for custom agent types that choose models (and, per batch 5, choose a modality) |
+| OpenRouter | direct provider HTTPS, via `secrets` for the credential (`agents-secrets`, NEW wave-3) | direct completion egress for custom agent types (INTENT #137); wave-3 note: `openrouter-mgmt` no longer exists as a separate crate — its key-lifecycle/budget administration is absorbed into `spend` (ledger #166 Q10, spend.md consolidation); `agents` only ever *uses* a runtime key, never mints/rotates one |
+| `secrets` | `agents-secrets` (NEW wave-3) | resolve-and-use the OpenRouter (or other provider) runtime key as a `SecretRef`, use-without-seeing (INTENT #94 `llm_safe`) — the raw key never enters a prompt, log, or rollup fragment |
+| `spend` | `agents-spend` (NEW wave-3, thin) | tag a custom agent's completion with the `SpendScope` (`keeper_id` [+ `environment_id`]) of the keeper it is running for, so `spend`'s pull-shaped OpenRouter/inference accounting attributes correctly (spend.md's attribution model) — `agents` never computes or enforces cost, only carries the scope |
 
 And `agents` is itself CONSUMED from above — formerly by `org`
-(`org-agents`, below); with the org crate dissolved (INTENT #132), the
-consumer is the emergent coordinator/owner layer (see org.md).
+(`org-agents`, below); with the org crate dissolved (INTENT #132) and the
+node concept renamed **keeper** (ledger #172), the consumer is the keeper
+runtime (see the anticipated `components/keeper.md`, not yet authored at
+this writing — org.md's tombstone is the interim pointer). Wave-3 renames
+this stub's anticipated pair `org-agents` → **`keeper-agents`**, content
+unchanged in shape (see "Runtime choice" and "Anticipated contracts (wave 3,
+L6)" below).
+
+## Runtime choice: a keeper thread MAY run on a custom agent instead of cc (wave 3, INTENT #146)
+
+Held to the operator's own framing, not invented: a keeper thread is
+**initialized from a bundle** — "the coordinator-initialization node… every
+new [keeper] thread starts from that node, possibly through a rollup
+producing the initial prompt" (INTENT #146) — and bundle assembly (rollup
+plane 1, prompt/plugin text; rollup plane 2 when the bundle's structure is
+graph-sourced, rollup.md concern 11) does not know or care which runtime
+consumes the result. That is the seam this pass names:
+
+- **The bundle → initial-prompt production is runtime-agnostic.** rollup
+  resolves a keeper's bundle (role prompt + plugins) into a materialized
+  artifact (rollup-cc's `AssembleResult` shape today; the same shape for any
+  runtime) regardless of whether the consuming runtime is Claude Code (cc) or
+  a custom agent (`agents`). "When running on Claude Code, the shape is
+  role-prompt-plus-plugins" (INTENT #148 beat 3) reads as *one instance* of a
+  runtime-shaped projection, not the only possible one.
+- **The choice of runtime is the keeper's, exercised through `agents`.** A
+  keeper spawning a thread picks a runtime the same way `agents`' agent-type
+  table already frames it (Charter, above): Claude-Code-shaped → `agents-cc`
+  → cc; custom-agent-shaped → `agents` drives it directly against
+  `inference`/OpenRouter (this file's charter, unchanged). What's new this
+  wave is naming that the **keeper**, not just an abstract "caller," is the
+  party making that pick, and that it makes it **per thread**, not per
+  keeper — the same keeper could run one thread on cc and another on a
+  custom agent.
+- **`agents` does not gain a bundle-consumption mechanism of its own.**
+  Materializing a bundle into whatever shape a custom runtime needs (a
+  system prompt string, a tool-call schema, whatever the runtime expects) is
+  still rollup's job (plane 1/2, unchanged); `agents` only receives the
+  materialized artifact + a runtime handle, exactly as cc receives
+  `AssembleResult` today via `rollup-cc`. If/when a custom-agent runtime
+  needs a *different* materialized shape than cc's Claude-Code plugin
+  directory, that is a **new rollup output kind** (an `OutputSink` variant
+  or an `agents`-shaped `MaterializeResult` projection) — named here as an
+  anticipated need, not designed (rollup owns `rollup.md`, not this file).
+
+**What this resolves vs. what stays open.** It resolves the earlier fuzziness
+about whether "custom agent" and "keeper-initialized thread" were the same
+concept (they are not: a keeper thread is *initialized from a bundle*
+regardless of runtime; a "custom agent" is a *runtime choice* for that
+thread) — and it confirms `agents`, not a new mechanism, is where the
+non-cc runtime choice is exercised. It does **not** design: which bundle
+elements a custom runtime actually needs (a system-prompt string? a
+tool-schema?); how a custom-runtime thread reports back to its keeper for
+curation (OQ-5, PARKED); or how the keeper decides cc-vs-custom (a keeper
+config value? per-task-type policy? unnamed — the operator has not said).
 
 ## Anticipated contracts (wave 2, stub track)
 
@@ -166,6 +255,67 @@ type-generalizing consumer from the start.*
   OpenRouter egress (`agents-inference`, INTENT #137). Whether part of the
   `org-on-cc` bundle re-seats here once `agents` exists stays flagged, not
   decided.
+  > **Wave-3 rename (ledger #172): `org-agents` → `keeper-agents`.** Content
+  > unchanged; "coordinators/owners" is now the **keeper**. See "Anticipated
+  > contracts (wave 3, L6)" below for the runtime-choice framing this pair
+  > picked up this wave.
+
+## Anticipated contracts (wave 3, L6)
+
+*Wave-3 additions/updates only — the wave-2 contracts above stand as authored.
+Same discipline: names + purpose + rough shape, schemas deferred until `agents`
+leaves the stub track (INTENT #173c).*
+
+- **`keeper-agents`** (keeper → agents; renamed from `org-agents`, content
+  extended). *Purpose:* the keeper runtime's **runtime-choice seam** — when a
+  keeper spawns a thread that should run on a custom-agent runtime instead of
+  cc, it reaches `agents` through this edge (see "Runtime choice" above).
+  *Rough shape:* unchanged from `org-agents`'s resolve/spawn/address-by-handle
+  shape, PLUS: the spawn request carries the keeper's already-materialized
+  bundle artifact (the rollup output — same kind of thing cc receives via
+  `rollup-cc`'s `AssembleResult`, whatever shape a custom runtime needs) and
+  the keeper's id (so `agents-spend`, below, can scope the resulting
+  completions). `agents` does not read the bundle's *content* differently
+  than any other caller — it is a materialized artifact + a handle, not a
+  KG read. **Owned by whichever unit designs `components/keeper.md`** (not
+  yet authored at this writing); this file proposes the `agents`-side shape
+  only.
+
+- **`agents-secrets`** (agents → secrets; NEW). *Purpose:* resolve a custom
+  agent's provider credential (OpenRouter runtime key today; any future
+  provider key) as a `SecretRef` and use it **without ever seeing the raw
+  value** (INTENT #94 `llm_safe` — the same discipline `spend`'s own
+  OpenRouter adapter already follows for minting/rotating the key, spend.md
+  §2). *Rough shape:* `agents` never mints or rotates a key (that stays
+  `spend`'s absorbed OpenRouter adapter, spend.md ledger #166 Q10); it only
+  **resolves a `SecretRef` scoped to the calling keeper** (secrets already
+  keeps every version, INTENT #156) and invokes it through the standard
+  resolve-into-sink call (`secrets.use(ref, sink)`) so the raw key lands only
+  in the outbound HTTPS call, never in a prompt, log, or rollup fragment.
+  Which `SecretRef` to resolve for a given keeper is a lookup this edge
+  proposes but does not fully design (candidate: `secrets` indexes runtime
+  keys by the same `keeper_id`/`environment_id` pair `spend` mints them
+  with — see `SpendScope`, spend.md).
+
+- **`agents-spend`** (agents → spend; NEW, thin). *Purpose:* attribute a
+  custom agent's completion (OpenRouter or local `inference`) to the keeper
+  it ran for, so `spend`'s pull-shaped, per-keeper rollup (spend.md's
+  attribution model, ledger #166 Q10) is whole even for non-cc agent
+  activity. *Rough shape:* `agents` tags each call with a `SpendScope {
+  keeper_id, environment_id: Option<..> }` (the identical shape spend.md
+  already defines — not redefined here); for OpenRouter calls this is
+  largely already satisfied structurally by `agents-secrets` resolving a
+  key that was minted with that scope (spend's OpenRouter key already
+  carries `SpendScope` at mint time, so OpenRouter's own usage/limit
+  reporting is pre-attributed — `agents` does not need to push a separate
+  usage record). For local-`inference` calls (no OpenRouter key involved),
+  `agents` is the only party that knows the calling keeper, so it is the
+  natural place to stamp `SpendScope` onto the request if/when `inference`
+  usage becomes a `spend` source (today `spend.md` lists cc/OpenRouter/aws
+  as sources; a local-inference source is not yet named — flagged here as
+  a gap this edge would need to fill, not decided). `agents` never computes
+  cost, never enforces a budget — pure attribution, mirroring `spend`'s
+  aggregator-not-controller law.
 
 ## Open questions
 
@@ -184,10 +334,12 @@ type-generalizing consumer from the start.*
 3. **Is `converse`/turn-driving an `agents` verb?** Owns-vs-delegates for the
    streaming turn interaction is unspecified by the operator; could be a pure
    passthrough to cc's stream or a first-class `agents` surface.
-4. **org-on-cc vs. org-agents once `agents` exists.** org.md wires org→cc
-   directly today. When `agents` lands, how much of org's cc interaction
-   re-seats onto `org-agents`? Both edges are anticipated; the migration is a
-   future design pass's call.
+4. **keeper-on-cc vs. keeper-agents once `agents` exists** (renamed from
+   org-on-cc/org-agents, ledger #172). cc.md's `org-on-cc` wires the keeper
+   layer→cc directly today. When `agents` lands, how much of that interaction
+   re-seats onto `keeper-agents`? Both edges are anticipated; the migration is
+   a future design pass's call — owned jointly by whoever designs
+   `components/keeper.md` and this file.
 5. **What is a "custom agent," concretely?** The operator named the category
    ("some other custom agents") without defining a runtime, plugin model, or
    handle lifecycle for non-CC types — and noted they "might evolve to make
@@ -195,3 +347,13 @@ type-generalizing consumer from the start.*
    plugin structure. With the cc-brokered lean gone (INTENT #137), the
    supervision/metering story for custom agents is fully open — it is NOT
    "reuse cc's supervisor" by default. Intentionally left open.
+6. **How does a keeper decide cc-vs-custom-runtime for a given thread?**
+   (wave-3, NEW.) A per-keeper config default? A per-task-type policy? The
+   operator has not said; the "Runtime choice" section above only names that
+   `agents` is where the pick is exercised, not how it is made.
+7. **Does a local-`inference`-sourced source ever join `spend`'s source
+   list?** (wave-3, NEW.) `agents-spend`'s local-inference attribution only
+   matters if/when `spend` grows an inference-usage source; spend.md names
+   cc/OpenRouter/aws only. Flagged, not decided — self-hosted inference has
+   no marginal dollar cost the way OpenRouter/cc do, so whether attribution
+   is even useful there (vs. just a utilization metric) is itself unanswered.

@@ -1,7 +1,9 @@
 # repo
 
 **Status:** SUPERSEDES the wave-1 `repo.md` requirements-only stub. **FULL
-DESIGN — wave 2, batch 6.** **Nesting:** top-level L5 app-crate (`lib/repo`
+DESIGN — wave 2, batch 6; refreshed wave 3, batch 6 (repo-environments-refresh
+unit) — chassis adoption + worktree↔workspace vocabulary, no re-design.**
+**Nesting:** top-level L5 app-crate (`lib/repo`
 crate `substrate-repo` + `bin/repo` daemon/CLI), one instance per node that
 hosts anchored git repos (`AddressingClass::NodeScoped`). **Layer:** L5
 service/application plane, built ON TOP of `vfs` (L3) — its only non-boring
@@ -19,6 +21,24 @@ adapters), #47/#48 (VFS), the batch-3 `vfs.md` (NodeAnchored file class +
 authored), the batch-7-facing `environments.md`/`cicd.md` stubs, and the
 operator's live `.mind` workspace schema (worktree ↔ thread ↔ branch prior
 art — `core:workspaces`).
+
+> **Wave-3 refresh (batch 6, repo-environments-refresh unit).** Three
+> targeted updates, no re-design: (1) **chassis adoption** — every
+> `mesh-client` reference below now reads `chassis` (mesh-client is a
+> tombstone absorbed wholesale into `chassis.md`, wave-3 batch 1; repo's
+> daemon wiring, restart-protocol client half, and promise/outbox machinery
+> all ride the one `chassis` dependency, not a separate mesh-client lib).
+> (2) **worktree↔workspace vocabulary** — `WorktreeRecord.thread` is now read
+> as *"the workspace of the keeper thread this worktree is bound to"*
+> (workspace = per-thread ephemeral memory, one-to-one with a thread, ledger
+> A5 #79/#33); a keeper thread's workspace **MAY** bind a worktree, but
+> **whether a worktree binding is asserted BY a project/keeper vs. named
+> ad hoc, and the general projects↔repo binding, stays OPEN** (INTENT #144,
+> ledger OQ-4/OQ-16 — do not resolve here). (3) **environments seam stays
+> abstract** — concern 7's `repo-environments` shape is PARKED-adjacent
+> (ledger OQ-2, environments deep-dive); nothing below decides
+> environment↔repo cardinality or branch-activation semantics, only the
+> pinned v1-facing shape already agreed with `environments.md`.
 
 ## Charter
 
@@ -137,7 +157,10 @@ pub struct WorktreeRecord {
     pub name: String,                 // "V1", "main", "stt"
     pub branch: String,               // the checked-out branch (worktree ↔ branch)
     pub vfs_path: String,             // vfs://repos/<slug>/worktrees/<name>/  (materialized VFS path)
-    pub thread: Option<String>,       // OPTIONAL Claude-Code thread id — the .mind link (INTENT #67)
+    pub workspace: Option<String>,    // OPTIONAL bound workspace id — a keeper thread's workspace
+                                       // MAY bind a worktree (wave-3 vocab; was `thread`, INTENT #67);
+                                       // WHO asserts this binding (project? keeper? ad hoc?) is OPEN
+                                       // (INTENT #144 — projects↔repo binding not blessed)
     pub environment: Option<EnvRef>,  // OPTIONAL environment attachment (concern 7)
     pub provenance: Provenance,
 }
@@ -180,10 +203,11 @@ a model update (concern 2) + a snapshot (durability):
 - **`worktree add/remove/list`** — `git worktree add <path> <branch>` under
   `worktrees/<name>/`, materializing the checkout as a VFS path
   (`vfs://repos/<slug>/worktrees/<name>/`); write the `WorktreeRecord` with its
-  optional `thread`/`environment` links. **This is the feature the operator most
-  wants** — worktrees are first-class, addressable VFS paths, each on its own
-  branch, each optionally bound to a thread and an environment. Removing a
-  worktree prunes the git worktree and the record.
+  optional `workspace`/`environment` links. **This is the feature the operator
+  most wants** — worktrees are first-class, addressable VFS paths, each on its
+  own branch, each optionally bound to a keeper thread's workspace and an
+  environment (wave-3 vocab, concern 2). Removing a worktree prunes the git
+  worktree and the record.
 - All worktrees of one repo co-anchor (concern 1); repo refuses a
   `worktree add` that would require a cross-node `.git` (`AnchorElsewhere` —
   the caller wants a separate `clone` instead).
@@ -377,13 +401,13 @@ access (that under-design is vfs's, and deliberate).
 ### 11. Boring surface — CLI + daemon + surface schema + pub/sub
 
 `bin/repo` is a noun-verb `clap` CLI over `lib/repo`, and a daemon registering
-with the local mesh (single-port locality, `mesh-client`):
+with the local mesh (single-port locality, `chassis`):
 
 ```
 repo clone <url> [--slug S] [--node N]              # clone a GitHub remote into VFS
 repo ls | repo worktree ls <repo>                   # list repos / worktrees (metadata)
 repo branch create|delete <repo> <branch>
-repo worktree add <repo> <name> --branch B [--thread T] [--env P/E]
+repo worktree add <repo> <name> --branch B [--workspace W] [--env P/E]
 repo worktree rm <repo> <name>
 repo push|pull|fetch|sync <repo> [--worktree W]     # VFS <-> GitHub bridge
 repo workflow add|update|rm <repo> <file>           # GH-Actions files (directory changes)
@@ -396,7 +420,7 @@ repo deploy <repo> <branch|worktree> --env P/E      # fires the pipeline trigger
 ```
 
 The daemon publishes a `SurfaceSchema` (`types::surface`) rendering repos,
-worktrees (with their branch/thread/environment links), workflows, runs, and
+worktrees (with their branch/workspace/environment links), workflows, runs, and
 secret links — never a secret VALUE (only `SecretRef` handles). Every
 interactive element carries a stable semantic id (INTENT #16 first-order agent
 interface). A `repo.*` pub/sub topic prefix (`pubsub-protocol`, additive leaf
@@ -408,7 +432,7 @@ under pubsub-relay's `<slug>.*` taxonomy) emits `repo.cloned`, `repo.pushed`,
 ## Relationships / edges
 
 Contract edges (cross-process WS/wire over mesh-transport `:3649`; client halves
-via `mesh-client`):
+via `chassis`):
 
 - **vfs** via `repo-vfs` — repo materializes git trees/worktrees as `NodeAnchored`
   VFS files; `OpenAnchored`/`Snapshot` at commit/fetch boundaries; ordinary
@@ -437,8 +461,9 @@ owners — repo consumes the shapes, does not re-author): `pubsub-protocol` (the
 (repo is supervised; a push/clone is a `CriticalSection` — concern 10),
 `service-lookup` (register NodeScoped; resolve vfs/secrets/environments).
 
-Internal-lib seams (compiled-in, NOT contract edges): `mesh-client`
-(register/resolve/pubsub/locks handles), `substrate-types` (`provenance`/`node`/
+Internal-lib seams (compiled-in, NOT contract edges): `chassis`
+(register/resolve/pubsub/locks handles — absorbs former mesh-client, wave-3
+batch 1), `substrate-types` (`provenance`/`node`/
 `surface`/`restart`/`pubsub`/`error` + `SecretRef`/`SecretScope` from
 `types::secrets` + the new `types::repo` vocabulary), and `git2`/libgit2 behind
 the `GitBackend` trait.
@@ -529,4 +554,40 @@ formerly in this section are superseded by the authored contracts.
 - `cicd-repo` — (cicd → repo) — workflow trigger/chain/observe through repo (cicd is a batch-7 stub; repo authors its side). → `scaffold/contracts/cicd-repo.md`
 
 Also a party to (authored elsewhere / cross-cutting): `vfs-content` — see `scaffold/contracts/`.
+
+## Anticipated contracts (wave 3, L6)
+
+repo itself is L5/live-track, not L6 — but two of its lower-layer edges land on
+**L6 stubs** (environments, cicd) or on the **still-undesigned keeper runtime**
+(no `keeper.md` exists yet; a parallel wave-3 unit owns it), so per the L6 track
+rule (INTENT #173c) those edges are recorded here as contracts-with-purpose +
+rough shape ONLY, no internals decided:
+
+- **`repo-environments` (repo → environments) — unchanged, still pinned.**
+  Purpose: repo attaches a branch/worktree to an environment and fires the
+  declarative `DeployedEvent` that activates the environment's pipeline (concern
+  7). Rough shape: `EnvRef{project,env}`, `AttachBranch`, `DeployedEvent{repo,
+  ref_name,env,head_sha,correlation_id}` — see the authored
+  `scaffold/contracts/repo-environments.md`. **Kept deliberately abstract**
+  (ledger §C, OQ-2 PARKED — "we're not there yet"): no environment↔repo
+  cardinality, no branch-activation semantics, no secrets-per-environment wiring
+  decided here or there.
+- **`cicd-repo` (cicd → repo) — unchanged, still authored on repo's side.**
+  Purpose: cicd triggers/chains/observes GH-Actions workflows THROUGH repo,
+  repo being the only component touching the GH-Actions directory/remote
+  surface (concern 8). Rough shape: `TriggerWorkflow`/`ObserveRuns`/
+  `ComposeChain` verbs — see `scaffold/contracts/cicd-repo.md`. **Crate-vs-emergent
+  stays OPEN** (ledger OQ-32/cicd.md); repo's side is authored so the collapse
+  case (cicd folds into repo) costs no contract rework either way.
+- **`repo-keeper`/`repo-workspace` (repo ↔ keeper, via a thread's workspace) —
+  NEW, candidate-only, no contract file yet.** Purpose: a keeper thread's
+  workspace MAY bind a worktree (`WorktreeRecord.workspace`, concern 2) so a
+  coordinator working a branch has a materialized VFS checkout tied to its
+  ephemeral memory. Rough shape (not frozen): `BindWorkspace { repo, worktree,
+  workspace_id }` / `UnbindWorkspace`; repo just records the id, has no opinion
+  on workspace lifecycle. **MUST NOT decide:** who asserts the binding (the
+  keeper? the operator? a projects-level policy?), the general projects↔repo
+  binding (INTENT #144, ledger OQ-4/OQ-16 — its own topography round), or
+  what happens to the binding across a branch merge (OQ-16). Left as a named,
+  unspecified seam — a one-line addition when keeper.md lands, not a rewrite.
 

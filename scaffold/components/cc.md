@@ -32,6 +32,40 @@ receiver (DLQ / loop-depth investigation dispatch, INTENT #70/#89), thread↔
 project↔environment linking in the ledger (INTENT #68), and `rollup`
 consumption for on-demand plugin assembly.
 
+> **Wave-3 refresh (2026-07-22, unit `agents-cc-refresh`).** Vocabulary lock
+> (ledger #172): the topological node is **keeper**, its persistent shared
+> knowledge is the **bundle**, per-thread ephemeral memory the **workspace**,
+> the daemon wrapper **chassis**, human/headless spawns **threads**. Where
+> this file says "org" or "coordinator/owner," read **keeper** — cc's own
+> surfaces are unchanged, only the name of the downstream consumer firms up.
+> Six things land this pass, none of them a rewrite of the wave-2 design:
+> 1. **cc adopts `chassis`**, not `mesh-client` — `mesh-client` retires into
+>    `chassis` (ledger D1, chassis.md); cc's `mesh_client` internal lib
+>    (Nesting, below) becomes a `chassis` dependency, same seams
+>    (`service-lookup`/`restart-protocol`/`pubsub-protocol`), one fewer
+>    library.
+> 2. **Keeper threads are cc's PRIMARY consumer, not a deferred maximalist
+>    afterthought.** `org-on-cc` (still the contract file's name; content
+>    unchanged, party renamed) was shaped, wave-2, for "whatever the
+>    coordinator round produces" — that round produced **keeper** (ledger
+>    #172; INTENT #146/#148/#149). See "Keeper threads as cc's primary
+>    consumer" below.
+> 3. **Plugin assembly now also flows from rollup's plane 2** (graph-shaped
+>    bundle rollup, rollup.md concern 11, batch 4) — cc's `rollup-cc`
+>    `AssemblePlugin` call is unchanged; this pass records that cc is
+>    plane-agnostic by construction. See "Plugin assembly via rollup" below.
+> 4. **The usage ledger gains a `billing_plan` signal** so `spend` can
+>    honestly represent the #170 Max-plan loose end (nominal-vs-billed dual
+>    accounting) — cc adopts spend.md's proposed extension. See "Usage DB +
+>    spend pull" below.
+> 5. **Incident-investigation dispatch is UNCHANGED this wave** — `cc-escalation`
+>    (concern 5, below) is confirmed as-is; no wave-3 fold touches it.
+> 6. **Thread↔project↔environment linking (INTENT #68) is confirmed, with a
+>    terminology note**: project is the primary **keeper** type (ledger #172,
+>    #166 Q5), so `cc-projects`' `ProjectId`/`EnvironmentId` linkage is a
+>    special case of a more general keeper-scoped linkage — see "Thread↔
+>    keeper↔environment linking" below.
+
 ## Charter
 
 cc is the daemon that **runs, meters, and governs cloud-code (Claude Code)
@@ -76,10 +110,12 @@ surface, never a mandatory broker.
 **Boundary — what cc does NOT own.** cc does not own inter-agent *conversation*,
 org structure, manager/sub-agent hierarchies, pipelines, negotiation, or
 metacognition — that entire layer sits above cc, inbound-only (no reverse
-dependency): formerly the `org` crate, now the **emergent coordinator/owner
-layer** (the org crate is DISSOLVED — friction-round 3, INTENT #132; see
-org.md; `org-on-cc` survives as the shaped-for record). cc manages
-*processes and their usage*; the coordinator layer manages *agents talking
+dependency): formerly the `org` crate, now the **emergent keeper layer**
+(the org crate is DISSOLVED — friction-round 3, INTENT #132; ledger #172
+locks the node's name as **keeper**; see org.md's tombstone and the
+anticipated `components/keeper.md`; `org-on-cc` survives as the shaped-for
+record, rename to `keeper-on-cc` pending). cc manages
+*processes and their usage*; the keeper layer manages *agents talking
 to each other*. cc does not implement completion
 scheduling, model residency, or the `/v1/` API (it is a consumer of inference,
 never a peer runtime — no inference→cc edge). It does not persist an org-graph
@@ -151,7 +187,7 @@ crash recovery, orphan cleanup) and is why cc is a daemon.
 
 ### 4. A stable handle namespace addressable from outside
 
-Callers (Org, the dashboard via mesh, `spend`) address agents **by handle**.
+Callers (keepers, the dashboard via mesh, `spend`) address agents **by handle**.
 Handles are stable, survive a cc restart where the process survived (concern 3),
 and map to live process state through a registry that is the single source of
 truth for "who is running." This registry + its query/stream API is the surface
@@ -172,7 +208,7 @@ investigation is agent work with a (high) priority like any other.
 
 Unlike a leaf service, cc is *both* registrant and resolver
 (`service-registration`, an instance of `service-lookup`): it registers its own
-`slug -> host:port` so Org/spend/mesh find it, and resolves `inference`/`rollup`/
+`slug -> host:port` so keepers/spend/mesh find it, and resolves `inference`/`rollup`/
 peers by slug. It participates in the cross-cutting mesh protocols like every
 service: `restart-protocol` (its interruptibility is a function of live agent
 work — it is `Uninterruptible` while agents burn budget mid-turn), `pubsub-
@@ -301,7 +337,7 @@ cumulative weekly usage never crosses the **75th percentile** of the operator's
 rolling weekly-usage history — the guard caps the grant the moment `weekly_used +
 grant` would exceed that percentile, converting "spend it all" into "spend up to
 the reserve line," which is precisely *maximize utilization without draining*.
-Higher-priority callers (Org's autonomous work) get a strategy with a more
+Higher-priority callers (a keeper's autonomous work) get a strategy with a more
 aggressive percentile (e.g. 90) or an explicit `PriorityClass` scope; the
 operator's own interactive work is effectively priority-max and unguarded.
 
@@ -311,8 +347,19 @@ Local SQLite (`cc.db`), owned by the `ledger` lib. Boring, provenance-first,
 pull-queryable.
 
 - **`sessions`** — `(session_id, window_start, window_end, session_limit_tokens,
-  observed_at, node_id)`. The 5-hour Claude Code window; `session_limit_tokens`
-  is *observed* (learned from CC's limit signals), not assumed.
+  observed_at, node_id, billing_plan)`. The 5-hour Claude Code window;
+  `session_limit_tokens` is *observed* (learned from CC's limit signals), not
+  assumed. **`billing_plan` is a wave-3 addition** (`Max | ApiPayAsYouGo |
+  Unknown`, INTENT #170) — adopted from `spend.md`'s proposed `spend-cc`
+  extension verbatim, landed on `sessions` rather than per-`agent_runs` row
+  because the plan is a property of the *session's account*, not the
+  individual run; every `agent_runs`/`usage_records` row under that session
+  inherits it via the join. **Plan-detection mechanism (unresolved, per
+  spend.md open question 2):** operator-set config is the boring default
+  until cc can auto-detect Max-vs-API from its own CLI signals; until wired,
+  new sessions default `billing_plan = Unknown` (fail toward `spend`
+  overstating cost, never silently hiding it — spend.md's own fallback rule,
+  restated here so cc's default matches).
 - **`weekly_windows`** — `(week_start, weekly_limit_tokens, tokens_used_cache,
   observed_at)`. Rolling-window rows feed `WeeklyPercentile(p)`.
 - **`model_tiers`** — `(tier, sub_limit_tokens, window, observed_at)` — per-model
@@ -329,26 +376,33 @@ pull-queryable.
 - **`escalations`** — `(escalation_id, kind, correlation_id, spawned_handle?,
   ack, received_at)` — the `cc-escalation` receiver's dedup + audit table.
 
-`spend` reads `usage_records` ⨝ `agent_runs` (grouped by project/environment/
-caller) over `spend-cc`. Provenance on every row satisfies INTENT #85/#92.
+`spend` reads `usage_records` ⨝ `agent_runs` ⨝ `sessions` (grouped by
+project/environment/caller, now plan-aware via `sessions.billing_plan`) over
+`spend-cc`. Provenance on every row satisfies INTENT #85/#92. See "Usage DB +
+spend pull" below for the #170 dual-accounting rationale in full.
 
 ## Relationships / edges
 
 - **cloud-code agents** via `agent-management` (scaffold/contracts/agent-management.md)
-  — spawn/track/signal/stream/reap by stable handle; the multi-agent substrate
-  Org layers on. **I author this edge (wave 2).**
+  — spawn/track/signal/stream/reap by stable handle; the multi-agent keeper
+  layer layers on. **I author this edge (wave 2).**
 - **mesh.queues(DLQ) / execution-engine** via `cc-escalation`
   (scaffold/contracts/cc-escalation.md — authored; queues proposed the DLQ half,
   execution-engine the loop-depth arm) — **I own the receiver + `EscalationAck`
   (wave 2).**
 - **rollup** via `rollup-cc` (scaffold/contracts/rollup-cc.md) — on-demand
   plugin assembly (`Materialize`/`AssemblePlugin`); rollup authored its side, I
-  propose the **consumer view (wave 2).**
+  propose the **consumer view (wave 2).** **Wave-3 note:** unchanged shape;
+  cc is plane-agnostic to rollup's plane-1-vs-plane-2 split (rollup.md
+  concern 11) — see "Plugin assembly via rollup" below.
 - **inference (api)** via `llm-calls` (scaffold/contracts/llm-calls.md) —
   **NOT the Claude Code path** (INTENT #40: no local-inference routing for Claude
   Code). Reserved metering-shaped for the FUTURE `agents` umbrella's non-CC agent
   types. I propose the metering-shaped view; inference/api authors the `/v1`
-  surface it reuses (`v1-completion-api`).
+  surface it reuses (`v1-completion-api`). **Wave-3 note:** batch-5 inference.md
+  concern 7 adds a `Modality` tag to `/v1/completions` requests (T2T today,
+  S2T/T2S next) — this edge inherits it unchanged (still not the Claude Code
+  path; still `agents`' edge, not cc's own traffic).
 - **mesh.service-registry** via `service-registration`, an instance of
   `service-lookup` (scaffold/contracts/service-registration.md) — cc registers
   its own endpoint and resolves dependencies by slug; static-fallback on a single
@@ -361,24 +415,186 @@ caller) over `spend-cc`. Provenance on every row satisfies INTENT #85/#92.
 - **surface-schema** (scaffold/contracts/surface-schema.md) — cc publishes its
   observable-surface schema (budget/limit meters, agent roster, strategy set,
   escalation feed) for the mesh dashboard to render schema-driven.
-- **coordinators (formerly org)** via `org-on-cc`
-  (scaffold/contracts/org-on-cc.md) — the downstream maximalist consumer;
-  inbound-to-cc only, DEFERRED/open. The org crate is dissolved (INTENT
-  #132); the consumer is the emergent coordinator/owner layer, which calls
-  cc **with a priority** the budget engine honors. Shaped-for surface only;
-  content deferred.
+- **keepers (formerly org/coordinators)** via `org-on-cc`
+  (scaffold/contracts/org-on-cc.md — file name pending the batch-7 rename to
+  `keeper-on-cc`) — **wave-3: this is now cc's PRIMARY consumer, not a
+  deferred maximalist afterthought** (ledger #172 locks the node name
+  **keeper**; see "Keeper threads as cc's primary consumer" below).
+  Inbound-to-cc only. The org crate is dissolved (INTENT #132); the keeper
+  runtime calls cc **with a priority** the budget engine honors. Shaped-for
+  surface only; content DEFERRED to whoever designs `components/keeper.md`
+  (not yet authored at this writing).
 - **projects** via `cc-projects` (authored; stub-track) — thread↔project (+
   optional environment) linkage stored in cc's ledger. Anticipated; projects is
-  L6-stub, content deferred.
+  L6-stub, content deferred. **Wave-3 note:** project is the primary **keeper**
+  type (ledger #172, #166 Q5) — see "Thread↔keeper↔environment linking" below.
 - **spend** via `spend-cc` (authored; stub-track) — pull-shaped spend queries of
-  the usage ledger. Anticipated; spend is L6-stub, content deferred.
+  the usage ledger. Anticipated; spend is L6-stub, content deferred. **Wave-3
+  note:** `spend-cc` grows the plan-aware `billing_plan` field (INTENT #170) —
+  see "Usage DB + spend pull" below; cc adopts spend.md's proposed extension.
 - **agents** via `agents-cc` (authored; stub-track) — the future generalization
   layered on cc (never absorbs it). Anticipated; content deferred.
 - **Cross-cutting mesh protocols** (surface-schema-style, one stub many parties —
   I am a party, I do not author): `pubsub-protocol` (cc-events transport),
   `restart-protocol` (interruptibility = f(live agent work)), `queues-api`
   (escalation handler delivery), `locks-api` (single-writer on limit surfaces),
-  `cron-api` (periodic limit/percentile recompute + session-reset roll).
+  `cron-api` (periodic limit/percentile recompute + session-reset roll). **Wave-3
+  note:** cc's client-half of all five now rides `chassis` (`mesh-client`
+  retires into it, ledger D1) — no shape change, one fewer library (Nesting,
+  below).
+
+## Keeper threads as cc's primary consumer (wave-3, INTENT #146/#148/#149/#172)
+
+Wave-2 shaped `org-on-cc` for "whatever the coordinator round produces,"
+deliberately not naming a consumer. That round produced the **keeper**: a
+topological node on the landscape, owning its region, spawning **threads**
+(interactive or headless) each initialized from its **bundle** (role prompt +
+plugins, assembled via rollup — INTENT #148 beat 2/3). A keeper thread running
+on the Claude-Code runtime **is a cc agent, full stop** — cc does not gain a
+new concept, a new spawn path, or a new schema field to serve it. What changes
+is emphasis, not shape:
+
+- **cc's `agent-management` `Spawn` is the keeper's primary thread-start
+  path**, not a hypothetical future consumer's. The `project`/`environment`
+  fields already on `Spawn` (INTENT #68) are keeper-scoped fields in
+  substance today (project is the primary keeper type, ledger #172/#166 Q5) —
+  see "Thread↔keeper↔environment linking" below for the generalization this
+  implies.
+- **The bundle-to-plugin path is `rollup-cc`, unchanged** (INTENT #148 beat
+  2: "seed assembled via rollup… when running on Claude Code, the shape is
+  role-prompt-plus-plugins"). cc calls `rollup-cc::AssemblePlugin` exactly as
+  designed wave-2; "the caller is now understood to usually be a keeper
+  spawning a thread" is the only new fact — see "Plugin assembly via rollup"
+  below for the plane-1/plane-2 note.
+- **Priority-honoring is unchanged** — a keeper's spawn still carries a
+  `priority` cc's strategy engine honors (org-on-cc's shaped-for hook,
+  preserved verbatim).
+- **What is still NOT designed here (owned by `components/keeper.md`, not yet
+  authored at this writing):** the keeper's own decision to spawn a cc thread
+  at all (vs. a custom-agent thread, agents.md's "Runtime choice" section);
+  the curation pass that writes back into the keeper's bundle at thread end
+  (OQ-5, PARKED); and the propose/approve state machine for keeper-to-keeper
+  messaging (OQ-6, PARKED). cc's contract with the keeper layer is
+  **inbound-to-cc only** — none of that machinery is cc's concern or
+  dependency.
+
+## Plugin assembly via rollup (wave-3, rollup.md concern 11, batch 4)
+
+rollup folded its `#140` direction concretely this wave into **two
+composition planes over one text engine** (rollup.md concern 11): **plane 1**
+(file-based, VFS-backed manifests — what `rollup-cc` has always used) and
+**plane 2** (graph-shaped plugin/bundle structure living in the KG, projected
+down into a plane-1 `PluginManifest` before the text composer ever runs).
+
+**cc requires no change for this.** `rollup-cc`'s `AssemblePlugin` takes a
+`PluginManifest` regardless of which plane produced it — plane 2's
+`kg`-sourced structure is *projected* into the identical plane-1 manifest
+shape before rollup hands cc a result (rollup.md concern 11: "resolution =
+traverse the graph (plane 2), compose the leaves (plane 1)… one text engine,
+two manifest sources"). The only observable difference on cc's side is in
+provenance: `RollupProvenance.graph_nodes_used` is populated (pins the
+targeted-rollup bundle across both planes) when the manifest came from a
+keeper's bundle via plane 2, and stays empty for a plane-1-only
+`Explicit` manifest. cc already stores the whole `RollupProvenance` blob
+(`agent_runs.plugin_provenance`) uninterpreted, so this is a value it already
+carries, not a schema change.
+
+**Why this matters for the keeper path specifically:** a keeper's bundle
+(role prompt + plugins) is exactly the kind of graph-shaped, KG-homed
+structure plane 2 targets (rollup.md's `plugin`/`fragment`/`tool` node types
+bound to the `rollup@1` template) — so cc's primary consumer (keeper threads,
+above) is expected to be plane-2's primary real-world source of
+`AssemblePlugin` calls, even though cc's contract with rollup does not know
+or care.
+
+## Usage DB + spend pull (wave-3, INTENT #170; spend.md batch 5)
+
+`spend.md`'s consolidation pass designed the honest answer to the #170 loose
+end — Claude Code meters every turn, but on the operator's Max plan a run's
+marginal cost is $0. cc's ledger is the source `spend` reads (`spend-cc`,
+pull-shaped, unchanged discipline: cc never pushes, never computes cost —
+"cc does not compute spend: it stores usage and answers queries," charter
+above), so cc adopts the one schema addition spend.md's design requires:
+
+- **`sessions.billing_plan`** (`Max | ApiPayAsYouGo | Unknown`) — see "The
+  usage ledger" above for the field and its default (`Unknown` until a
+  plan-detection mechanism is wired; operator-set config is the boring
+  interim source, spend.md open question 2).
+- **cc still never computes `nominal_cost`/`billed_cost`.** Those are
+  `spend`'s dual-accounting figures (spend.md §1), derived from cc's raw
+  token counts + `billing_plan` + spend's own token→price table. cc's job
+  stops at recording the plan a session ran under; `spend`'s job is turning
+  that into an honest cost figure. This preserves the enforcement/aggregation
+  split (charter, above) — cc is not becoming a cost-aware service.
+- **The Max-subscription flat-fee allocation policy is NOT cc's call**
+  (spend.md open question 1, explicitly reserved for the operator's closing
+  round) — cc records the plan per session; whether the subscription's flat
+  fee is ever allocated back down to keepers is entirely `spend`'s design
+  space.
+
+## Thread↔keeper↔environment linking (wave-3, INTENT #68; ledger #172/#166 Q5)
+
+INTENT #68's requirement stands unchanged: "threads must be linkable to
+projects, and optionally to environments within projects." `cc-projects`
+already implements this in cc's ledger (`agent_runs.project_id`,
+`environment_id`) exactly as designed wave-2. Wave-3 adds one terminology
+note, not a schema change: **project is the primary keeper type** (ledger
+#172, #166 Q5 "projects-not-a-crate reconfirmed… project is the PRIMARY node
+type"), so `agent_runs.project_id` is, in substance, already a keeper-scoped
+field — it happens to be typed `ProjectId` because `projects` is the only
+keeper type with an identity type today. **Flagged for the harmonizer /
+whoever designs `components/keeper.md` (not decided here):** whether
+`cc-projects` should generalize its column to a `keeper_id: Option<KeeperId>`
+(a superset that covers non-project keeper types, matching `spend.md`'s
+`SpendScope { keeper_id, environment_id }` shape exactly) before or after
+`projects` leaves the stub track. Until that generalization lands, cc's
+ledger keeps `project_id`/`environment_id` unchanged — this is a naming/typing
+note, not a design decision cc is taking unilaterally.
+
+## Anticipated contracts (wave 3, L6)
+
+*Per the L6 track rule (INTENT #173c): the contracts below are with a lower
+layer (`keeper`) that has no `components/keeper.md` yet at this writing (the
+batch-6 unit that owns it may land concurrently with or after this pass).
+cc's existing wave-2 contracts (Contracts section, below) are unchanged and
+already authored; these are net-new or extended anticipations only, proposed
+here for whoever authors/harmonizes the corresponding `contracts/*.md` file —
+cc.md does not itself edit `scaffold/contracts/*`.*
+
+- **`keeper-on-cc`** (keeper → cc; the wave-3 name for `org-on-cc`'s content,
+  file rename pending batch-7 harmonization). *Purpose:* the keeper runtime's
+  PRIMARY path for spawning a Claude-Code-shaped thread — see "Keeper threads
+  as cc's primary consumer" above. *Rough shape:* unchanged from `org-on-cc`
+  — `agent-management`'s `Spawn`/`Signal`/`List`/`Stream`/`Reap` by stable
+  handle, a `priority` the strategy engine honors, broad shaped reads
+  (`surface-schema`, `service-lookup`) — plus the wave-3 clarification that
+  the `project`/`environment` fields on `Spawn` (INTENT #68) generalize to
+  `keeper_id`/`environment_id` once `components/keeper.md` exists (see
+  "Thread↔keeper↔environment linking" above). **MUST NOT decide:** the
+  keeper's own curation/negotiation/propose-approve machinery (OQ-5/OQ-6,
+  PARKED) — none of it is a cc dependency.
+- **`rollup-cc` — no shape change, provenance note only.** *Purpose:*
+  confirmed unchanged; recorded here only so a future reader does not assume
+  rollup's plane-2 fold (batch 4) required a cc-side update. See "Plugin
+  assembly via rollup" above.
+- **`spend-cc` — extended with `billing_plan` (INTENT #170).** *Purpose:*
+  cc's usage rows carry the session's billing plan so `spend` can compute
+  nominal-vs-billed cost honestly. *Rough shape:* additive field on the
+  `UsageRow`/`UsageKey` `spend-cc` already returns, sourced from the new
+  `sessions.billing_plan` column ("Usage DB + spend pull" above). No existing
+  `spend-cc` shape changes; this is the same extension `spend.md` proposes
+  from its own side (spend.md `## Proposed contracts`) — cc concurs and pins
+  the column name/table (`sessions.billing_plan`).
+- **`cc-projects` — candidate generalization, not decided.** *Purpose:*
+  record the keeper-vs-project terminology note (above) as a named seam for
+  whoever next touches this contract, rather than silently drifting.
+  *Rough shape:* `agent_runs.project_id`/`environment_id` stay as-is; a
+  future `keeper_id: Option<KeeperId>` superset column is named but not
+  built.
+- **`agents-cc` — no shape change.** *Purpose:* confirmed unchanged this
+  wave — still the full-Claude-Code-agent-shape-only edge (INTENT #137); a
+  keeper thread that chooses the custom-agent runtime instead rides
+  `keeper-agents` (agents.md), never `agents-cc`.
 
 ## Nesting (if applicable)
 
@@ -400,8 +616,13 @@ are not independently apps, INTENT #22):
 - `control` — the HTTP/WS control API implementing `agent-management`, the
   `org-on-cc` consumption surface, `cc-events` emission, and `surface-schema`
   publication.
-- `mesh_client` — thin `service-lookup`/restart-protocol/pubsub client (compiles
-  in `lib/mesh-client`, INTENT #45 — not re-hand-rolled).
+- `mesh_client` — **wave-3: compiles in `lib/chassis`, not `lib/mesh-client`**
+  (`mesh-client` retires into `chassis`, ledger D1/chassis.md — the daemon
+  bring-up, `service-lookup`/`restart-protocol`/`pubsub-protocol` client
+  halves, plus the generated-`Contract`-trait exhaustiveness chassis adds
+  over the old mesh-client surface). Same seams cc already designed against
+  (`service-registration`, `restart-protocol`'s interruptibility feed,
+  `cc-events` publication); no behavior change, one fewer library dependency.
 - `config` — daemon config + static-fallback endpoints.
 
 **Crate = app (CLI + daemon split).** ONE app, two faces of one binary, mirroring
@@ -413,9 +634,10 @@ thin entry point. Workspace members: `bin/cc` + `lib/cc`.
 
 **Shared-library eye (flag for the dedup pass, INTENT #25 — do not build now).**
 (a) the `v1-completion-api` client (reqwest wrapper) is shared with mesh's
-observability plane and Org → extraction target `substrate-api-client`; (b)
-`service-lookup`/restart/pubsub client is already `lib/mesh-client` (consume it);
-(c) the **admission-under-pressure** vocabulary is a genuine convergence with
+observability plane and the keeper layer → extraction target
+`substrate-api-client`; (b) `service-lookup`/restart/pubsub client is now
+`lib/chassis` (wave-3, consume it, do not re-hand-roll); (c) the
+**admission-under-pressure** vocabulary is a genuine convergence with
 `scheduler` → candidate `types::admission` at the closing extract pass. Keep
 cc's copies thin and obviously-extractable; do not gold-plate.
 
@@ -472,6 +694,11 @@ The per-pair contract round authored these edges; the contract files are authori
 - `surface-schema` (cc is a publishing party) — observable-surface schema: budget/limit meters, agent roster, strategy set, escalation feed. → `scaffold/contracts/surface-schema.md`
 - Cross-cutting protocols cc is party to (does not author): `pubsub-protocol` (cc-events transport) → `scaffold/contracts/pubsub-protocol.md`; `restart-protocol` (interruptibility = f(live agent work)) → `scaffold/contracts/restart-protocol.md`; `queues-api` (escalation delivery) → `scaffold/contracts/queues-api.md`; `locks-api` (single-writer on limit surfaces) → `scaffold/contracts/locks-api.md`; `cron-api` (periodic limit/percentile recompute + session-reset roll) → `scaffold/contracts/cron-api.md`
 
+*(This list is the wave-2 authored record, kept as-is. See "Anticipated
+contracts (wave 3, L6)" above for what's new/extended this pass: `org-on-cc`
+renamed in substance to `keeper-on-cc`, `spend-cc`'s `billing_plan` field,
+and the confirmed-unchanged status of `rollup-cc`/`agents-cc`.)*
+
 Component-side notes:
 - Shared vocabulary lands in `types::cc` (`CcError` in `types::error::cc`); rollup vocabulary (`PluginManifest`, `OutputSink`, …) is imported from `types::rollup`, never redefined.
 
@@ -517,5 +744,5 @@ Component-side notes:
   a (project, environment, plugin@version, thread) with no orphan usage.
 - **Priority is honored:** two simultaneous `Spawn`s under the same tight budget,
   priorities 9 and 1, admit the priority-9 work first and `Defer` the priority-1
-  work when only one fits under the guard — the caller-priority path Org depends
-  on.
+  work when only one fits under the guard — the caller-priority path the
+  keeper layer depends on.

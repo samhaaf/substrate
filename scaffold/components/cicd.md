@@ -3,9 +3,16 @@
 **Status:** NEW (rounds 4–5 lock, 2026-07-18; **round-9 lock, 2026-07-19 —
 repositioned as a LAYER-6 STUB with design notes**; **wave-2 batch-7 refit,
 2026-07-19 — re-grounded on the now-authored `repo`, `environments`, `queues`,
-`cron` designs**). **Nesting:** top-level as a stub; **cicd-as-its-own-crate
-vs. cicd-emerging-from-repo is OPEN.** **Layer-6 design stub — NOT built in v1;
-NOT a full implementation-ready design.**
+`cron` designs**; **wave-3 refresh, 2026-07-22 (repo-environments-refresh
+unit, batch 6) — reference update only: `cron` is no longer a standalone lib,
+it is absorbed as `TriggerSource::Schedule` inside `queues` (wave-3 batch 3,
+INTENT #56/#91/F6b); every "queues + cron" reference below now reads "queues
+(incl. its Schedule trigger source)". This strengthens, not changes, the
+pipeline-as-trigger-chain hypothesis below — see the wave-3 note in that
+section. Crate-vs-emergent stays OPEN (ledger OQ-32).**). **Nesting:**
+top-level as a stub; **cicd-as-its-own-crate vs. cicd-emerging-from-repo is
+OPEN.** **Layer-6 design stub — NOT built in v1; NOT a full implementation-ready
+design.**
 
 > **NOT IMPLEMENTING NOW.** cicd is **layer-6/future**: this file is design
 > notes + anticipated data contracts + open questions only, per the
@@ -23,7 +30,8 @@ cicd's real scope, drawn from the operator's live practice:
 A cicd pipeline:
 
 - **runs within the mesh** — it is mesh-resident orchestration (queues/
-  triggers/handlers + cron underneath), not a hosted CI product;
+  triggers/handlers, incl. `Schedule`-sourced triggers underneath), not a
+  hosted CI product;
 - **watches external services** — GitHub Actions runs, AWS App Runner,
   Cloudflare/CloudFront, and whatever else a deployment touches;
 - **verifies deployments** — polls until the deployed artifact is live and
@@ -59,36 +67,50 @@ stage → checks → green prod, old prod flips to blue — the pipeline chain
 drives the promotion. cicd **consumes environments** — it does not own the
 environment concept.
 
-## Is cicd mostly configuration over mesh queues + cron? (the boring hypothesis)
+## Is cicd mostly configuration over mesh queues (incl. Schedule triggers)? (the boring hypothesis)
 
 The wave-2 batch-2 designs make this worth stating sharply, because if it
 holds, cicd is *very* boring indeed — mostly declarative configuration over
 primitives that already exist, not a new engine.
+
+> **Wave-3 strengthening (reference update only, no re-decision).** The
+> hypothesis gets MORE boring, not less, now that `cron` is folded: it is no
+> longer a fourth primitive alongside queues/triggers/handlers — it is
+> literally `TriggerSource::Schedule` on the SAME `Trigger` struct
+> (`queues.md` concern 10, wave-3 batch 3). So "a pipeline step is a trigger
+> chain" and "external-service polling is cron" collapse into **one**
+> sentence: every cicd step, whether event-fired or time-fired, is the same
+> `Trigger` row with a different `source`. One fewer moving part than the
+> wave-2 telling below assumed.
 
 A cicd pipeline decomposes cleanly onto the LOCKED mesh substrate:
 
 - **A pipeline step is arguably just a trigger chain.** `queues` already owns
   the LOCKED four-term vocabulary (INTENT #101/#103): typed **EVENTS** land in
   queues; declarative **TRIGGERS** (pure DATA — filter + payload-assembly
-  template, registered as data, NEVER code) bind a queue 1:1 to a **HANDLER**;
-  handlers are the only place code lives. A pipeline "step" maps onto exactly
-  this: an event arrives (a run completed, a deploy fired), a declarative
-  trigger filters/assembles, a handler acts and emits the next step's event.
-  The step *graph* is a chain of (event → trigger → handler → event) — which is
-  what `queues` calls a handler emitting the next event, and `cron`'s charter
-  already names ("a firing is just an event; the work is a trigger + handler
-  downstream").
+  template, registered as data, NEVER code) bind a queue or a schedule 1:1 to a
+  **HANDLER**; handlers are the only place code lives. A pipeline "step" maps
+  onto exactly this: an event arrives (a run completed, a deploy fired) OR a
+  schedule fires (a poll comes due), a declarative trigger filters/assembles,
+  a handler acts and emits the next step's event. The step *graph* is a chain
+  of (event-or-schedule → trigger → handler → event) — exactly what `queues`
+  calls a handler emitting the next event, now uniformly across both trigger
+  sources (`TriggerSource::Queue` | `TriggerSource::Schedule`, wave-3 fold).
 - **The deploy kick-off is already a declarative trigger.** `repo` fires
   `repo.deployed { repo, ref, env, head_sha, correlation_id }` on
   deploy-into-environment (`repo-environments`, repo.md concern 7). A cicd
   pipeline is (at minimum) a set of triggers subscribed to that event and to
   `repo.workflow.run.completed` — the pipeline *definition* is trigger data,
   not bespoke orchestration code.
-- **The "watch external services" polling is cron + a handler.** Poll App
-  Runner `list-operations` / CloudFront invalidation status / the deployed SHA
-  on a `cron` "run-anywhere" schedule (single-fire via the event-ID semaphore);
-  the handler checks the external service and emits `deploy.verified` or
-  `deploy.failed`. No new scheduler — `cron` is the pg_cron-equivalent already.
+- **The "watch external services" polling is a `Schedule`-sourced trigger +
+  a handler.** Poll App Runner `list-operations` / CloudFront invalidation
+  status / the deployed SHA on a `TriggerSource::Schedule { target:
+  FireTarget::Anywhere }` occurrence (single-fire via the same event-ID
+  semaphore every other trigger uses, `queues.md` concern 10); the handler
+  checks the external service and emits `deploy.verified` or `deploy.failed`.
+  No new scheduler, no separate lib — the schedule evaluator lives inside
+  `queues` itself now (the former standalone `cron`/`cron-api` are
+  tombstones).
 - **Exactly-once and loop-safety come for free.** Per-trigger event-ID
   semaphores (`locks`, INTENT #95) give exactly-once step execution;
   `execution-engine`'s loop-depth detection + the cc escalation hook already
@@ -104,9 +126,9 @@ A cicd pipeline decomposes cleanly onto the LOCKED mesh substrate:
 
 1. **A pipeline/step DEFINITION model** — a named, versioned, environment-attached
    collection of trigger-chains + external-watch specs + verify assertions
-   (SHA-match, health) + agent-step declarations. This is *configuration over*
-   queues/cron, but the config schema, its attachment to an environment, and its
-   activation semantics are cicd's to own.
+   (SHA-match, health) + agent-step declarations. This is *configuration over
+   queues* (both trigger sources), but the config schema, its attachment to an
+   environment, and its activation semantics are cicd's to own.
 2. **The verify/assert vocabulary** — "what does 'deployed' mean" (SHA-verify what
    production serves, App Runner state, CloudFront invalidation complete). The
    Deployment Chaperone's checks, made declarative and recorded.
@@ -115,8 +137,9 @@ A cicd pipeline decomposes cleanly onto the LOCKED mesh substrate:
    (per-pipeline provenance, INTENT #85-grade).
 
 Working hypothesis (NOT resolved): **cicd ≈ a declarative pipeline-definition
-layer + a verify vocabulary + a de-agenting ledger, sitting on queues + cron +
-locks + repo + cc.** If that holds, cicd is thin config over frozen primitives —
+layer + a verify vocabulary + a de-agenting ledger, sitting on queues (incl.
+its Schedule trigger source) + locks + repo + cc.** If that holds, cicd is thin
+config over frozen primitives —
 which is the boring, no-new-engine outcome the standing principles prefer. This
 directly feeds the own-crate-vs-emergent question below.
 
@@ -132,12 +155,14 @@ tradeoff precisely rather than hand-wave it:
   `correlation_id` across push→workflow→deploy. repo.md explicitly designed its
   side so that **if cicd emerges from repo, `cicd-repo` collapses into
   repo-internal module boundaries with no contract rework** (its `workflows` lib
-  gains the watch/verify loop). If cicd is "thin config over queues+cron+repo,"
+  gains the watch/verify loop). If cicd is "thin config over queues+repo"
+  (queues now including the Schedule trigger source that used to be `cron`),
   the watch/verify loop is small enough to live as a `repo` internal lib, and
   the whole cicd contract surface disappears. **Cheapest, fewest new crates,
   most boring.**
-- **Case for OWN-CRATE.** cicd's substrate is `queues`/`cron`/`cc`/
-  `environments`, NOT git — the GH-Actions surface (`cicd-repo`) is only *one*
+- **Case for OWN-CRATE.** cicd's substrate is `queues` (event- and
+  schedule-sourced triggers alike)/`cc`/`environments`, NOT git — the
+  GH-Actions surface (`cicd-repo`) is only *one*
   of the external services it watches (App Runner, Cloudflare have no repo
   seam). Its agent-invoking steps pull in `cc`; its verify loop watches AWS via
   `aws`; its pipeline definitions attach to `environments`. Folding all that
@@ -148,7 +173,7 @@ tradeoff precisely rather than hand-wave it:
   orchestration in one place.
 - **The deciding question (for the operator, later):** does the watch/verify
   loop's dependency footprint stay inside repo's world (git + GitHub) or does it
-  reach broadly across `aws`/`cc`/`environments`/`cron`? The Deployment
+  reach broadly across `aws`/`cc`/`environments`/`queues`-schedule-jobs? The Deployment
   Chaperone touches GH Actions **and** App Runner **and** CloudFront **and**
   agents — which leans **own-crate**. But if v1's first real pipeline is
   GH-Actions-only, **emergent-from-repo** ships sooner with less. **Left OPEN;
@@ -206,19 +231,27 @@ with no stub until the own-crate-vs-emergent and hierarchy questions resolve.
   cicd's consumption is deferred; repo's side is authored now.
 - *(scaffold/contracts/cicd-repo.md — exists, requirements-only, layer-6.)*
 
-### `cicd ↔ mesh` (queues / cron / locks) — the pipeline substrate (anticipated)
+### `cicd ↔ mesh` (queues, incl. Schedule triggers / locks) — the pipeline substrate (anticipated)
+
+> **Wave-3 reference update.** `cron`/`cron-api` are tombstones (wave-3 batch
+> 3, INTENT #56/#91/F6b); "schedules external-watch `cron` jobs" below now
+> reads "registers `TriggerSource::Schedule` triggers" — same mechanism, one
+> fewer contract, no behavior change.
 
 - **Purpose.** A pipeline runs ON the mesh fabric: pipeline steps are declarative
-  triggers over `queues`, external-service polling is `cron` "run-anywhere" jobs,
-  exactly-once step execution rides `locks` event-ID semaphores. Per the boring
-  hypothesis above, this is cicd's *primary* substrate — most of a pipeline is
-  configuration expressed as queue triggers + cron jobs.
+  triggers over `queues` — both event-sourced (`TriggerSource::Queue`) and
+  schedule-sourced (`TriggerSource::Schedule`, external-service polling as a
+  "run-anywhere" occurrence) — with exactly-once step execution riding `locks`
+  event-ID semaphores. Per the boring hypothesis above, this is cicd's
+  *primary* substrate — most of a pipeline is configuration expressed as
+  `queues-api` triggers, of either source.
 - **Rough shape.** cicd registers declarative TRIGGERS (`queues-api`) subscribed
-  to `repo.deployed` / `repo.workflow.run.completed` / its own step events;
-  schedules external-watch `cron` jobs (`cron-api`); acquires per-step semaphores
-  (`locks-api`). All three are cross-cutting protocols owned by their modules —
-  cicd is a party/consumer, authors no new mesh contract. No stub until cicd
-  leaves the stub track.
+  to `repo.deployed` / `repo.workflow.run.completed` / its own step events
+  (`source: Queue`), and registers `Schedule`-sourced triggers for
+  external-watch polling (`source: Schedule`, same `queues-api`, no separate
+  API); acquires per-step semaphores (`locks-api`). Both are cross-cutting
+  protocols owned by `queues`/`locks` — cicd is a party/consumer, authors no
+  new mesh contract. No stub until cicd leaves the stub track.
 
 ### `cicd → cc` (agents as pipeline steps) — anticipated
 
@@ -261,22 +294,24 @@ question.
 
 ## Open questions
 
-1. **own-crate vs. emergent-from-repo** (INTENT #104, STANDING OPEN) — sharpened
-   above but deliberately NOT resolved; the collapse path is designed cheap
-   either way (repo.md concern 8), so deferring costs nothing. Deciding input:
-   does the watch/verify loop's dependency footprint stay inside git/GitHub
-   (→ emergent) or reach across aws/cc/environments/cron (→ own-crate)? The
-   Deployment Chaperone touches all four, leaning own-crate; a GH-Actions-only
-   first pipeline leans emergent.
+1. **own-crate vs. emergent-from-repo** (INTENT #104, STANDING OPEN — ledger
+   OQ-32; **wave-3: stays OPEN, stub-only this wave, not decided**) —
+   sharpened above but deliberately NOT resolved; the collapse path is
+   designed cheap either way (repo.md concern 8), so deferring costs nothing.
+   Deciding input: does the watch/verify loop's dependency footprint stay
+   inside git/GitHub (→ emergent) or reach across aws/cc/environments/queues-
+   schedule-jobs (→ own-crate)? The Deployment Chaperone touches all four,
+   leaning own-crate; a GH-Actions-only first pipeline leans emergent.
 2. **hierarchy vs. `environments`** — sibling vs. child (INTENT #63; "environments
    might be a sibling of CICD, might be a child; CICD probably has to use
    environments"). Working assumption: sibling-with-dependency. No cicd↔environments
    contract stub until decided.
 3. **Is a pipeline step exactly a `queues` trigger-chain, or does it need a
-   thicker step abstraction?** The boring hypothesis says triggers+cron suffice;
-   the residue (pipeline-definition model, verify vocabulary, de-agenting ledger)
-   is what would justify any cicd-specific structure. To settle when cicd is built,
-   against a real second pipeline (beyond the GH-Actions/App-Runner/CloudFront one).
+   thicker step abstraction?** The boring hypothesis says triggers (of either
+   `TriggerSource`) suffice; the residue (pipeline-definition model, verify
+   vocabulary, de-agenting ledger) is what would justify any cicd-specific
+   structure. To settle when cicd is built, against a real second pipeline
+   (beyond the GH-Actions/App-Runner/CloudFront one).
 4. **The verify/assert vocabulary** — what "deployed and healthy" means as
    declarative data (SHA-match, App Runner state, CloudFront invalidation
    complete, health-endpoint) — undesigned; the Deployment Chaperone's checks are
@@ -290,8 +325,42 @@ question.
 **requirements-only** (layer-6 design stub — **NOT implementing now**). Faithful
 capture of operator intent (mesh-resident pipelines watching external services,
 deployment verification, agents/cc as steps, the increasingly-deterministic
-goal, the Deployment Chaperone grounding) + the boring "config over queues+cron"
-hypothesis + a sharpened (unresolved) own-crate-vs-emergent tradeoff + anticipated
-contracts by name and rough shape only. No schemas frozen; content lands when cicd
-leaves the stub track. Assigned model: **Opus**, single stub-track pass
-(wave2-plan batch 7).
+goal, the Deployment Chaperone grounding) + the boring "config over queues"
+hypothesis (strengthened wave-3 now that `cron` is one of queues' own trigger
+sources, not a fourth primitive) + a sharpened (unresolved) own-crate-vs-emergent
+tradeoff (ledger OQ-32, still open) + anticipated contracts by name and rough
+shape only. No schemas frozen; content lands when cicd leaves the stub track.
+Assigned model: **Opus**, single stub-track pass (wave2-plan batch 7; wave-3
+reference refresh by the repo-environments-refresh unit, batch 6).
+
+## Anticipated contracts (wave 3, L6)
+
+Reconfirming the stub-track edges above (INTENT #173c — contracts-with-lower-
+layers concretely, internals at design-notes depth), with the wave-3 reference
+fold applied:
+
+- **`cicd-repo`** — purpose: trigger/chain/observe GH-Actions workflows THROUGH
+  repo (repo is the sole GH-Actions surface owner). Rough shape:
+  `TriggerWorkflow`/`ObserveRuns`/`ComposeChain`, `correlation_id`-threaded.
+  Unchanged this wave; live stub at `scaffold/contracts/cicd-repo.md`.
+- **`cicd ↔ queues`** (supersedes the wave-2 "`cicd ↔ mesh` (queues/cron/locks)"
+  naming) — purpose: pipeline steps are `queues-api` triggers, both
+  event-sourced and `Schedule`-sourced (former `cron`); exactly-once via
+  `locks-api` event-ID semaphores. Rough shape: registers `Trigger { source:
+  Queue(...) | Schedule(...) , handler, filter, assembly }` rows; no new verbs.
+  No stub file until cicd leaves the stub track.
+- **`cicd → cc`** — purpose: an agent step invokes cc (`agent-management`
+  spawn, or the `cc-escalation` shape for failure diagnosis). Rough shape:
+  unchanged from wave 2. No stub yet.
+- **`cicd ↔ environments`** — purpose: pipeline attachment + activation on
+  `repo.deployed`. Rough shape: unchanged; **blocked on the sibling-vs-child
+  hierarchy decision** (open question 2) — no stub file until then.
+- **`cicd ↔ secrets`** — purpose: use-without-seeing credential resolution for
+  external-service deploy/verify steps. Rough shape: unchanged from wave 2. No
+  stub yet.
+
+**Crate-vs-emergent (OQ-32) is explicitly NOT decided by this refresh** — every
+edge above is authored so it survives either outcome (own-crate keeps them as
+external contracts; emergent-from-repo collapses `cicd-repo` into repo-internal
+calls, per repo.md concern 8, and the rest ride along as repo's internal
+dependencies instead).

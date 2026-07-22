@@ -1,345 +1,312 @@
 # projects
 
-**Status:** WAVE-2 REFIT of the round-3 stub (batch 7, L6 organization plane),
-2026-07-19. **Track: STUB — design notes + anticipated data contracts only.**
-**Nesting:** top-level app-crate (`bin/projects` + `lib/projects`), the graphical
-file system / knowledge-graph layer over the flat VFS.
+**Status:** L6 CONCEPTUAL DESIGN NOTE (wave 3, batch 6, unit
+`projects-artifacts-landscape`), 2026-07-22. **Supersedes the wave-2 stub's
+top-level-app-crate framing.** **Track: L6 conceptual only (INTENT #173c) —
+"enough to know what its data contract is supposed to be with the lower
+layers." No implementation, no schemas frozen.**
 
-> ## NOT IMPLEMENTING NOW (INTENT #51/#43, layer-6 stub track)
-> This file captures operator intent and names the data contracts projects will
-> need. It is deliberately **requirements-only**: no schemas, no wire formats, no
-> implementation. Per INTENT #43 the operator scoped this down explicitly —
-> *"even if we don't solve them right now, maybe we can get toward what our ideal
-> full directory structure looks like, and just have some design stubs and data
-> contracts — only the first two layers of services... That's more of just a
-> discussion point."* Everything below is a placeholder with a real design note;
-> content lands when projects leaves the stub track (after `artifacts` exists).
+> ## PROJECTS IS NOT A CRATE (INTENT #166 Q5, answered; #150 beat 15)
+> The wave-2 lock (INTENT #47: "projects is its own app — a graphical file
+> system over the flat VFS") is **REVERSED, operator-confirmed**. The
+> seed-bishop round asked it plainly: *"The projects crate was going to be a
+> knowledge graph built on top of the file system. But that's now literally
+> what the landscape is. So projects stops being its own app and becomes a
+> [keeper] type — a project is just a node."* The operator's answer: **"projects
+> not-a-crate reconfirmed"** (INTENT #166 Q5) — with one correction, don't call
+> the nodes seeds (the vocabulary settled since as **keeper**). There is no
+> `bin/projects`, no `lib/projects`, no `projects` daemon, no `projects/`
+> registry keyspace. **`project` is the PRIMARY keeper TYPE on the landscape**
+> (INTENT #150 beat 15 — "repos separate from projects... all of our projects
+> living in one open-world knowledge graph — our topological graph"). This file
+> is retained (not tombstoned) because it is where the load-bearing content that
+> survives the crate's dissolution lives: the `.mind` workspace-schema migration
+> mapping, the pushed-dashboard-registry idea (now a landscape/keeper concern),
+> and the thread↔project↔environment linkage. Everything else in the wave-2
+> file (the app charter, the standalone registry, the KG+VFS "straddling app"
+> framing) is DROPPED as an artifact of the dissolved crate premise, not
+> preserved below.
 
-## Charter (requirements)
+## Charter (post-dissolution)
 
-`projects` is **the graphical file system over the flat `vfs`** — INTENT #47,
-LOCKED and verbatim:
+A **project** is a **keeper type** (`keeper.project`, a `schema`-managed
+type inheriting from the core keeper schema — schema.md concern 8) whose
+instances are ordinary nodes on the **landscape** — the one open-world KG
+(overview.md's canonical vocabulary block; kg.md). Like every keeper:
 
-> "VFS should be our flat file system, and then projects can be a graphical file
-> system which points to sections within our flat file system... projects is
-> basically a knowledge graph built on top of the VFS that allows us to build
-> applications... hierarchically... and access them in a really friendly way."
+- it owns a region of the topology and may delegate to sub-keepers
+  (INTENT #162; a sub-project is just another `keeper.project` node linked by
+  a `contains`/`delegates-to` edge — no separate nesting mechanism);
+- it has a **bundle** (persistent shared knowledge — role prompt + plugins,
+  the targeted-rollup product of the node, rollup.md concern 12) and
+  **threads**, each thread with a **workspace** (INTENT #161/#166 A5 row 79);
+- its bundle appears via the SAME mechanism every landscape node uses —
+  no bespoke "project app" presentation layer, no project-specific registry
+  daemon, no project-specific rollup engine.
 
-It **straddles KG + VFS** (INTENT #51): the **graph encodes a project's
-structure** and lives in the Knowledge Graph service (`kg.md`); the **graph's
-nodes point at project files in the VFS** (`kg-vfs` existence-validated
-pointers). Projects is a *consumer/composer* of both — it owns no graph engine
-and no byte storage; it owns the **project abstraction, its registry, its
-metadata/finances, and the migrated `.mind` workspace schema**. Requirements:
+**What this dissolves.** The wave-2 app charter — "a centralized registry you
+push to," "projects owns the project abstraction, registry, metadata,
+finances," "projects is a plain VFS client for the file half," nested-projects-
+as-graph-edges-owned-by-an-app — is **gone as an app concern**. The graph
+region a project owns is landscape/kg's structure (kg.md, not a projects-owned
+graph engine); the files a project's work points at are ordinary VFS content
+(vfs.md); the rollup that produces its bundle is rollup's targeted-rollup
+mechanism (rollup.md concern 12) with `keeper.project` supplying the type's
+fragment/slot shape. **`project` contributes a TYPE (a schema + a rollup
+fragment set), not a SERVICE.**
 
-- **The place where applications get built** — **hierarchically nested
-  projects** (INTENT #43: *"projects within projects, automatically distributed
-  across the VFS, tracking finances per project"*; the disk-location binding is
-  dropped — a project is a graph region, not a `~/code/<name>` folder).
-- **A centralized registry you push to** — **dashboards AND source code** (INTENT
-  #47), accessible from anywhere on the mesh.
-- **Project-published dashboards navigable from the main mesh dashboard** — via
-  projects' own **surface schema** (the boring-surface-schema pattern, INTENT
-  #46; `surface-schema.md`): a project publishes its dashboard's
-  render/interaction schema and the mesh dashboard mounts it.
-- **Per-project metadata + finances** attach here — the **`spend` hookup**
-  (INTENT #41/#68): spend queries cc's usage ledger **pull-shaped, grouped by
-  project/environment**, and projects is the grouping authority those
-  `project_id`s resolve against. A "topological map" UI is the operator's stated
-  interface intent (INTENT #43).
-- **.mind workspace-schema migration — CONFIRMED enthusiastically (INTENT #87).**
-  The operator's long-developed `.mind` workspace schema migrates **directly into
-  projects** (see the dedicated design note below).
+**What survives — three load-bearing pieces, unchanged in substance, re-homed
+in vocabulary.** The rest of this file is those three pieces:
 
-## Design notes (operator intent, faithful)
+1. §1 — the `.mind` workspace-schema migration mapping (INTENT #87/#150) —
+   the detailed content mapping, re-read as "onto a keeper, not onto an app."
+2. §2 — the registry-of-pushed-dashboards idea — now a **keeper/landscape
+   concern**, not a projects-specific registry.
+3. §3 — `worktree ↔ thread ↔ project ↔ environment` linking, unchanged, via
+   the `cc-projects` seam (renamed in substance to a keeper-type-scoped edge,
+   contract file name kept for continuity — see Anticipated contracts).
 
-### 1. Projects straddles KG + VFS — the load-bearing shape
+## §1. The `.mind` workspace-schema migration (INTENT #87) — re-homed on `keeper.project`
 
-A project is **a KG graph** (its own graph in the global registry, bound to a
-projects-authored template — sketch name `project-tree@1`) whose **nodes point at
-VFS files**. The division mirrors the layers exactly:
+CONFIRMED enthusiastically at the original round and never reversed: migrate
+the operator's long-developed `.mind` workspace schema *"directly into
+projects"* — coordinator communication protocols, artifacts, tasks, and the
+rollup engine ("tasks are rolled up"). With projects dissolved into a keeper
+type, "into projects" now reads **"onto the `keeper.project` type, as
+landscape structure"** — the mapping content is unchanged, only its host
+changes from an app to a schema+graph shape:
 
-- **KG owns structure.** The project hierarchy (project → sub-project → workspace
-  → artifact/task), the cross-links between regions, and the schema-locking that
-  keeps a project graph well-formed are all `kg` concerns — projects defines a
-  template and calls `kg-api`, it does not re-implement graph semantics. Nested
-  projects are edges in the graph (a `contains`/`sub_project` edge type on the
-  template); KG's bounded traversal (`Traverse`, depth+limit mandatory) does the
-  hierarchy walks projects' topological-map UI renders.
-- **VFS owns bytes.** Source code, dashboard bundles, and file bodies are
-  ordinary VFS files (`Immutable` blobs, or `NodeAnchored` for live working
-  trees — vfs.md concern 2); a project-graph node carries a `vfs://` FileRef that
-  KG existence-validates (`kg-vfs`, sweep-checked). Projects is a **plain VFS
-  client** for the file half (`projects-vfs`): no new storage wire.
-- **Projects owns neither** — it owns the *project abstraction* over the two:
-  registry, metadata/finances, the `.mind` schema, and the surface that makes it
-  navigable. This keeps projects a genuine L6 organization-plane composer, not a
-  fourth storage engine.
+- **A `.mind` workspace becomes a `keeper.project` node's region of the
+  landscape**, not a "project" app record. `manifest.yaml`'s **objectives**
+  and **phases** (with `status`/`depends_on` DAGs) become graph nodes+edges
+  under a `keeper.project`-scoped template — schema-locked by kg, so the
+  objective/phase DAG invariants `mind-index validate` enforces today become
+  **kg schema validation with push-back** (INTENT #50) — no change from the
+  wave-2 mapping's substance. The generated `MANIFEST.md`/`OPERATOR.md`/
+  `INDEX.md` projections become the node's **bundle surface** (rollup's
+  targeted-rollup output, rollup.md concern 12) rather than a bespoke
+  "projects surface schema."
+- **`.mind` artifacts become landscape `artifact` nodes with VFS bodies** —
+  frontmatter → node props (schema-locked, per an `artifact.*` schema —
+  artifacts.md), body → a `vfs://` FileRef. `consumes`/`supersedes` become
+  ordinary KG edges; the DAG staleness `mind-index` computes today becomes a
+  kg traversal. NOTE the name collision, still true: a `.mind` "artifact" (a
+  work-tracking unit) and the L6 **`artifacts`** crate's typed, methoded
+  artifact are related but distinct — migrated work-units become typed
+  `artifacts` once that layer is real (§ artifacts.md, this same unit).
+- **Tasks are rolled up** — unchanged: a task/artifact's body is a
+  `RollupTarget` resolved via **targeted rollup** (rollup.md concern 12): the
+  `ScopeChain` is now derived by walking the node's `rolls-up-from` edges
+  root-ward (rollup.md concern 12 point 1) instead of a projects-owned
+  hierarchy walk — the exact same mechanic rollup already generalized for
+  every landscape node, `keeper.project` gets it for free, no bespoke code.
+- **Coordinator communication protocols migrate onto mesh** — the `.mind`
+  coordination inbox (`claim`/`send`/`inbox`), handoffs, and human-actions
+  become mesh-mediated: a natural **`queues`** application (inbox delivery)
+  and/or `pubsub` topic, with handoffs/human-actions as graph nodes carrying
+  the same `blocking`/status semantics. **This remains the heaviest genuinely-
+  migrated-infrastructure surface** — it is also exactly where **OQ-6
+  (keeper-to-keeper protocol, PARKED)** and **OQ-5 (curation mechanism,
+  PARKED)** live; this file does not decide either, per the design-around
+  rules (ledger §C). The `mind-index` tool's verbs (`validate`/`migrate`/
+  `cross`/`claim`/`send`/`inbox`/`regenerate`) still need a substrate home —
+  unresolved, now the **keeper runtime's** open question (keeper.md), not
+  projects'.
+- **`worktree ↔ thread ↔ project ↔ environment` linking** — its own section,
+  §3 below, unchanged in substance from the wave-2 mapping.
 
-The flat VFS "just looks like an S3 bucket" (INTENT #43/vfs.md concern 11); the
-friendly, navigable, project-oriented structure is *this* strictly-higher layer.
+**Vocabulary correction from the wave-2 text, applied throughout this file:**
+where the wave-2 mapping said "project (graph region)" it now reads
+"`keeper.project` node"; where it said "projects' surface" it reads "the
+node's bundle"; "coordinator" reads "keeper" per the locked vocabulary.
 
-### 2. Nested projects
+## §2. The pushed-dashboard registry — now a keeper/landscape concern
 
-Hierarchically nested, encoded as graph edges (no filesystem nesting — a project
-is not bound to a disk location). The **naive environment rule** carries over
-(INTENT #63/#75, environments.md): sub-projects have **no relationship between
-their environments by default**; where a relationship exists, a sub-project
-**shares its parent's environment by default**. Finance/metadata rollup follows
-the same containment edges (a parent project's spend is the rollup of its
-sub-projects' — computed over the graph, not stored redundantly).
+Wave-2's projects app was going to own *"a centralized registry you push to —
+dashboards AND source code"* with project-published dashboards navigable from
+the main mesh dashboard (INTENT #47). **That registry does not become a
+`projects` service — there is no `projects` service left to own it.** The idea
+survives, re-homed:
 
-### 3. The centralized registry + mesh-dashboard navigation
+- **Publication is a landscape-wide keeper/artifact behavior, not a
+  project-specific one.** Any keeper (not only `keeper.project`) or artifact
+  node MAY publish a dashboard component via the **boring surface-schema
+  pattern** (INTENT #46) — the same mechanism `dashboard-serving`/mesh-core
+  already provide every service. A `keeper.project` node publishing its
+  dashboard is one instance of a general capability, not a projects-owned
+  registry daemon.
+- **Discoverability rides the landscape itself, not a bespoke `projects/`
+  keyspace.** "A centralized registry you push to" is satisfied by: (a) the
+  node existing on the landscape (kg's global graph registry already answers
+  "what nodes exist, where," kg.md concern 2 — no second registry needed),
+  and (b) the node's published surface-schema being discoverable the way every
+  service's is (`service-lookup` + `surface-schema`, not a project-specific
+  push). The wave-2 file's `projects/` replicated-kv keyspace idea is
+  **DROPPED** — it was solving a problem the landscape's own registry already
+  solves once `projects` is a node type, not an app.
+- **Source code** — still ordinary VFS content pointed at by the node
+  (`vfs://` FileRef props, existence-validated by kg — kg.md concern 5); no
+  change from the wave-2 mapping's substance, just no projects-owned VFS
+  client layer sitting in front of it.
+- **The topological-map UI** (INTENT #43) is now literally **the landscape
+  dashboard** (overview.md, dogfooding — INTENT #150 beat 16: "one dashboard
+  showing the topological map and every published data type"), not a
+  projects-specific UI. Recorded here so the idea isn't lost, designed there.
 
-A single mesh-wide registry you **push to** (INTENT #47) — both **dashboards and
-source**. Registration and surfacing ride `projects-mesh` (an instance of
-`service-lookup` + the registry push) and `surface-schema`: each project
-publishes its dashboard's boring render/interaction schema, and the main mesh
-dashboard **mounts project dashboards schema-driven** (never hand-built per
-project — INTENT #46). The registry itself is small control-plane state and is a
-natural `replicated-kv` keyspace tenant (a `projects/` keyspace, the exact
-precedent vfs's `vfs/` and kg's `kg/` keyspaces set) so every node can enumerate
-projects from a local read — but that is an implementation choice flagged, not
-locked, for the real design pass.
+## §3. `worktree ↔ thread ↔ project ↔ environment` linking — the `cc-projects` seam
 
-### 4. Per-project metadata + finances (the spend hookup)
+Unchanged from the wave-2 mapping in substance; only the noun on the
+project-side of the edge changes (a `keeper.project` node, not a `projects`
+app record):
 
-Per-project **metadata** (name, description, owning agent once `org` exists,
-lifecycle) is project-graph data. **Finances** are NOT stored in projects — they
-are **derived pull-shaped**: `spend` queries cc's `usage_records ⨝ agent_runs`
-(cc.md's ledger) grouped by `project_id`/`environment_id` (`spend-cc`, spend's
-edge), and projects is the authority those ids resolve against. So projects
-**does not push or duplicate cost data**; it is the grouping dimension. This
-honors INTENT #41 (spend is pull-shaped, sources never push) and #68 (cc owns
-the usage DB; spend queries it). cc threads already carry
-`agent_runs.project_id?`/`environment_id?` (cc.md concern 2) — the
-`cc-projects` edge is where projects validates and reads them back.
+- The `.mind` workspace schema binds a git **worktree** and a CC **thread**
+  together (INTENT #67). The **thread** half is the `cc-projects` edge: the
+  `coordinator_thread_id` takeover mechanism and CC-thread↔project links
+  become cc's `agent_runs` rows linking threads to `keeper.project` nodes (+
+  optional environment), with the **keeper.project node** (not a "projects"
+  service) the resolution authority for takeover-vs-continue (match/differ/
+  unavailable — preserved as a keeper-level protocol, not redesigned here).
+- The **worktree/branch** half stays **repo's** (repo.md concern 2 already
+  reuses the identical `.mind` worktree↔thread↔branch schema and owns
+  `repo-vfs` + `repo-environments`). A `keeper.project` node references its
+  repo workspace transitively through the shared worktree↔thread↔branch
+  identity, or via `repo-environments` — **not decided here** (this was an
+  open question in the wave-2 file and remains one; see OQ-16/OQ-4 below).
+- **Per-project metadata + finances** stay pull-shaped, unchanged: `spend`
+  queries cc's usage ledger grouped by `project_id`/`environment_id`
+  (`spend-cc`), with the `keeper.project` node the grouping authority those
+  ids resolve against (INTENT #41/#68/#166 Q10 — spend anchored to landscape
+  nodes). No project-owned finance store.
+- **Environments.** A project (`keeper.project` region) may have 1+ repos,
+  each with branches deploying into environments — this is **OQ-2, PARKED**
+  (the operator's own "we're not there yet — full dedicated deep-dive
+  required" — INTENT #164). This file does not decide environment↔repo
+  cardinality or branch-deploy semantics; `environments.md` stays a
+  requirements-only stub per the design-around rules.
 
-### 5. The `.mind` workspace-schema migration (INTENT #87) — the heavy note
+## Open questions carried forward (not decided here, per L6/#173d)
 
-CONFIRMED enthusiastically: migrate the operator's long-developed `.mind`
-workspace schema **directly into projects** — *"coordinator communication
-protocols, artifacts, tasks — and bring the rollup engine into it ('tasks are
-rolled up')."* The real schema to migrate is the harness `workspaces` skill
-(`~/code/harness/core-plugins/core/skills/workspaces/SKILL.md`, read in full);
-the mapping onto substrate's layers, faithfully:
+1. **OQ-16 / OQ-4 — git + projects + environments + keeper elegance,
+   bottom-up topography.** PARKED/OPEN. Who asserts a `contains`/`delegates-to`
+   edge and when; what a keeper-merge does to a workspace/bundle on branch
+   merge; whether a `keeper.project` differs per branch/environment. Design-
+   around: `has-repo` stays a **candidate** many-to-many edge, not resolved
+   (ledger §C).
+2. **The `.mind`-migration coordinator-protocol surface (heaviest, PARKED via
+   OQ-5/OQ-6).** Whether the inbox/handoff/human-action machinery rides
+   `queues`+`pubsub`, becomes graph nodes with a thin protocol, or both — the
+   keeper runtime's open question now, recorded here for lineage since it was
+   raised in this file first (§1).
+3. **`.mind` "artifact" vs the `artifacts` crate.** When `artifacts` (typed,
+   methoded landscape citizens — this same unit's other file) is live, do
+   migrated `.mind` work-units *become* artifacts, or sit beside them as plain
+   KG nodes? Leaning "become," per artifacts.md's charter — not locked here.
+4. **Registry storage detail** (§2) — whether a project's published-dashboard
+   discovery needs any project-scoped index at all beyond kg's global registry
+   + `service-lookup`/`surface-schema`; leaning "no new index," not locked.
+5. **`environments`/`cicd`** stay RESERVED/stub per OQ-2/OQ-32 — no
+   `keeper.project`-specific environment design happens in this file.
 
-- **A workspace becomes a project (graph region).** The `.mind` workspace
-  (`manifest.yaml` + `MANIFEST.md` projection + `INTENT.md`) maps to a project
-  node in the KG graph. `manifest.yaml`'s **objectives** and **phases** (with
-  their `status`/`depends_on` DAGs) become graph nodes+edges under the
-  `project-tree` template — schema-locked by KG, so the objective/phase DAG
-  invariants `mind-index validate` enforces today become **KG schema
-  validation with push-back** (a malformed objective graph is rejected at write
-  time, INTENT #50). The generated `MANIFEST.md`/`OPERATOR.md`/`INDEX.md`
-  projections become projects' **surface schema** output — the same
-  "frontmatter is the orchestrator's API, the manifest is a generated
-  projection" discipline, now graph-derived.
-- **`.mind` artifacts become graph nodes with VFS bodies.** Each
-  `artifacts/*.md` (the two-tier INTERMEDIATE/NAMED naming, the frontmatter
-  schema — `id`/`type`/`status`/`consumes`/`supersedes`/`open_questions`/`say`)
-  becomes a project-graph node: **frontmatter → node props (schema-locked),
-  body → a `vfs://` FileRef.** The `consumes`/`supersedes` edges are graph
-  edges — the DAG staleness (`stale-input` when a consumed input's rev moves)
-  that `mind-index` computes today becomes a KG traversal. NOTE the name
-  collision, resolved: a **`.mind` "artifact"** (a work-tracking unit) is
-  distinct from the L6 **`artifacts` crate** (typed *interactable* files); the
-  migrated work-units are graph nodes now and become `artifacts`-crate typed
-  artifacts once that tool exists (see §6).
-- **Tasks are rolled up (the rollup integration).** *"Tasks are rolled up"*
-  (INTENT #87) — a task/artifact's body is a `RollupTarget` projects hands to
-  `rollup` (`projects-rollup`): projects derives the **`ScopeChain`** from the
-  project hierarchy (replacing rollup's v1 caller-passed chain — rollup.md
-  concern 2/§`projects-rollup` already reserves this) and asks rollup to resolve
-  it. No new rollup mechanism — the existing `Resolve`/`Materialize` surface
-  with a projects-supplied scope; all of rollup's invariants (secret-safety,
-  provenance, determinism) hold unchanged.
-- **Coordinator communication protocols migrate onto mesh.** The `.mind`
-  **coordination inbox** (`claim`/`send`/`inbox`, the passive
-  one-coordinator-per-workspace convention), **handoffs**, and **human-actions**
-  become mesh-mediated: the inbox is a natural **`queues`** application
-  (message delivery into a recipient project's inbox) and/or `pubsub` topic;
-  handoffs and human-actions become graph nodes with the same `blocking`/status
-  semantics. This is the one part that is genuinely *migrated infrastructure*,
-  not just re-homed data — flagged as the heaviest design surface for the real
-  pass (the harness `mind-index` tool's behaviors become projects' service
-  verbs).
-- **`worktree ↔ thread ↔ project ↔ environment` linking (cc.md + repo.md,
-  batch 6).** The `.mind` workspace schema binds a git **worktree** and a CC
-  **thread** together (INTENT #67, the "prior art to reuse"); the migration
-  splits ownership by layer. The **thread** half lands as the `cc-projects`
-  edge: the `coordinator_thread_id` takeover mechanism and the CC-thread↔project
-  links become cc's `agent_runs` rows linking threads to projects+environments,
-  with projects the resolution authority (takeover-vs-continue —
-  match/differ/unavailable — preserved as a project-level protocol). The
-  **worktree/branch** half is **repo's** — repo.md concern 2 already reuses the
-  same `.mind` worktree↔thread↔branch schema verbatim and owns `repo-vfs`
-  (`NodeAnchored` worktrees) + `repo-environments` (branch→environment
-  attachment). Projects does not re-own worktrees; it references a project's
-  repo workspace the way it references the thread. NOTE: wave2-plan §3 lists **no
-  `projects-repo` pair** — see open question #7.
+## Anticipated contracts (wave 3, L6)
 
-### 5b. Coordinators — a FIRST-ORDER concept (friction-round 2, INTENT #123; recorded, NOT designed)
+Per INTENT #173c: enough to know the data contract with the lower layers, not
+the internals. `keeper.project` is a **type**, not a service — every contract
+below is "the type's schema/rollup fragment set consumes X," not "an app
+speaks to X over the mesh daemon."
 
-Friction-round 2 elevated **coordinators** from an implementation detail of
-the `.mind` migration (§5) to a first-order concept **requiring a dedicated
-discussion round** before any design. The operator's sketch, verbatim-grade:
+- **`projects/landscape ↔ keeper`** (conceptual seam, not a wire contract —
+  keeper.md, batch 6, authors the runtime this pins against). **Purpose:**
+  `project` is the PRIMARY keeper type (INTENT #150 beat 15); this file
+  defines what a `keeper.project` node needs from the keeper runtime.
+  **Rough shape:** keeper.md's core keeper schema (bundle structure +
+  workspace-attachment structure, schema.md concern 8) is the PARENT
+  `keeper.project` inherits from (single inheritance in the common case; the
+  operator's dual-inheritance case — merging two keeper-type branches — is
+  schema's multiple-inheritance + explicit-conflict-resolution mechanism,
+  unchanged, schema.md concern 2); `keeper.project` supplies only its
+  additive layer (a `contains`/`sub_project` edge affinity, the
+  `.mind`-derived objective/phase/artifact node-type set from §1). The keeper
+  runtime instantiates threads FROM a `keeper.project` node exactly as from
+  any keeper — no project-specific spawn path.
 
-- **Coordinators attach to workspaces; one coordinator per workspace.**
-  Workspaces often attach to worktrees (branches with their own directory).
-- **Workspaces could be pulled out** as their own thing, **built on top of
-  VDB**.
-- "I really only like to talk to coordinators — I don't like talking to
-  individual agents at all." AUI threads = a coordinator with a workspace
-  attached.
-- Coordinators live inside a project on a branch; **the workspace merges
-  into other branches with it**.
-- **Coordinator compaction:** "I should be able to compact the thread and
-  basically lose nothing" — compact anytime, lose nothing.
-- **Coordinator-as-a-SERVICE** is worth considering.
-- The **git + projects + environments + coordinators** interplay is
-  currently "a bunch of disparate things" that must be made elegant
-  together — this elegance problem is itself part of the discussion's
-  charter.
+- **`projects-kg`** (a `keeper.project` node's structure; kg.md is the
+  substrate). **Purpose:** the project-structure graph — nested hierarchy
+  (as ordinary `contains` edges between `keeper.project` nodes, not an
+  app-owned tree), the objective/phase/artifact node types from §1, cross-
+  links to repos/environments. **Rough shape:** `kg-api` verbatim, no
+  projects-authored template SERVICE — the `keeper.project` **schema**
+  (published through `schema`, not authored as a bespoke kg template) carries
+  the node/edge type set (`sub_project`, `workspace`, `artifact`, `task`,
+  `objective`, `phase`, `handoff`, `human_action`; edges `contains`,
+  `depends_on`, `consumes`, `supersedes`, `blocks`) — same content as the
+  wave-2 `project-tree@1` template sketch, now expressed as a `schema`
+  definition instead of a kg-local template, per schema.md concern 9's
+  extraction seam.
 
-Nothing here is designed; this note exists so the coordinators discussion
-starts from the operator's own framing. (INTENT #127's **owners** are
-defined in terms of coordinators — see org.md and overview.md.)
+- **`projects-rollup`** (a `keeper.project` node's bundle; rollup.md concern
+  12 is the substrate). **Purpose:** *"tasks are rolled up"* + the node's
+  bundle. **Rough shape:** targeted rollup pointed at the node — `Rollup
+  (keeper.project_node) → bundle`; the `ScopeChain` is derived by walking
+  `rolls-up-from` edges (rollup.md concern 12 point 1), replacing the wave-2
+  "projects derives the chain from the hierarchy" with the landscape-wide
+  mechanic every node already gets. No project-specific rollup surface.
 
-### 6. `artifacts` dependency (INTENT #51)
+- **`projects-vfs`** (a `keeper.project` node's file bodies; vfs.md /
+  `vfs-content` is the substrate). **Purpose:** source code, dashboard
+  bundles, and artifact bodies pointed at by the node's `vfs://` FileRef
+  props. **Rough shape:** plain kg-mediated FileRef existence-validation
+  (`kg-vfs`) — `keeper.project` never opens a VFS connection itself; it is a
+  schema (field types), not a client.
 
-Operator, verbatim-grade: *"once we migrate to projects, no more files —
-artifacts."* An artifact = a typed, schema'd, **interactable** file (e.g. an
-HFT-strategy artifact run via a versioned controller against a simulator) —
-implying a **script-execution engine, built incrementally**, *"might have to be
-its own standalone tool, really boring and deterministic."* **Projects depends on
-`artifacts`** once it exists (`projects-artifacts`): the migrated work-unit
-graph nodes (§5) become typed `artifacts`-crate artifacts. `artifacts` is a
-co-batched L6 stub (batch 7 creates `components/artifacts.md`); nothing designed
-here.
+- **`projects-vdb`** (databases attached to a project region; vdb.md is the
+  substrate). **Purpose:** databases/stacks attached to a project or its
+  sub-regions (INTENT #43: a project *"can also have file systems, workspaces,
+  databases, and services attached"*). **Rough shape:** unchanged from the
+  wave-2 sketch — VDB-managed databases keyed by `keeper.project` node id (+
+  environment); environment routing is VDB's copy/verify/switch mechanic,
+  inherited. `keeper.project` records the linkage in its schema's fields; VDB
+  owns lifecycle.
 
-## Anticipated contracts (wave 2, stub track)
+- **`cc-projects`** (thread↔`keeper.project`(+environment) linkage; cc.md is
+  the authoring side). **Purpose:** unchanged from §3 — `agent_runs.
+  project_id?`/`environment_id?` validated against `keeper.project` nodes once
+  the keeper runtime is live; `keeper.project` reads cc's per-node usage
+  rollup back (feeding `spend-cc`). **Rough shape:** no new mechanism — cc's
+  existing ledger fields, now resolved against landscape node ids instead of
+  a `projects` app's ids. Contract file name kept (`cc-projects.md`) for
+  continuity; its party on this side is the keeper concept, not an app.
 
-Pairs named only — purpose + rough shape, no schemas. Content lands when projects
-leaves the stub track. I do NOT edit `scaffold/contracts/*`. Existing stubs
-(`projects-vfs`, `projects-mesh`) are refit in place by note; the rest are
-anticipated per wave2-plan §3c.
-
-- **`projects-vfs`** (projects → vfs; existing stub). **Purpose:** projects
-  reads/writes ordinary VFS files for project source, dashboard bundles, and
-  artifact bodies, and reads placement/policy for its topological-map UI. **Rough
-  shape:** projects is a *plain VFS client* — vfs.md's `Read`/`Write` on the
-  `vfs-content` surface plus prefix scans; **no new wire** (vfs.md's
-  storage-side note already pins this). The graph over the files is KG's, not
-  this edge's.
-
-- **`projects-mesh`** (projects ↔ mesh; existing stub). **Purpose:** registration
-  (a `service-lookup` instance), the **centralized registry push**
-  (project/dashboard registrations), and **surface-schema publication** so
-  project dashboards are navigable from the mesh dashboard. **Rough shape:**
-  ordinary `service-lookup` registration + a `projects/` registry keyspace
-  (replicated-kv, flagged) + `surface-schema` output; project dashboards mount
-  schema-driven. No bespoke routing (aggregation never becomes routing —
-  dashboard-serving.md).
-
-- **`projects-kg`** (projects → kg; stub-track). **Purpose:** the
-  project-structure graph — nested hierarchy, cross-links, node→VFS pointers.
-  **Rough shape:** kg's side is `kg-api` **verbatim** plus a projects-authored
-  **`project-tree@1` template** (node types: `project`, `sub_project`,
-  `workspace`, `artifact`, `task`, `objective`, `phase`, `handoff`,
-  `human_action`; edge types: `contains`, `depends_on`, `consumes`,
-  `supersedes`, `blocks`) — kg.md already records projects' half is `kg-api` +
-  this template, so projects starts from a concrete substrate half. Environment
-  routing (local→SQLite / cloud→promoted) is inherited per-graph from KG.
-
-- **`projects-rollup`** (projects → rollup; stub-track). **Purpose:** *"tasks are
-  rolled up"* — projects derives the `ScopeChain` from the project hierarchy and
-  resolves task/artifact bodies via rollup. **Rough shape:** the existing
-  `rollup-mesh` `Resolve`/`Materialize` surface with a **projects-supplied
-  scope** (rollup.md's `projects-rollup` note reserves exactly this); no new
-  mechanism, every rollup invariant unchanged.
-
-- **`projects-vdb`** (projects → vdb; stub-track). **Purpose:** databases
-  attached to projects/environments (INTENT #43: a project *"can also have file
-  systems, workspaces, databases, and services attached"*). **Rough shape:** a
-  project's attached stack databases are VDB-managed databases keyed by
-  project/environment; environment routing (local→SQLite-in-VFS / cloud→promote)
-  is VDB's copy/verify/switch mechanic, inherited — projects records the linkage
-  and resolves ids, VDB owns the database lifecycle. Reconciles with
-  `environments-vdb` (environment routes storage) at the per-pair round.
-
-- **`projects-artifacts`** (projects → artifacts; stub-track). **Purpose:**
-  projects depends on `artifacts` for typed, interactable work-units once that
-  crate exists (§6). **Rough shape:** deferred entirely — `artifacts` is
-  un-designed (co-batched batch-7 stub). Named so the pair exists.
-
-- **`cc-projects`** (cc ↔ projects; stub-track — cc authored the ledger side).
-  **Purpose:** thread↔project(+optional environment) linkage (INTENT #68,
-  cc.md concern 2). **Rough shape:** cc's `agent_runs.project_id?`/
-  `environment_id?` are set at spawn and **validated against projects** once
-  projects leaves the stub track; projects reads cc's per-project agent/usage
-  rollup back (feeding the finance/metadata view, §4). No new mechanism — the
-  fields already live in cc's ledger and `agent-management`. Content deferred.
+- **`projects-artifacts`** (a `keeper.project` node's typed work-units; see
+  `artifacts.md`, this same unit). **Purpose:** migrated `.mind` work-units
+  (§1) becoming typed, methoded artifacts. **Rough shape:** deferred to
+  `artifacts.md`'s own anticipated-contracts section — named here so the pair
+  exists in the graph.
 
 ## Relationships / edges (summary)
 
-Consumes: **kg** (`projects-kg`, structure graph), **vfs** (`projects-vfs`, file
-bodies), **rollup** (`projects-rollup`, task rollup), **vdb** (`projects-vdb`,
-attached databases), **mesh** (`projects-mesh`, registry + surface), **artifacts**
-(`projects-artifacts`, future typed work-units). Party to: **cc**
-(`cc-projects`, thread linkage), **spend** (via `spend-cc`, projects is the
-grouping authority — spend's edge, not projects'). Cross-cutting (consumed, not
-authored): `surface-schema`, `service-lookup`, `pubsub-protocol`,
-`restart-protocol`, and — for the migrated coordinator inbox — `queues-api`.
+Type-level consumption (not service edges): **schema** (`keeper.project`
+inherits the core keeper schema; schema.md concern 8), **kg** (structure,
+`projects-kg`), **rollup** (bundle + task rollup, `projects-rollup`), **vfs**
+(file bodies, `projects-vfs`, via kg-mediated pointers), **vdb** (attached
+databases, `projects-vdb`), **artifacts** (typed work-units,
+`projects-artifacts`). Party to: **cc** (`cc-projects`, thread linkage),
+**spend** (via `spend-cc`, pull-shaped). Cross-cutting (consumed via the
+keeper runtime, not authored here): `surface-schema`, `service-lookup`,
+`pubsub-protocol`, `queues-api` (for the migrated inbox, §1).
 
 ## Nesting
 
-Parent: none (top-level app-crate). Children: none designed this pass (a real
-design pass would decompose into libs: a `registry` lib over the `projects/`
-keyspace, a `graph` lib driving `kg-api` + the `project-tree` template, a
-`workspace` lib for the migrated `.mind` schema, a `surface` lib). Flagged, not
-built.
-
-## Open questions
-
-1. **Coordinator-protocol migration is the heaviest surface** — does the `.mind`
-   inbox/handoff/human-action machinery ride `queues` (message delivery) +
-   `pubsub`, or become project-graph nodes with a thin protocol, or both? The
-   harness `mind-index` tool's verbs (`validate`/`migrate`/`cross`/`claim`/
-   `send`/`inbox`/`regenerate`) all need a substrate home. Deferred to the real
-   pass.
-2. **`.mind` "artifact" vs the `artifacts` crate** — the migrated work-units are
-   graph nodes now; when `artifacts` (typed interactable files) lands, do they
-   *become* artifacts, or does `artifacts` sit beside them? Depends on
-   `artifacts`' un-written design (co-batched batch 7).
-3. **`projects-secrets`?** — secrets.md/INTENT #99 names `projects` among
-   secrets' interfaces, but wave2-plan assigns projects no `projects-secrets`
-   pair. Likely projects attaches secrets to a project/environment via
-   `secrets-environments` rather than a direct edge — flagged for the operator /
-   per-pair round, not assumed.
-4. **Registry storage** — a `projects/` `replicated-kv` keyspace (per the vfs/kg
-   precedent) vs. project registry living entirely in KG. Leaning KV for the
-   cheap-local-enumeration property, but not locked.
-5. **The topological-map UI** (INTENT #43) — a real design problem (schema-driven
-   graph rendering feeding the mesh dashboard) parked with the rest of the stub.
-6. **Coordinators (INTENT #123) — dedicated discussion required.** A
-   first-order concept, not a migration detail: coordinator-per-workspace,
-   workspaces possibly pulled out on top of VDB, coordinator-as-a-service,
-   coordinator compaction (compact anytime, lose nothing), and the
-   git+projects+environments+coordinators elegance problem (see §5b). This
-   supersedes the assumption that §5's coordinator-protocol migration fully
-   covers the concept.
-7. **Missing `projects-repo` pair** — the `.mind` workspace schema projects
-   migrates binds a git worktree (INTENT #67); repo owns the worktree half
-   (repo.md concern 2 reuses the same schema). But wave2-plan §3 names no
-   `projects-repo` contract, only `cc-projects` (thread) and
-   `repo-environments` (branch→env). Does a project reference its repo workspace
-   through an unlisted `projects-repo` edge, purely transitively via the shared
-   worktree↔thread↔branch identity, or via `repo-environments`? Flagged for the
-   operator / per-pair round — not assumed, and not invented here.
+None. `project` is a **type**, not a crate — no `bin/`, no `lib/`, nothing to
+nest. It contributes: a `schema` definition (`keeper.project`), a rollup
+fragment set (its bundle's content shape), and the migrated `.mind` node/edge
+type vocabulary (§1). All three are DATA published into their respective
+tools (schema/rollup/kg), not code.
 
 ## Thoroughness level
 
-**requirements-only** — verbatim intent capture + anticipated contract sketches;
-no design pass, no schemas, no implementation. Layer-6 stub track (INTENT #51):
-"not implementing now."
+**L6 conceptual (INTENT #173c)** — enough to know the data contract with kg,
+schema, rollup, vfs, vdb, cc, and artifacts; no schemas frozen, no
+implementation, no service. The three load-bearing wave-2 ideas (`.mind`
+migration mapping, pushed-dashboard registry, thread/project/environment
+linking) are preserved in substance and re-homed onto the keeper-type
+framing.
