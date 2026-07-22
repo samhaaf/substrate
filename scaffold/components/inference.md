@@ -1,21 +1,29 @@
 # inference
 
-**Status:** WAVE-2 REFIT of the wave-1 `inference.md` (approach-sketched). The
-wave-1 crate boundary, composition root, modality-agnostic name lock, and
-external-contract set are **preserved** and re-affirmed; this pass adds the
-**mesh-era integration** the new substrate demands and supersedes the two places
-wave-1 left open. Grounded in the REAL code (`lib/inference/src/{lib,config}.rs`,
-`bin/inference/src/main.rs`, and the eight child libs `lib/{store,engine,
-scheduler,models,cache,telemetry,benchmark,api}`) and the batch-1..4 neighbor
-designs: `mesh-client.md` (client half of every service protocol),
+**Status:** WAVE-2 REFIT (mesh-era integration) **+ WAVE-3 modality/chassis
+delta**. The wave-1 crate boundary, composition root, modality-agnostic name
+lock, and external-contract set are **preserved** and re-affirmed; wave-2 added
+the mesh integration. **Wave-3 adds two things** and touches nothing else: (1) the
+modality axis becomes REAL — S2T/T2S as inference modalities with a warm-model
+policy and placement-through-the-mesh (INTENT #157/#166 Q12, concern 7, engine.md
+concern 5); and (2) **chassis adoption** — inference now registers via `chassis`
+(the wave-3 daemon-wrapper that absorbed `mesh-client`), so the bring-up
+references below name it. Everything else — the kernel, restart states,
+loopback-only, `db-inference-init`, `GcHandle` — stays. Grounded in the REAL code
+(`lib/inference/src/{lib,config}.rs`, `bin/inference/src/main.rs`, and the eight
+child libs `lib/{store,engine,scheduler,models,cache,telemetry,benchmark,api}`)
+and the neighbor designs: `chassis.md` (the daemon-wrapper / client half of every
+service protocol — bring-up, registration, restart policy, promises, outbox),
 `service-registry.md` (NodeScoped/FleetAlias record model), `completion-router.md`
 (byte-transparent forward + the per-node `inference` registration proposal I
-align with below), `supervision.md` (the 4-level ladder + interruptibility
+align with below + the modality-affinity routing this pass adds),
+`scheduler.md`/`models.md` (the warm-model residency co-design),
+`supervision.md` (the 4-level ladder + interruptibility
 vocabulary), `gc.md` (the `GcHandle` Embedded/Remote seam — inference is THE
 embedded consumer), `db.md` (`db-inference-init` via a `bin/db` subprocess,
 boot-safe, no mesh dependency), `vfs.md` (gc-stays-called-as-tool + the future
 storage-migration path), and `types.md`/`store.md`/`api.md`. INTENT
-#4/#18/#22/#23/#29/#32/#36/#44/#45/#46/#53/#57/#58/#59/#66/#76/#77/#85/#92/#98.
+#4/#18/#22/#23/#29/#32/#36/#44/#45/#46/#53/#57/#58/#59/#66/#76/#77/#85/#92/#98/#156/#157/#166 Q12.
 
 ## Charter
 
@@ -31,10 +39,14 @@ door** (`:3649`), never dialed directly (single-port locality, INTENT #58). It
 owns the **lifecycle and composition** of its subsystems (the init sequence,
 crash recovery, pause/resume, the lossy broadcast event bus, the prompt-hook
 seam) and the node's **participation in the mesh**: self-registration as a
-per-node `inference` instance, embedding `mesh-client`, participating in the
+per-node `inference` instance, embedding `chassis`, participating in the
 supervision restart ladder, publishing its surface schema, and bootstrapping its
 control-plane database via `db` on a fresh node — all **degrading gracefully to
-standalone single-box operation** when no mesh and no `db` are present.
+standalone single-box operation** when no mesh and no `db` are present. Wave-3:
+that mesh participation is now **built on `chassis`** (the daemon-wrapper that
+absorbed `mesh-client`) — inference supplies its surface schema, its restart
+policy, and an exhaustive set of typed contract handlers, and chassis owns the
+socket, registration, reconnect, restart-ladder mechanics, promises, and outbox.
 
 **Boundary — what inference does NOT own.** It does not own **routing/affinity
 across nodes** (that is `mesh.completion-router`; inference is a forwarding
@@ -58,26 +70,34 @@ one-event-bus-fanned-out; shaped-for-maximalist-consumer) are **preserved and
 re-affirmed** and are not re-argued here. The concerns below are the **wave-2
 mesh refit** — each says explicitly where it supersedes wave-1.
 
-### 1. Composition root vs. assembly seam — now with `mesh-client` threaded in
+### 1. Composition root vs. assembly seam — now with `chassis` threaded in
 
 `InferenceService::start` (the real 10-step sequence: open store → recover →
 telemetry → gc → models+sync → cache → engine → scheduler → benchmark loop →
 scheduler loop; then `serve()` binds Axum) is this crate's **private wiring** and
 is explicitly NOT the Scaffolding assembly seam (re-affirmed from wave-1). The
 assembly seam is the mesh **`service-registry`** reached through the embedded
-`mesh-client`. Wave-2 makes the seam concrete by inserting **two boot steps**
+**`chassis`** (wave-3: the daemon-wrapper, absorbing what wave-2 called
+`mesh-client`). Wave-2 makes the seam concrete by inserting **two boot steps**
 around the existing sequence, both **skippable for standalone**:
 
 - **Step 0 (pre-store, boot-safe):** `db-inference-init` — a `bin/db` CLI
   subprocess bootstraps the node's **control-plane `ops` database** (concern 5).
   No mesh dependency, so it is safe before the daemon relays.
-- **Step 11 (post-wiring, mesh-gated):** construct the `MeshClient` (one
-  persistent WS to local `:3649`), **register** the per-node `inference` instance
-  (concern 2), publish the **surface schema** (concern 6), start the
-  **interruptibility feed** + **restart-participant** callback (concern 4), and
-  hand `api` a **pubsub publish handle** for the event bus (concern 3). If the
-  local daemon is unreachable, this step is skipped with a warning and the node
-  runs **standalone** — every existing in-process path is unchanged.
+- **Step 11 (post-wiring, mesh-gated):** build the **`chassis`** —
+  `Chassis::builder("inference", version!()).requires([dep("db", …)])
+  .surface(inference_surface_schema()).restart_policy(InferenceRestartPolicy)
+  .serve::<InferenceContracts>(handlers)` — which opens the one persistent WS to
+  local `:3649`, **registers** the per-node `inference` instance (concern 2),
+  publishes the **surface schema** (concern 6), starts the **interruptibility
+  feed** + the **restart-policy callback** (concern 4), and hands `api` a
+  **pub/sub publish handle** for the event bus (concern 3). `handlers` is the
+  exhaustive typed set chassis's generated `Contract` trait forces inference to
+  cover at compile time; `InferenceRestartPolicy` is the wind-down *policy*
+  inference supplies (chassis owns the ladder *mechanics*). If the local daemon
+  is unreachable, chassis enters its reconnect loop and the node runs
+  **standalone** — every existing in-process path is unchanged; the warm-model
+  and provisioning paths (concern 7) are unaffected by mesh presence.
 
 The mode (`mesh` vs `standalone`) is decided **once** at start and threaded down;
 no child call site branches on it (the `GcHandle` enum, concern 6, is the one
@@ -94,7 +114,7 @@ registry.md concern 5 as-written stores only the synthetic `inference`
 align with completion-router's reconciliation and confirm the inference side of
 it:**
 
-- At Step 11 each inference daemon **self-registers** via `mesh-client`'s
+- At Step 11 each inference daemon **self-registers** via `chassis`'s
   `service-lookup` client half:
   `Register { slug: "inference", node, endpoint: {http, 127.0.0.1, <bound-port>,
   health_path: "/health"}, addressing: NodeScoped, ttl, meta: ServiceMeta{
@@ -119,15 +139,15 @@ it:**
   substrate-sourced, no tailscale loop in the router. I recommend the primary
   (register `inference` NodeScoped) as the boring, single-keyspace answer.
 
-`mesh-client` runs the lease/heartbeat/tombstone lifecycle and **re-announces on
-every reconnect** (mesh-client concern 4/5) — inference authors its registration
+`chassis` runs the lease/heartbeat/tombstone lifecycle and **re-announces on
+every reconnect** (chassis concern 8) — inference authors its registration
 once and never hand-rolls reconnect. A crash simply lets the lease expire →
 tombstone → self-heal; a restart re-registers under a fresh `generation`
 (supervision/zombie-killing reads it).
 
-### 3. `mesh-client` embedded — one socket; the event bus becomes pub/sub
+### 3. `chassis` embedded — one socket; the event bus becomes pub/sub
 
-Inference compiles in `lib/mesh-client` (a shared-lib, the blessed compiled-in
+Inference compiles in `lib/chassis` (a shared-lib, the blessed compiled-in
 exception — INTENT #45) and holds **one** persistent WS to `127.0.0.1:3649`.
 Everything mesh-facing multiplexes over it (register/resolve/heartbeat, pub/sub,
 restart frames, surface-schema). The wave-1 "one event bus fanned out per node"
@@ -137,7 +157,7 @@ is preserved and **re-plumbed onto `pubsub-protocol`**:
   (capacity 256, **lossy** for slow consumers — unchanged real code). The parent
   threads **both** a `broadcast::Receiver` (for the local WS
   `/v1/completions/:id/stream` and any in-process subscriber) **and** the
-  `mesh-client` **publish handle** into `api`.
+  `chassis` **publish handle** into `api`.
 - `api` bridges the bus to the `inference-events` contract (api-owned): each
   `LifecycleEvent` is published as a typed event over `pubsub-protocol` on topic
   `inference.<node_id>.*` (completion started/finished, model loaded/evicted,
@@ -155,7 +175,9 @@ the local daemon, not a bespoke socket the observability plane dials.
 ### 4. Interruptibility states + the 4-level restart ladder — made CONCRETE
 
 Inference participates in the LOCKED two-way `restart-protocol` (INTENT #76/#77;
-supervision.md is the daemon side, mesh-client the client callback). The refit's
+supervision.md is the daemon side, `chassis`'s `RestartPolicy` seam is the client
+callback — inference supplies `InferenceRestartPolicy`, chassis owns the ladder
+mechanics, chassis concern 5). The refit's
 real deliverable is defining inference's **interruptibility states** and what each
 ladder rung *does* in terms of the real subsystems. The vocabulary is
 `types::restart::Interruptibility` (`Idle` / `Interruptible` /
@@ -271,22 +293,83 @@ embedded consumer**. The refit (per gc.md concern 2):
   that gets inference onto the single per-node store today and makes the VFS
   future a no-op at inference's call sites (they already speak `GcApi`).
 
-### 7. Modality-agnostic charter — the `InferenceBackend` seam is the modality axis (INTENT #18)
+### 7. Modality axis + warm-model policy + placement through the mesh (INTENT #18/#157/#166 Q12)
 
-The name lock is a **structural commitment**: new modalities extend this crate.
-The concrete seam that makes that true is `engine`'s **`InferenceBackend` trait**
-(engine.md) — today a llama-server process manager for text generation; a future
-text-to-image backend implements the *same* trait (auto-provisioned per model,
-INTENT #4 — no pre-installed runtime), scheduled by the *same* scheduler, stored
-by the *same* store, served by the *same* `/v1/` surface with **additive**
-request/response shapes (a modality tag on `CompletionRequest`; image/video result
-blobs in the existing `results` store module). The design requirement this pass
-records: **do not special-case text** in the composition root, the store schema,
-or the `/v1/` envelope in a way that would force a sibling crate for the next
-modality. The event bus (`LifecycleEvent`), the kernel (per-model performance),
-and the GC-managed weights directory are all modality-neutral already. This is a
-"keep the door open" concern, not new build — but it is the reason the crate is
-named as it is, so it is stated so a filler does not bake text-only assumptions in.
+The name lock is a **structural commitment made concrete this wave.** #166 Q12
+settles that **S2T (speech-to-text) and T2S (text-to-speech) are inference
+MODALITIES**, not standalone always-on services; the ML-style naming is LOCKED
+(S2T/T2S, never STT/TTS), and the modality axis is now real and populated: **T2T
+today, S2T/T2S next, TI2T future.** The *seam* mechanics are engine's (the
+`Modality` input→output pairing, the per-runtime `BackendProvisioner` for
+whisper.cpp / the TTS engine, the media-typed request/result — engine.md concern
+5). The four *node-and-fleet* consequences are this file's:
+
+**(a) A modality is a node capability the fleet routes by.** A backend declares
+its `Modality`; inference advertises the modalities a node can serve in its
+`NodeCapabilities` (`modalities_available: Vec<Modality>`, additive — Proposed
+contracts below), alongside `models_available` (concern 2). The completion-router
+routes a modality-tagged request to a node that advertises that modality **exactly
+as it already routes by model affinity** (its Tier-2 affinity) — modality
+capability is one more affinity axis, **not** a new routing plane. This is the
+**boring, no-authority placement path**: the authority-node discussion #157 raised
+is PARKED (ledger OQ-1); #163's no-central-node alternative is the standing
+direction. Inference therefore threads **no** authority dependency — placement is
+the router's existing scheduling call over the substrate the mesh already carries.
+
+**(b) Warm-model policy is the "always-on" answer (#166 Q12's warm-model option).**
+#157 left open whether S2T/T2S are "always-on mesh services"; Q12 answers with a
+**warm-model policy** instead: a modality is kept **resident by config**.
+Inference's `substrate.toml` gains a **`warm` set** — models (a whisper S2T model,
+a TTS model, or any T2T model) the composition root **pre-loads at boot and pins
+resident**: the scheduler never swaps them out (scheduler.md's swap logic yields
+to a warm pin) and `models` locks them **never-evict** (models.md concern 4's
+lock-while-resident, here made permanent by config rather than by live use). Warm
+= ready with **zero load latency** — the property interactive speech needs (you
+cannot wait for a multi-GB whisper weight to `mmap` on each utterance). This is
+how a modality becomes "always on" **without** a standalone always-on service: an
+inference modality with a resident-by-config pin, served through the same `/v1/`
+surface, scheduled by the same scheduler. Warm residency is a first-class
+scheduler input **flagged for scheduler/models co-design** (a warm model bypasses
+`DebouncedSwapEvaluator` eviction and is loaded at boot); until wired, a `warm`
+entry is simply the model loaded first and never chosen for eviction.
+
+**(c) Placement is hardware-constrained — the Pi-can't-run-S2T worked example
+(#157).** Because a warm model permanently occupies a slot + VRAM, **which** node
+keeps a modality warm is a hardware decision, and #157's constraint is exact: a
+walk-along **Pi cannot host a warm whisper model** (no accelerator, too little
+RAM), so it **never advertises S2T** in its `NodeCapabilities` and never gets a
+warm S2T pin. When the Pi's operator speaks, the Pi's AUI issues an S2T request
+that — under single-port locality (concern 10) — leaves the Pi through its
+**local mesh daemon**, and the completion-router places it on a node that *does*
+advertise a warm S2T modality (a desktop/laptop). "Hardware constraints mean
+placement decisions go through [the mesh]" (#157) resolves to exactly this: the
+router, sourcing modality capability from the substrate, routes to a capable node
+— no authority node, no bespoke placement service.
+
+**(d) The AUI use case grounds it — the operator's own harness needs S2T/T2S from
+the mesh.** The concrete v1 consumer is the operator's AUI (`aui-client.md`, batch
+6): a mostly-interactive client that turns the operator's speech into text (S2T)
+and speaks results back (T2S), obtaining **both from the mesh as inference
+modalities.** An `aui-client` issues a modality-tagged completion (S2T with an
+audio input blob, or T2S with text) over the standard `v1-completion-api` front
+door (`:3649`), byte-transparently forwarded by the completion-router to a node
+holding the warm modality. **No new contract is required** — S2T/T2S ride the
+existing `/v1/completions` surface with a **modality tag on the request** (concern
+8's mesh-exposed class); `aui-client.md` (batch 6) owns the client seam, and its
+"S2T placement / warm-model" open item resolves to this design. This is the
+dogfooding case: the OS serves its own operator's speech through its own inference
+plane.
+
+**Seam-only, not built this wave.** Everything above pins seams (the
+`modalities_available` capability, the `warm` config set, the router's
+modality-affinity flag, the aui-client edge). No S2T/T2S backend is implemented
+this pass; engine.md concern 5 keeps the trait ready so building them is additive.
+The event bus (`InferenceEvent`), the kernel (per-model performance —
+modality-neutral already), the store schema, and the GC-managed weights directory
+are all modality-neutral; **do not special-case text** in the composition root,
+the store, or the `/v1/` envelope in a way that would force a sibling crate. The
+one net-new build is the whisper.cpp / TTS-engine provisioning tuple (engine.md
+concern 5d).
 
 ### 8. Which `/v1/` routes are mesh-exposed vs. internal-only
 
@@ -361,32 +444,39 @@ boot/registration path; the router rides mesh-core's node-to-node data plane):
   authored: scaffold/contracts/db-inference-init.md)
 - **inference (each daemon) ↔ mesh.service-registry** via `service-lookup` —
   **PARENT-owned participation**: registers the per-node `inference` NodeScoped
-  instance via `mesh-client` (concern 2). Client half is `mesh-client`; I propose
-  the inference-side Registration shape below. (see
+  instance via `chassis` (concern 2), now advertising `modalities_available`
+  alongside `models_available` (concern 7a; Proposed contracts below). Client half
+  is `chassis`; I propose the inference-side Registration shape below. (see
   scaffold/contracts/service-lookup.md)
+- **aui-client → inference (api)** via `v1-completion-api` — the operator's AUI
+  obtains S2T/T2S from the mesh as modality-tagged completions, byte-transparently
+  forwarded by completion-router to a node holding the warm modality (concern 7d).
+  No new contract — a modality tag on the existing `/v1/completions` request;
+  `aui-client.md` (batch 6) owns the client seam. (see
+  scaffold/contracts/v1-completion-api.md)
 - **{models, cache, engine} → gc** via `gc-managed-dirs` — the children's in-process
   edge, now expressed through the parent-selected `GcHandle` (Embedded/Remote;
   concern 6). Owned by the children + `gc`. (see
   scaffold/contracts/gc-managed-dirs.md)
 
 Cross-cutting mesh protocols (surface-schema-style, authored by
-`mesh-client`/`supervision`/`pubsub-relay`; inference is a **consuming party** —
+`chassis`/`supervision`/`pubsub-relay`; inference is a **consuming party** —
 I define its concrete participation, do not re-author the wire):
 
 - **every service ↔ mesh** via `restart-protocol` — inference's concrete
-  interruptibility mapping + ladder behavior (concern 4). Client half `mesh-client`,
-  daemon side `supervision`. (participation note below)
+  interruptibility mapping + ladder behavior (concern 4). Client half `chassis`
+  (the `RestartPolicy` seam), daemon side `supervision`. (participation note below)
 - **every service ↔ mesh** via `pubsub-protocol` — the envelope the event bus and
   all mesh frames ride (concern 3). Authored by `pubsub-relay`/`types`.
 - **every service → mesh** via `surface-schema` — inference publishes its boring
   surface (completions table, models, system state, kernel curve + the interaction
   calls) for schema-driven dashboard rendering (INTENT #46, concern 6). Assembled
-  by `api` from its route table, published + reconnect-replayed by `mesh-client`.
+  by `api` from its route table, published + reconnect-replayed by `chassis`.
 
 Internal-lib seams (compiled-in, NOT contract edges — INTENT #29/#45): the eight
 children interconnect via `store-access`, `engine-exec`, `system-state`,
 `model-ensure`, `kv-cache`, `benchmark-collections`, `api-dispatch`, and
-`kernel-confidence` (each child's file); the parent compiles in `mesh-client`
+`kernel-confidence` (each child's file); the parent compiles in `chassis`
 (the mesh handle) and `substrate-types` (shared vocabulary).
 
 ## Nesting
@@ -399,7 +489,7 @@ parent/child structure lives here + `overview.md`, not the directory layout.
 ## Thoroughness level
 
 **implementation-ready** for the refit's mesh integration: the two-boot-step
-`mesh-client` insertion (concern 1), the per-node NodeScoped `inference`
+`chassis` insertion (concern 1), the per-node NodeScoped `inference`
 registration + the FleetAlias-as-policy alignment (concern 2), the event-bus →
 pub/sub re-plumb (concern 3), the concrete interruptibility state table + the
 four ladder rungs mapped onto real subsystems (`pause_execution`/drain/KV-save/
@@ -407,19 +497,24 @@ four ladder rungs mapped onto real subsystems (`pause_execution`/drain/KV-save/
 distinct from store's schema (concern 5), the `GcService`→`GcHandle` migration
 (concern 6), the mesh-exposed-vs-internal route split (concern 8), and
 loopback-`:8420`-through-`:3649` (concern 10) are all decided and specified
-against real code + frozen neighbor seams. **approach-sketched** for: the
-modality-agnostic "keep the door open" requirement (concern 7 — a real seam
-`engine::InferenceBackend`, but no second modality is built this wave) and the
-light-provenance column threading (concern 9 — a small store addition, direction
-recorded).
+against real code + frozen neighbor seams. **implementation-ready for the wave-3
+modality seams** (concern 7): the `modalities_available` capability advertisement,
+the warm-model `warm` config set + never-evict pin, and the mesh-affinity
+placement path (Pi-can't-run-S2T) are decided against engine.md concern 5 and the
+router's existing model-affinity plane. **approach-sketched** for: the S2T/T2S
+backends themselves (concern 7 / engine.md concern 5 — the seam is ready, no
+`WhisperBackend`/`PiperBackend` is built this wave; the warm-residency wiring is a
+flagged scheduler/models co-design) and the light-provenance column threading
+(concern 9 — a small store addition, direction recorded).
 
 ## Assigned design-depth
 
 **Opus**, single Component-Designer pass (this file), per the wave2-plan tier
 (`inference` = Opus), grounded in the REAL `lib/inference`/`bin/inference` +
-`lib/config` source and every child lib, and the batch-1..4 neighbor designs
-(`mesh-client`, `service-registry`, `completion-router`, `supervision`, `gc`,
-`db`, `vfs`, `types`, `store`, `api`).
+`lib/config` source and every child lib, the batch-1..4 neighbor designs
+(`service-registry`, `completion-router`, `supervision`, `gc`, `db`, `vfs`,
+`types`, `store`, `api`), and the wave-3 batch-1/5 designs (`chassis` — absorbing
+`mesh-client`; `engine`/`scheduler`/`models` — the modality + warm-model seams).
 
 ## Suggested fill-model
 
@@ -434,9 +529,11 @@ every mesh call must degrade to the existing in-process path when no daemon is
 present, or single-box dev breaks); (3) the **`db-inference-init` subprocess boot
 ordering** (concern 5 — it must be idempotent, boot-safe, and never block a
 standalone start when `db` is absent). The event-bus re-plumb, registration, and
-route-split are near-transcription. Sequence **after** `mesh-client`,
+route-split are near-transcription. Sequence **after** `chassis`,
 `service-registry`, `gc`, and `db` are filled (it rides all four) and
-**alongside** its own children (`api`/`store`/`engine`).
+**alongside** its own children (`api`/`store`/`engine`). The wave-3 modality
+concern (7) is seam-only and rides engine.md concern 5 — fill it alongside
+`engine`; the warm-model residency wiring waits on the scheduler/models co-design.
 
 ---
 
@@ -451,4 +548,39 @@ formerly in this section are superseded by the authored contracts.
 - `restart-protocol` (mesh ↔ inference) — participation: the concern-4 interruptibility mapping AS SUPERSEDED at harmonization (benchmark sweeps report `Idle`, not `CriticalSection` — scheduler.md concern 3; only model swap / KV save-restore are critical). Applied provisionally, pending the restart philosophy (friction-round 2, INTENT #119 — see concern 4). → `scaffold/contracts/restart-protocol.md`
 
 Also a party to (authored elsewhere / cross-cutting): `inference-events`, `llm-calls`, `node-state-poll`, `v1-completion-api` — see `scaffold/contracts/`.
+
+---
+
+## Proposed contracts (wave 3)
+
+Two additive, non-decisive proposals the wave-3 modality work surfaces. The
+sibling units own the authored surfaces (`service-registry`/`types` and
+`completion-router`); inference proposes only the shapes it is the source of.
+
+### P1. `modalities_available` on `NodeCapabilities` → into `types` / `service-lookup` (INTENT #166 Q12)
+
+Inference advertises, per node, which inference modalities it can serve, so the
+completion-router can place a modality-tagged request on a capable node
+(concern 7a/c). Additive, mirrors the existing `models_available`:
+
+```rust
+// on NodeCapabilities (types) — additive
+modalities_available: Vec<Modality>,   // Modality = the engine.md concern-5 input→output pairing
+```
+
+- **Reconciliation flags:** `Modality` is engine.md's proposed `types` addition
+  (P1 there); a node that runs only T2T advertises `[Modality::T2T]`; a Pi with no
+  S2T-capable hardware simply omits S2T (the placement constraint, concern 7c). The
+  router treats this as one more **affinity axis** on its existing model-affinity
+  plane — **no new routing plane, no authority dependency** (OQ-1 stays PARKED).
+
+### P2. Warm-model residency as inference config (not a wire contract) (INTENT #166 Q12)
+
+The `warm` set (concern 7b) is **inference-local config**, not a contract — but it
+is the source of two flagged co-design obligations recorded here so the seams
+carry: (a) the **scheduler** must treat a `warm` model as never-swapped (pinned
+resident, bypassing `DebouncedSwapEvaluator` eviction — scheduler.md); (b)
+**models** must lock a `warm` model **never-evict** for the process lifetime
+(models.md concern 4's lock-while-resident, made permanent by config). No new
+contract file; flagged for the scheduler/models fill.
 

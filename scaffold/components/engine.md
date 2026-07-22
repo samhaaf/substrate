@@ -11,10 +11,12 @@ carried-forward core — `ExecutionEngine`, the `InferenceBackend` trait +
 long-standing "broadcast channel for token events" gap — a per-token streaming
 seam designed against the `pubsub-protocol` envelope so the dashboard and the
 completion-router can finally see tokens; (3) the multi-modality seam moves the
-`InferenceBackend` trait needs **now** so image/video backends slot in later
-without a signature refactor (INTENT #18/#38); and (4) provisioner graceful
-degradation when the node is offline from the tailnet. **Nesting:** internal lib
-of `inference` (`lib/engine`), never a standalone crate (INTENT #22/#54).
+`InferenceBackend` trait needs **now** so the concrete next modalities — **S2T
+(whisper.cpp) and T2S (a TTS engine)**, the #166 Q12 answer — slot in later
+without a signature refactor (INTENT #18/#38/#157/#166 Q12); and (4) provisioner
+graceful degradation when the node is offline from the tailnet. **Nesting:**
+internal lib of `inference` (`lib/engine`), never a standalone crate (INTENT
+#22/#54).
 
 ## Charter
 
@@ -32,11 +34,13 @@ does not own model-weight download or eviction (that is `models`, over
 over `store-access` — engine only marks completion terminal state + inserts
 result blobs); and it does not speak mesh directly — the `/v1/` surface,
 pub/sub relay, node registration, and restart-protocol participation are
-`inference`'s (via `api` + `mesh-client`). Engine emits **structured domain
+`inference`'s (via `api` + `chassis`, the wave-3 daemon-wrapper). Engine emits **structured domain
 events onto an in-process broadcast bus**; translating those to
 `pubsub-protocol` topics and to the `inference-events` contract is `api`'s job.
 The engine stays modality-agnostic on purpose (INTENT #18): the same crate hosts
-text today and image/video generation backends later.
+**T2T today and S2T/T2S next** (INTENT #166 Q12) — image/video/TI2T later — with
+the modality axis expressed as an `InferenceBackend` trait seam, never a sibling
+crate.
 
 ## Primary design concerns
 
@@ -167,55 +171,98 @@ with **one generalized in-process bus and a tee**:
   channel for token events" the design has owed since wave-1, now grounded on the
   frozen envelope.
 
-### 5. Multi-modality seams the `InferenceBackend` trait needs NOW (INTENT #18)
+### 5. The modality axis is REAL — S2T/T2S are the concrete next backends (INTENT #18/#157/#166 Q12)
 
-The operator kept the crate named `inference` precisely so text-to-image /
-text-to-video / image-to-image extend *this* crate and its `InferenceBackend`
-seam rather than spinning out sibling apps. Today's trait is text-shaped in three
-places that would each force a **signature refactor** later (the expensive kind
-INTENT #38 forbids). The cheap fix is to make three additive moves **now**, while
-only `LlamaBackend` (+ text stubs) exist, and implement nothing image/video:
+The operator kept the crate named `inference` precisely so new modalities extend
+*this* crate and its `InferenceBackend` seam rather than spinning out sibling
+apps, and **#166 Q12 makes that concrete: S2T (speech-to-text) and T2S
+(text-to-speech) are inference MODALITIES**, not standalone always-on services.
+The ML-style naming is **LOCKED** — S2T/T2S, never STT/TTS — and it names the
+seam's true shape: a modality is an **input→output media pairing**, and the axis
+is populated **T2T today, S2T/T2S next, TI2T (text+image-to-text) future**.
+Wave-2's image/video sketch was the right instinct; wave-3 pins it to the two
+backends we will actually build next. The trait moves below are still additive
+and still land **now** while only `LlamaBackend` (+ T2T stubs) exists, so S2T/T2S
+slot in later with no signature refactor (the expensive kind INTENT #38 forbids).
 
-- **(a) Get the llama-specific payload OUT of the trait signature.**
-  `run_completion(&self, id, payload: &CompletionPayload, token_tx)` couples the
-  trait to llama-server's wire shape (`CompletionPayload{prompt, n_predict, …}`).
-  Change the trait to take a **modality-neutral request** (the `store::CompletionRow`
-  it already has, or a small `types` `GenerationRequest`), and let each backend
-  build its **own** internal wire payload — `CompletionPayload` becomes strictly
-  `LlamaBackend`-private (it already lives in `backend.rs`). Renaming the method
-  `run_generation` is optional polish; moving the payload off the signature is
-  the load-bearing, refactor-avoiding change.
-- **(b) Generalize the streamed item beyond `Token`.** Image/video emit
-  *progress* (denoise step k/N, frame f) and *artifacts*, not text tokens. Make
-  the streamed event type an additive enum — text backends emit `Token{text}`;
-  future backends emit `Progress{done, total}` and `Artifact{ref}` — with a
-  `#[serde(other)]` catch-all so an older consumer tolerates a new variant
-  (types guardrail 4). `StreamEvent` lives in `types`; this is a flagged,
-  additive `types` change, reconciled in that pass.
-- **(c) Result carries outputs, not just text.** `CompletionResult.text:
-  Option<String>` generalizes to `outputs: Vec<Output>` where `Output =
-  Text(String) | Artifact(VfsBlobRef)` (additive; text = one `Text`). Image/video
-  outputs are **written to VFS as immutable blobs** and referenced by content
-  hash — the same VFS-artifact story as concern 2b, closing the loop: generation
-  *inputs* (weights, builds) and *outputs* (artifacts) both live in VFS.
-- **(d) A capability descriptor on the trait.** Add `fn modality(&self) ->
-  Modality` (Text | Image | Video | Audio) and keep `max_concurrent_completions`
-  (already modality-agnostic — `SlotTracker` is a pure admission counter, needs
-  no change; VRAM-bound image gen accounts slots identically). This lets
-  `scheduler`/`api` route by modality later without touching engine internals.
+**A modality is an input→output media pairing — the capability descriptor carries
+both (this supersedes wave-2's single output tag).** Wave-2 proposed `fn
+modality(&self) -> Modality` with `Modality = Text | Image | Video | Audio` — an
+*output*-shaped tag that cannot even express S2T (audio-in, text-out). Wave-3
+corrects it to the ML pairing the locked naming implies:
 
-`Vllm`/`Mlx` stubs stay **Text** modality; `RemoteApiBackend` remains the
-proxy-to-external seam (a legitimate future *fallback* backend when local hardware
-is unavailable — distinct from cc, which is external Claude-Code and explicitly
-NOT routed to inference, INTENT #40). **Implement none of image/video now** —
-this concern only pins the seam so later is additive.
+```rust
+enum MediaType { Text, Audio, Image, Video }         // the media a request/result carries
+struct Modality { input: SmallVec<[MediaType; 2]>, output: MediaType }  // S2T = {[Audio] -> Text}
+// canonical constructors: Modality::T2T, ::S2T, ::T2S, ::TI2T (= {[Text,Image] -> Text})
+fn modality(&self) -> Modality;                      // on InferenceBackend
+```
+
+`LlamaBackend`/`Vllm`/`Mlx` are `T2T`; `WhisperBackend` is `S2T`; a TTS backend
+(`PiperBackend` / a GGUF-TTS runtime) is `T2S`; TI2T is a future vision-LLM
+backend. This pairing is the axis the router and scheduler route *by*
+(inference.md concern 7); nothing else in the trait changes shape from the wave-2
+moves — which are preserved and re-affirmed, now load-bearing for real backends:
+
+- **(a) Modality-neutral request (preserved; now load-bearing for S2T).**
+  `run_generation(&self, id, req: &GenerationRequest, sink)` takes the
+  modality-neutral request and each backend builds its **own** wire payload
+  (`CompletionPayload{prompt,…}` stays strictly `LlamaBackend`-private). S2T's
+  input is not a prompt string — it is an **audio blob** (a `VfsBlobRef` or inline
+  bytes on `GenerationRequest`); T2S's input is text. The wave-2 move that got the
+  llama payload off the signature is *exactly* what lets an audio-in request use
+  the same method, costing nothing to keep and validating the instinct.
+- **(b) Streamed item stays additive (preserved).** S2T streams partial
+  *transcript tokens* (it emits `Token{text}` like T2T — a happy alignment); T2S
+  streams audio *progress* and a terminal artifact. The additive `StreamEvent`
+  enum (`Token` / `Progress{done,total}` / `Artifact{ref}`, `#[serde(other)]`
+  catch-all — types guardrail 4) covers all three unchanged; flagged `types`
+  addition, reconciled in that pass.
+- **(c) Result carries outputs, not just text (preserved).** `outputs: Vec<Output>`
+  where `Output = Text(String) | Artifact(VfsBlobRef)`: S2T returns one `Text`;
+  T2S returns one `Artifact` — a synthesized-audio blob written to VFS as an
+  immutable, content-addressed artifact (the same VFS-artifact story as concern
+  2b). Generation *inputs* (weights, builds, and now audio-in blobs) and *outputs*
+  (transcripts, synthesized audio) all live in VFS — the loop closes.
+- **(d) Provisioning is now PER-MODALITY — `BackendProvisioner` generalizes beyond
+  llama.cpp.** This is the one genuinely new build S2T/T2S require. Today the
+  provisioner auto-fetches the exact **llama.cpp** build a T2T model needs (INTENT
+  #4 — no pre-installed runtime). S2T needs a **whisper.cpp** build; T2S needs a
+  **TTS-engine** build (piper or a GGUF-TTS runtime). Wave-3 makes the provisioner
+  **runtime-parameterized**: each `InferenceBackend` declares the upstream runtime
+  it provisions —
+
+  ```rust
+  fn runtime(&self) -> RuntimeSpec;   // { repo, asset_matcher, version_source } — llama.cpp | whisper.cpp | piper
+  ```
+
+  — and the entire existing provisioning machinery works **unchanged, keyed by
+  `(runtime, version, platform)` instead of `(llama-version, platform)`**: the
+  local-disk cache (concern 3 rung 1), the offline fallback ladder (concern 3),
+  the fleet-wide VFS build cache + gc-managed build dir (concern 2). whisper.cpp
+  and the TTS engine are simply two more `(runtime,…)` tuples in the same
+  content-addressed `vfs://backends/<runtime>-<version>-<platform>/` cache. New
+  *data*, zero new *mechanism* — the payoff of making S2T/T2S modalities of this
+  crate rather than sibling apps.
+
+`SlotTracker` needs no change — it is a pure admission counter; a VRAM-bound S2T
+model accounts slots identically. `Vllm`/`Mlx` stay `T2T`; `RemoteApiBackend`
+remains the proxy-to-external seam (a future *fallback* when local hardware can't
+host a modality — distinct from cc, INTENT #40). **A warm (resident-by-config)
+modality is just a backend the composition root pins loaded and the scheduler
+never swaps out** — no new engine mechanic (the `swap_model`/`load_model` path is
+unchanged); the warm-model *policy* lives in inference.md concern 7. **No S2T/T2S
+code is built this wave** — this concern pins the seam (the `Modality` pairing,
+the per-runtime provisioner, the media-typed request/result) so that adding
+`WhisperBackend`/`PiperBackend` next is purely additive: a new trait impl, a new
+`(runtime,…)` tuple, zero signature or composition-root change.
 
 ### 6. KV-cache save/restore finally has a trigger — the restart save-window
 
 The charter's "KV-cache save/restore hooks" (`LlamaClient::slot_action(save|
 restore)`) are wired but uncalled. Wave-2 gives them a concrete driver: the
 `restart-protocol` **L3 SaveWindow** (~10s, INTENT #77). When `inference` (via
-`mesh-client`) receives an L3 restart signal, it drives the engine to **save the
+`chassis`) receives an L3 restart signal, it drives the engine to **save the
 resident slots' KV state** through the `kv-cache` seam before yielding, so an
 in-flight prefix survives the process replacement and is restored on the new
 build (concern 5 of `cache`). `drain(timeout)` and `cancel_all_running` are the
@@ -300,9 +347,13 @@ are designed to implementation depth: the `GcHandle` swap and `register_and_lock
 use (concern 2a); the VFS build-cache tier + `engine-vfs` shape (2b); the
 offline fallback ladder + the `BackendUnavailableOffline` catchable error (3);
 the `InferenceEvent` bus generalization + the `submit`-interposed tee + the
-lossy/reliable split + topic mapping (4); the three additive trait moves + the
-capability descriptor (5); and the restart-save-window trigger for `kv-cache`
-(6). **Genuinely downstream / flagged:** (a) `engine-vfs` is a newly-surfaced
+lossy/reliable split + topic mapping (4); the modality seam made concrete — the
+`Modality` input→output pairing, the media-typed request/result, and the
+per-runtime `BackendProvisioner` for S2T (whisper.cpp) / T2S (a TTS engine) (5);
+and the restart-save-window trigger for `kv-cache` (6). **approach-sketched** for
+the S2T/T2S backends themselves — the *seam* is implementation-ready but no
+`WhisperBackend`/`PiperBackend` is built this wave (additive when it lands).
+**Genuinely downstream / flagged:** (a) `engine-vfs` is a newly-surfaced
 pair reconciled with `vfs`/`models` in the per-pair round; (b) the `types`
 additions for `StreamEvent` generalization + `Output`/`Modality` are proposed
 here, authored in the concurrent `types` pass; (c) the exact `InferenceEvent`
@@ -314,15 +365,16 @@ guarantees the router's five kinds.
 **Opus**, single Component-Designer pass (this file), grounded in the full real
 source (`lib/engine/src/{lib,backend,process,client,slot,provision}.rs`) and the
 batch-1/2/3 designs it must not contradict: `types.md` (Envelope/Event/
-provenance/node/restart + guardrail 4), `mesh-client.md` (restart-protocol client
-half, pubsub client half), `pubsub-relay.md` (envelope + lossy contract + the
+provenance/node/restart + guardrail 4), `chassis.md` (the wave-3 daemon-wrapper
+that absorbed `mesh-client` — restart-protocol client half, pubsub client half),
+`pubsub-relay.md` (envelope + lossy contract + the
 `inference.*` topic taxonomy + the per-completion leaf), `completion-router.md`
 (the five load-affecting event kinds it consumes; byte-transparent forward vs the
 lossy event tee), `gc.md` (`GcHandle` Embedded/Remote, `register_and_lock`,
 per-node single store), `vfs.md` (Immutable content-addressed artifacts,
 `vfs-content` pull, access-can-migrate), and `supervision.md` (the 4-level ladder,
 interruptibility), plus the batch-5 siblings `cache.md`/`store.md`/`api.md`/
-`inference.md`. INTENT #4/#18/#28/#33/#38/#40/#77/#84.
+`inference.md`. INTENT #4/#18/#28/#33/#38/#40/#77/#84/#157/#166 Q12.
 
 ## Suggested fill-model
 
@@ -361,4 +413,44 @@ Component-side notes:
 - `engine-vfs` (engine → vfs) — the fleet llama.cpp build cache (INTENT #33):
   proposed edge, but NO contract file was authored (coverage gap flagged for
   the owners); not citable as an authored edge.
+
+---
+
+## Proposed contracts (wave 3)
+
+Engine owns the **modality-seam shape** on `engine-exec` and the `types`
+vocabulary it rides. These are proposals for the harmonizer (the sibling `types`
+and `engine-exec` units own the authored surfaces; engine does not edit them).
+
+### P1. Modality vocabulary → into `types` (INTENT #18/#166 Q12)
+
+The wave-2 `Modality` single-tag is superseded by the ML input→output pairing;
+`MediaType` is new. Additive to `types` (the wave-2 `StreamEvent` / `Output`
+additions already flagged there carry forward unchanged):
+
+```rust
+enum MediaType { Text, Audio, Image, Video }
+struct Modality { input: SmallVec<[MediaType; 2]>, output: MediaType }
+// constructors: Modality::{T2T, S2T, T2S, TI2T}
+```
+
+- **Reconciliation flags:** `Modality` replaces any prior `Modality = Text|Image|
+  Video|Audio` sketch; a `#[serde(other)]`-tolerant serialization keeps an older
+  consumer from breaking on an unseen `MediaType` (types guardrail 4).
+
+### P2. Modality on the execution surface → into `engine-exec` (engine owns the trait, scheduler consumes)
+
+`InferenceBackend` gains two reads and the request carries typed media:
+
+```rust
+fn modality(&self) -> Modality;      // capability descriptor
+fn runtime(&self) -> RuntimeSpec;    // { repo, asset_matcher, version_source } — per-modality provisioning
+// GenerationRequest gains a typed input: prompt text OR an audio VfsBlobRef/inline bytes
+```
+
+- **Reconciliation flags:** `GenerationRequest`'s input generalizes from a prompt
+  string to a media-typed input (audio-in for S2T); `RuntimeSpec` is the
+  provisioner's per-runtime key `(runtime, version, platform)`. `SlotTracker` is
+  unchanged (modality-neutral admission counter). No S2T/T2S backend is built this
+  wave; the trait is pinned so they are additive.
 

@@ -4,13 +4,17 @@
 top-level app-crate (`bin/vfs` daemon + `lib/vfs`), one instance per storage
 node (`AddressingClass::NodeScoped`). **Layer:** L3 storage plane, above the
 mesh kernel (L1/L2), **below VDB** (VFS < VDB < KG, LOCKED — INTENT #96).
-**Consumes:** mesh (registration/relay/replicated-kv-metadata/locks/pubsub via
-`mesh-client`), `gc` (per-device enforcement), `aws` (S3 overflow), `secrets`
-(client-side content-encryption keys). **Consumed by:** VDB, repo, kg, projects,
-rollup. Grounded in INTENT #27/#47/#48/#82/#92/#98 + the batch-1/2 designs
-(replicated-kv guarantees table, mesh-core addressing + PeerTransport,
-service-registry NodeScoped, locks-api, pubsub-relay taxonomy, types node/
-provenance vocabulary) and the live `lib/gc` + `bin/gc`.
+**Consumes:** mesh (registration/relay/replicated-kv-metadata/locks/pubsub) via
+**`chassis`** (the daemon-wrapper lib — `mesh-client` retired into it, ledger D1),
+its **internal `gc` module** (per-device enforcement — absorbed, INTENT #166 Q9,
+concern 5), `aws` (S3 overflow), `secrets` (client-side content-encryption keys).
+**Consumed by:** VDB, repo, kg, projects, rollup. Grounded in INTENT
+#27/#47/#48/#82/#92/#98 + #166 Q9 (gc→vfs) + the batch-1/2/3/4 designs
+(chassis daemon-wrapper + outbox/blessing thin-profile, mesh-transport envelope +
+the relayed `StreamOpen/Chunk/Close` tunnels, replicated-kv guarantees table,
+mesh-core addressing, service-registry NodeScoped, locks-api, pubsub-relay
+taxonomy, queues-api event-id semaphore, types node/provenance vocabulary) and the
+absorbed `lib/gc` mechanics (reused, not rewritten).
 
 ## Charter
 
@@ -27,7 +31,9 @@ nodes reliably (concern 3 — the module's hardest new surface); **per-file
 replication factor** and desired/actual **placement** over nodes and drives
 (concern 4); **per-directory policies** — max size, eviction strategy (FIFO /
 least-recently-updated / least-recently-accessed) — enforced per-device by
-delegating DOWN to `gc` (concern 5); **RAID-inspired multi-drive warm/cold node
+vfs's **internal `gc` enforcement module** (absorbed, INTENT #166 Q9 — the
+mark-for-removal → move-between-devices → cold-storage spectrum, concern 5);
+**RAID-inspired multi-drive warm/cold node
 topology** (the walk-along Pi with external drives — concern 6); **access-can-
 migrate** semantics (reading a remote blob may cache it local for reuse —
 concern 7); **S3 overflow** to cold storage through the `aws` crate, client-side
@@ -44,13 +50,16 @@ row. It does not own the *replicated-state engine* — file METADATA rides
 `replicated-kv` (a mesh internal lib), which owns LWW/anti-entropy/tombstones;
 vfs is a KV keyspace tenant, and **file CONTENT is deliberately NOT a KV value**
 (concern 1). It does not own the *S3 API* — that is `aws` (INTENT #106); vfs
-decides *what overflows and when*, aws does the bytes-to-cloud. It does not own
-*single-device GC mechanics* — TTL/size-budget/LRU/lock-with-expiry/reclaimers
-are `gc`'s (already built, `lib/gc`); vfs decides *distributed* policy and
-delegates *per-device enforcement* to gc (concern 5, and the gc-relationship
-recommendation). It holds **no application data** and imposes **no schema** on
-file bytes. It is one boring layer: distribution rides mesh, enforcement rides
-gc, cloud rides aws — vfs is the placement brain in the middle.
+decides *what overflows and when*, aws does the bytes-to-cloud. **Single-device
+enforcement mechanics** —
+mark-for-removal, size-budget/LRU/FIFO, lock-with-expiry, move-between-devices,
+cold-storage hand-off — are NOW vfs's own **internal `gc` module** (absorbed per
+INTENT #166 Q9, concern 5): vfs decides *distributed* policy AND runs the
+per-device enforcement spectrum in-process (the built `lib/gc` mechanics reused,
+not a separate daemon). It holds **no application data** and imposes **no schema**
+on file bytes. It is one boring layer: distribution rides mesh (via chassis),
+enforcement is vfs's internal gc spectrum, cloud rides aws — vfs is the placement
+brain with the enforcement hand built in.
 
 ## Primary design concerns
 
@@ -83,7 +92,7 @@ load-bearing:
   sidesteps replicated-kv's undesigned `Factor(n)` (its concern 10 friction);
   vfs never needs it.
 
-VFS's KV keyspaces (opened via `mesh-client`'s KvHandle, keyspace `vfs/`):
+VFS's KV keyspaces (opened via `chassis`'s KvHandle, keyspace `vfs/`):
 
 ```
 vfs/dir/<path>            -> DirPolicy      (max size, eviction, default repl factor, tier pref)
@@ -139,21 +148,34 @@ a socket to a remote node; it hands mesh an addressed envelope). Precedent
 exists: `completion-router` already streams byte-transparent bodies through the
 mesh relay (`forward()`); the content plane is the same shape for blobs.
 
-- **Transport = mesh-transport `Request`/`Response` with a streamed body,
-  addressed `Node{N}` (pinned).** Because metadata is fully replicated (concern
-  1), the requesting vfs already knows *which node* holds a blob; it issues a
-  pinned request, mesh relays it one hop to that node's daemon → local vfs →
-  streamed chunk frames back through the relay. This is a distinct mesh-transport
-  `MsgKind` (bulk/stream), **NOT** the lossy `pubsub-relay` (file content needs
-  reliable, ordered, integrity-checked delivery — pubsub-relay concern 6 is
-  explicitly lossy) and **NOT** a KV value.
+- **Transport = mesh-transport's RELAYED, scoped, one-directional stream tunnel
+  (`StreamOpen`/`StreamChunk`/`StreamClose`, INTENT #153), addressed `Node{N}`
+  (pinned) — the authorized default.** Because metadata is fully replicated
+  (concern 1), the requesting vfs already knows *which node* holds a blob; it
+  opens a pinned stream, mesh relays the `StreamChunk` frames one hop
+  (local daemon → holder's daemon → holder's vfs → chunk frames back through the
+  relay, seq-ordered and backpressured). The bytes stay **on the relay** so mesh
+  can observe, backpressure, and resume across an interruption (mesh-transport §5
+  "Relayed stream (boring default, authorized)"). This is **NOT** the lossy
+  `pubsub-relay` (file content needs reliable, ordered, integrity-checked
+  delivery — pubsub-relay is explicitly lossy) and **NOT** a KV value.
+  - **The DIRECT brokered peer-link tunnel — taking multi-GB blob bytes OFF the
+    relay for a scoped node→node pipe — is AUTHORIZATION PENDING (OQ-30 / INTENT
+    #153).** vfs-content is authored implementation-ready on the *relayed* path;
+    the direct path is a marked, non-decided optimization seam that MUST NOT be
+    built until the operator blesses OQ-30. The frame vocabulary
+    (`StreamOpen/Chunk/Close`) is identical for both modes, so flipping vfs's bulk
+    pull from relayed to direct is a one-line `Address`/mode change once blessed —
+    no contract reshape. (This mirrors INTENT #114's "bulk S3 transfer =
+    direct-with-mesh-issued-permission" instinct for the *S3* leg, held under the
+    same OQ-30 gate.)
 - **Pull-driven convergence (the replication engine).** VFS never "pushes a
   replica" imperatively. `BlobPlacement.desired` (in fully-replicated metadata)
   names the set of nodes that SHOULD hold a blob; each node's vfs **watches
   `vfs/blob/*`** (KV watch — replicated-kv concern 8) and reconciles its local
   blob set against desired: a blob it should hold but lacks → **pull** it from a
   current `actual` holder; a blob it holds but shouldn't (0-refcount, or evicted
-  by policy) → hand to `gc` for reclaim. This makes replication **self-healing
+  by policy) → hand to the internal `gc` module for reclaim. This makes replication **self-healing
   and offline-tolerant by construction** — a node that was offline pulls its
   missing blobs on reconnect, exactly mirroring KV anti-entropy, for the same
   reason. No imperative push protocol, no failover election: desired-placement is
@@ -205,32 +227,44 @@ pub enum ReplicaKind { Durable, Cache }
   fill-balance, and low measured latency (concern 9 feeds this). Placement is a
   *derivation* the writing node computes then records; every node reconciles
   toward it — no central placer.
-- **Cache replicas never count toward the factor** (concern 7). gc is instructed
-  (concern 5) to evict `Cache` replicas first and to **never** evict a `Durable`
-  replica that would drop `actual durable` below the factor — the one hard
-  invariant vfs asserts against gc's eviction.
+- **Cache replicas never count toward the factor** (concern 7). vfs's internal gc
+  module (concern 5) evicts `Cache` replicas first and **never** evicts a
+  `Durable` replica that would drop `actual durable` below the factor — the one
+  hard invariant, now a direct in-process assertion (gc is absorbed, not a
+  separate service).
 
-### 5. Per-directory policies + the gc relationship (the STANDING-OPEN question, with a recommendation)
+### 5. Per-directory policies + the internal `gc` enforcement module — the spectrum (INTENT #166 Q9, SETTLED)
 
-> **SUPERSEDED at the re-spoken round (2026-07-21/22, INTENT #166, Q9):
-> the operator resolved the rolled-in-vs-called-as-tool question the OTHER
-> way — gc is ABSORBED INTO vfs.** Verbatim: "garbage collection is
-> actually a spectrum — mark-for-removal, move to another device, cold
-> storage; maybe take it apart and reuse pieces." So gc becomes an
-> **internal vfs module/spectrum** (mark-for-removal, move-between-devices,
-> cold-storage) — the recommendation below (distinct crate, called-as-tool
-> over WS) is superseded, though its substance survives inverted: the same
-> policy-above/mechanism-below split now lives INSIDE vfs, the built
-> `lib/gc` pieces are reused rather than rewritten, and the `vfs-gc`
-> command vocabulary becomes the internal module surface (that contract
-> file is retained as its record). Notably the absorption makes the
-> "spectrum" explicit: mark-for-removal (today's evict/delete), move-
-> between-devices (the `Migrate` reclaimer hand-back this file already
-> assigned to vfs), and cold-storage (the S3/cold tier, concern 8) are one
-> continuum owned by one component — which is precisely why the operator
-> folded it in. Residual to resolve in vfs's next pass: how inference's
-> embedded `lib/gc` consumers (`gc-managed-dirs`) converge with vfs's
-> internal store. The text below stands as the design record.
+**SETTLED (INTENT #166 Q9): `gc` is ABSORBED INTO vfs as an internal enforcement
+module — not a distinct crate, not a called-as-tool WS edge.** The operator's
+verbatim resolution: *"garbage collection is actually a spectrum —
+mark-for-removal, move to another device, cold storage; maybe take it apart and
+reuse pieces."* This wave consolidates on that: the standing round-3
+"rolled-in-vs-called-as-tool" question is **closed in favor of rolled-in**, and
+the earlier called-as-tool recommendation is retired. The built `lib/gc` pieces
+are **reused, not rewritten** — vfs's internal `gc` module *is* that mechanism,
+recompiled in-process; the `vfs-gc` command vocabulary survives as this module's
+**internal API surface** (the contract file is retained as its design record, not
+a live wire edge).
+
+**The spectrum, owned end-to-end by vfs (the reason the operator folded it in):**
+enforcement is one continuum, not a delete switch —
+
+1. **mark-for-removal** — today's evict/delete: a blob whose refcount hit 0
+   (concern 3) or a `Cache` replica under budget pressure is marked and reclaimed
+   by the LRU/FIFO reclaimer (the built `lib/gc` mechanics).
+2. **move-between-devices** — the `Migrate` reclaimer hand-back: rather than
+   delete, relocate a durable blob from a full warm drive to a cold drive on the
+   same or another node (concern 6's `(node,drive)` placement is the target
+   vocabulary; the placement engine, concern 4, picks the destination).
+3. **cold-storage** — the S3/cold tier (concern 8): overflow a durable blob to
+   `aws`, client-side encrypted, when even cold local drives are full or policy
+   forces it. Deletion of the local copy is then just step 1 applied to a blob
+   that now has a durable S3 replica.
+
+Placement policy (concern 4) chooses *where on the spectrum* a blob under pressure
+goes — evict a cache replica → migrate a durable blob to cold → overflow to S3 →
+delete only when refcount 0. One module, one continuum, one owner.
 
 Per-directory policy is fully-replicated data:
 
@@ -245,50 +279,29 @@ pub struct DirPolicy {
 pub enum Eviction { Fifo, LeastRecentlyUpdated, LeastRecentlyAccessed }
 ```
 
-**Enforcement is `gc`'s, on each device; the DECISION is vfs's.** VFS translates
-a `DirPolicy` for the local node's slice of a directory into a gc managed-dir
-config (budget = the node's share of `max_bytes`; strategy = the `Eviction`
-mapped onto gc's LRU/FIFO reclaimer; `lock(ttl)` on freshly-placed durable
-replicas so they survive the next sweep — the `make_room → write → register →
-lock` pattern gc.md concern 2 already prescribes). gc runs the sweep and the
-eviction mechanics; vfs supplies the `.gc` config and the "which replica is safe
-to evict" answer (concern 4's invariant).
+**Both the DECISION and the enforcement are vfs's — in one process.** For the
+local node's slice of a directory, vfs's `policy` child (below) compiles a
+`DirPolicy` into an internal gc managed-dir config (budget = the node's share of
+`max_bytes`; strategy = the `Eviction` mapped onto the reclaimer; `lock(ttl)` on
+freshly-placed durable replicas so they survive the next sweep — the
+`make_room → write → register → lock` pattern the built `lib/gc` already
+prescribes). The internal gc module runs the sweep and the spectrum mechanics
+in-process; the `placement` child supplies the **"which replica is safe to
+evict/migrate/overflow"** answer, enforcing concern 4's **one hard invariant:
+never drop `actual durable` below the replication factor** (evict `Cache` first;
+migrate or overflow a durable blob rather than delete it if deletion would breach
+the factor). Because this is now an in-process call, the invariant is a direct
+assertion in vfs's own code path, not a cross-service instruction — strictly
+tighter than the old WS-edge framing.
 
-**The rolled-in-vs-called-as-tool recommendation (round-3 STANDING OPEN, INTENT
-#27/#48; my concrete call, flagged for operator confirmation):**
-
-> **Recommend: `gc` stays a distinct crate — NOT absorbed into vfs — and vfs
-> drives the node-local gc as a *called tool over its WebSocket/REST surface*
-> (the `vfs-gc` edge), honoring INTENT #28 verbatim ("so the virtual file
-> system can update it over WebSocket"). VFS becomes the per-node HOST of the
-> single centralized gc store (INTENT #28) for vfs-managed directories: on a
-> node running vfs, `bin/gc`'s `:8430` surface is served by / co-located with
-> vfs, and vfs registers/updates its managed dirs and `.gc` configs over that
-> surface; on a node without vfs (a pure inference node), `bin/gc` runs
-> standalone exactly as today.**
-
-Rationale: (a) **does not orphan inference's embedded gc** — `lib/gc` embedded
-by `models`/`cache`/`engine` (the `gc-managed-dirs` edge) is untouched; folding
-gc *into* vfs would force inference to depend on vfs, a layering inversion. (b)
-**Boring layers, INTENT #38/#55** — gc owns single-device mechanics (already
-built + tested, 5 passing tests), vfs owns distributed policy/placement; the
-split is the same "policy above / mechanism below" as mesh-core↔supervision. (c)
-**The WS hop is free where it matters** — gc operations (register a dir, update a
-budget, run make_room) are control-plane, not per-byte; the hot path (reading/
-writing bytes) is the content-transfer plane (concern 3), which never touches
-gc. (d) **Honors INTENT #28's "one centralized per-node store, updatable over
-WebSocket"** literally — one gc store per node, vfs updates it over WS.
-Flagged residual: unifying inference's embedded gc dirs with vfs's gc store into
-literally one physical store per node touches inference's wiring (it currently
-opens its own `gc.db`) — that convergence is gc/inference's batch-5 concern, out
-of scope here; this design only requires that vfs drive gc for *vfs-managed*
-directories.
-
-*(Skeleton-time optimization latitude: if the WS hop ever measures, vfs's
-per-node leg MAY embed `lib/gc` in-process for vfs-managed dirs and re-expose the
-same gc surface — same code, no wire. The design does not depend on which; the
-`vfs-gc` contract shape is identical either way. Called-as-tool is the default
-because it matches the operator's stated mental model.)*
+**Residual (batch-5 `gc`/inference convergence, out of scope here).** Inference's
+own embedded `lib/gc` consumers (`models`/`cache`/`engine`, the `gc-managed-dirs`
+edge) are a *separate* embedding of the same library for model/cache dirs — they
+are untouched by this absorption and do **not** depend on vfs (no layering
+inversion). vfs owns gc for **vfs-managed** directories only; a pure inference
+node with no vfs leg embeds `lib/gc` exactly as today. Unifying the two embeddings
+into literally one physical per-node store is a `gc`/inference concern flagged in
+`gc-managed-dirs` / `gc-events`, not decided here.
 
 ### 6. RAID-inspired multi-drive nodes — the walk-along Pi (INTENT #48)
 
@@ -454,14 +467,89 @@ an S3 bucket, and then we build something more project-oriented on top of it").
   `Node{N}` (you pull from a *specific* holder). This is a clean instance of the
   two addressing classes (INTENT #59), not a bespoke scheme.
 
+### 13. Worked example — the walk-along Pi: offline ingest → VFS sync on reconnect (INTENT #34/#48/#157)
+
+The load-bearing story that ties the storage plane to `chassis`'s durable outbox
+(chassis concern 6) and the blessing queue (chassis concern 7): **a walk-along Pi
+ingests recordings while disconnected from the tailnet, then syncs into VFS on
+reconnect — losing nothing.** The Pi is "just a node" (INTENT #34); the design has
+two boring profiles, and the interplay is the same shape in both.
+
+**Profile A — the Pi runs a full vfs leg (concern 6, its external drives).** This
+is the default when the Pi has storage to contribute:
+
+1. **Offline capture.** The recorder writes each clip to its *local* vfs leg:
+   `vfs-content` `Write { path: "vfs://recordings/pi/2026-07-22T14-03.wav",
+   class: Immutable, .. }`. Single-port locality (INTENT #58) means the local vfs
+   leg is reachable **even with the tailnet down** — the write is a purely local
+   operation: content blob lands on the Pi's local drive, `vfs/file/*` +
+   `vfs/blob/*` metadata lands in the Pi's **local** replicated-kv copy with
+   `actual = [{ node: "pi", .. Durable }]` and `desired` from the directory's
+   replication factor (e.g. factor 2, a second holder that is currently
+   unreachable). **Offline work works by construction** (INTENT #157) — nothing
+   about a `Write` needs the rest of the mesh.
+2. **The chassis outbox carries the durable side-band.** vfs wants to *announce*
+   each capture so a downstream trigger (transcription, backup) fires — a
+   `vfs.recording.captured` pub/sub event marked `save_on_fail` (a **durable**
+   send, INTENT #155 no-silent-drops). While offline, chassis parks these in its
+   **local durable outbox** (chassis concern 6 — SQLite/append-log, survives both
+   daemon outage and a Pi reboot). The bulk recording **bytes never touch the
+   outbox** (they are already safe on the local drive as vfs blobs); only the
+   small durable *notifications* queue there. That division is the interplay:
+   **bulk content rides vfs's pull-convergence plane; durable messages ride the
+   chassis outbox — each offline-tolerant, neither overloaded with the other's
+   job.**
+3. **Reconnect — three channels drain in concert, all idempotent:**
+   - **replicated-kv anti-entropy** propagates the Pi's new `vfs/file/*` /
+     `vfs/blob/*` metadata to the rest of the mesh (its normal digest-compare
+     sync) — now every node knows the recordings exist and where.
+   - **pull-driven convergence** (concern 3): the factor-2 `desired` holder, now
+     reachable, sees `desired ∋ self && !held` and **pulls** each recording blob
+     from the Pi over the relayed `StreamOpen/Chunk/Close` tunnel, writing itself
+     into `actual` only after all chunks verify. The recordings are now durably
+     replicated — **exactly the offline-node-pulls-its-share-on-reconnect property
+     KV anti-entropy already gives metadata, applied to bytes.**
+   - **chassis outbox drainer** flushes the parked `vfs.recording.captured` events
+     FIFO to the daemon (at-least-once; the transcription trigger dedups on the
+     event id, `queues-api` semaphore discipline). No announcement is lost, so no
+     downstream work is silently skipped.
+4. **No blessing needed for the recordings themselves.** Immutable writes are
+   LWW on the path (concern 12) — two nodes writing the same path just pick a
+   winner deterministically, both content blobs survive (content-addressed). So
+   recordings do **not** enter the blessing queue; the blessing queue (chassis
+   concern 7, PARKED OQ-1) is reserved for *consistency-requiring* changes, which
+   plain content capture is not. This keeps the hot ingest path free of the parked
+   authority question entirely.
+
+**Profile B — the Pi is a thin ingest client (chassis thin-profile, F-5: outbox +
+blessing, no service surface).** When the Pi contributes no storage, it links
+`chassis` with `features = ["outbox"]` and has **no vfs leg**. Offline, the
+recorder stages each clip in the Pi's local chassis-durable store and enqueues a
+**durable write-intent** in the outbox addressed to a vfs leg on another node. On
+reconnect, the outbox drainer replays each intent as a `vfs-content` `Write`
+streamed (relayed tunnel) to that leg — the recordings land in VFS on a storage
+node, then converge to their replication factor from there. Same guarantee (lose
+nothing), the outbox just also carries the *bytes* because the Pi has nowhere else
+durable to keep them until reconnect.
+
+**Which profile a given Pi uses is a deployment choice**, not a fork in vfs: both
+ride the same `vfs-content` `Write` + pull-convergence + chassis-outbox
+primitives. Profile A is preferred when the Pi has drives (INTENT #48's multi-drive
+walk-along node); Profile B when it is a bare capture device. The design commits
+to neither globally — the seam is the chassis feature-set, flippable per node.
+
 ## Relationships / edges
 
 Contract edges (cross-process WS/wire over mesh-transport `:3649`; client halves
-via `mesh-client`):
+via **`chassis`**):
 
-- **gc** via `vfs-gc` — per-device policy enforcement: vfs registers/updates
-  managed dirs + `.gc` configs and the safe-to-evict answer over gc's WS/REST
-  surface; gc runs the sweep (concern 5). *(scaffold/contracts/vfs-gc.md)*
+- **gc** — **NO LONGER a contract edge; absorbed as an internal module (INTENT
+  #166 Q9, concern 5).** vfs's `policy`/`placement` children call the internal gc
+  module in-process for the enforcement spectrum (mark-for-removal →
+  move-between-devices → cold-storage). `scaffold/contracts/vfs-gc.md` is
+  **retained as the design record of that module's internal API vocabulary**, not
+  a live wire edge. (Inference's separate `lib/gc` embedding keeps `gc-events` /
+  `gc-managed-dirs` — those are inference's, not vfs's.)
 - **mesh** via `vfs-mesh` — registration (`service-lookup`, NodeScoped) +
   node/drive **storage-topology** publication (`NodeStorageTopology`/`DriveInfo`)
   + perf reporting; the S3-overflow leg does NOT ride this edge (it rides
@@ -499,14 +587,17 @@ owners — I consume the shapes, do not re-author):
 - `restart-protocol` — vfs is a supervised service; a mid-transfer is a
   `CriticalSection` / `FinishAndRelinquish`-shaped interruptibility (a durable
   replication in flight should finish before yield). Consumed, not authored.
-- `service-lookup` — vfs registers (NodeScoped) and resolves aws/secrets/gc/peers.
+- `service-lookup` — vfs registers (NodeScoped) and resolves aws/secrets/peers
+  (gc is no longer resolved — it is in-process, concern 5).
 - `locks-api` — vfs consumes for `NodeAnchored` write exclusivity + placement
   transactions (concern 12).
 
-Internal-lib seams (compiled-in, NOT contract edges): `mesh-client` (register/
-resolve/pubsub/kv/locks handles), `substrate-types` (`node`/`provenance`/
-`pubsub`/`error` vocabulary + the new storage types), and optionally `lib/gc`
-embedded (skeleton-time latitude, concern 5).
+Internal-lib seams (compiled-in, NOT contract edges): **`chassis`** (the
+daemon-wrapper — register/resolve/pubsub/kv/locks handles + the durable outbox +
+the reconnect/heartbeat/restart client half; `mesh-client` retired into it, ledger
+D1), `substrate-types` (`node`/`provenance`/`pubsub`/`error` vocabulary + the new
+storage types), and the absorbed **`gc`** module (the built `lib/gc` mechanics
+recompiled in-process — the enforcement spectrum, concern 5, NOT a wire edge).
 
 ## Nesting
 
@@ -514,11 +605,14 @@ Parent: none (top-level app-crate `bin/vfs` + `lib/vfs`). Children (nested
 internal libs, compiled into the vfs daemon, never standalone): **`content`**
 (blob store + chunking/hashing + the content-transfer plane), **`placement`**
 (the desired/actual replication + tiering engine + reconcile loop), **`policy`**
-(DirPolicy → gc config translation, the gc client), **`perf`** (telemetry
-sampling + surface/pubsub publication). These are libraries under the vfs app per
-INTENT #22 (a crate is an app; its internal pieces are libs), not top-level
-crates. The parent/child structure lives here + overview.md, not the directory
-layout (flat `components/`).
+(DirPolicy → internal-gc config translation), **`gc`** (the **absorbed
+enforcement module**, INTENT #166 Q9 — the built `lib/gc` mechanics recompiled
+in-process: mark-for-removal / move-between-devices / cold-storage reclaimers +
+the managed-dir sweep + `lock(ttl)`), **`perf`** (telemetry sampling +
+surface/pubsub publication). These are libraries under the vfs app per INTENT #22
+(a crate is an app; its internal pieces are libs), not top-level crates. The
+parent/child structure lives here + overview.md, not the directory layout (flat
+`components/`).
 
 ## Thoroughness level
 
@@ -527,17 +621,24 @@ layout (flat `components/`).
 content-transfer plane's pull-driven-convergence design + integrity/resume
 (concern 3, with the `vfs-content` wire proposed); the desired/actual
 drive-aware placement model + the never-evict-below-factor invariant (concern 4);
-the DirPolicy → gc delegation + the gc-relationship recommendation (concern 5);
-the `DriveInfo`/`NodeStorageTopology` types (concern 6); access-migration cache
-replicas (concern 7); the S3-overflow-as-cold-passive-tier policy (concern 8);
-the perf/telemetry surface (concern 9); light provenance (concern 10); the flat
-path model (concern 11); and concurrency/addressing (concern 12).
+the DirPolicy → internal-gc translation + the **gc-absorption spectrum** (concern
+5, INTENT #166 Q9, SETTLED — mark-for-removal / move-between-devices /
+cold-storage in-process); the `DriveInfo`/`NodeStorageTopology` types (concern 6);
+access-migration cache replicas (concern 7); the S3-overflow-as-cold-passive-tier
+policy (concern 8); the perf/telemetry surface (concern 9); light provenance
+(concern 10); the flat path model (concern 11); concurrency/addressing (concern
+12); and the walk-along-Pi offline-ingest → reconnect-sync worked example (concern
+13, the chassis-outbox / pull-convergence interplay).
 **approach-sketched** for: the exact S3 client-side encryption key exchange
-(the `vfs-secrets` edge is newly surfaced, batch-3 `secrets` co-design — friction);
-the NodeAnchored snapshot cadence/coordination with VDB (the vdb-vfs shape is
-proposed from vfs's side, but VDB is batch-4 — its checkpoint semantics reconcile
-there); and the chunk-size / transfer-window / reconcile-interval constants
-(fill-time tuning with proposed defaults, not design forks).
+(the `vfs-secrets` edge — the client-side content-encryption key vfs resolves from
+`secrets` before handing ciphertext to `aws`, concern 8; batch-5 `secrets`
+co-design — friction); the NodeAnchored snapshot cadence/coordination with VDB
+(the vdb-vfs shape is proposed from vfs's side, its checkpoint semantics reconcile
+in vdb); the **direct brokered content tunnel** (concern 3 — AUTHORIZATION PENDING
+OQ-30; the relayed path is implementation-ready, the direct path is a marked
+one-line-flip seam, not built); and the chunk-size / transfer-window /
+reconcile-interval constants (fill-time tuning with proposed defaults, not design
+forks).
 
 ## Assigned design-depth
 
@@ -554,7 +655,7 @@ provenance/surface vocabulary), the co-batched `gc.md`/`aws.md`, and the live
 
 **implementation-ready + high complexity → strong-mid model, tests-first for the
 content plane.** Most of vfs is boring transcription against frozen seams — the
-KV keyspaces, DirPolicy → gc translation, the perf surface, the placement
+KV keyspaces, DirPolicy → internal-gc translation, the perf surface, the placement
 records, the path/scan model — a mid model transcribes these from this file.
 **Two surfaces want the test suite written FIRST and must not go to a cheap
 tier:** (1) the **content-transfer + pull-convergence loop** (concern 3) — its
@@ -564,11 +665,13 @@ corrupts silently; write conformance tests over a multi-node in-process harness
 3 verified holders; an offline node pulls its share on reconnect; a 0-refcount
 blob is evicted everywhere; a half-pull never advertises; a chunk hash mismatch
 retries not corrupts) *before* implementing; (2) the **never-evict-below-factor
-invariant** at the vfs↔gc seam (concern 4/5) — a property test that gc, given
-vfs's safe-to-evict answer, never drops durable `actual` below `desired`.
-Everything else (drive topology, S3 overflow policy, provenance, surface schema)
-is transcription-grade. Fill **after** replicated-kv, service-registry, locks,
-and gc are filled (it rides all four) and **alongside** aws's batch-3 S3 surface.
+invariant** at the internal placement↔gc seam (concern 4/5) — a property test that
+the in-process gc module, given `placement`'s safe-to-evict/migrate/overflow
+answer, never drops durable `actual` below `desired`. Everything else (drive
+topology, S3 overflow policy, provenance, surface schema) is transcription-grade.
+Fill **after** replicated-kv, service-registry, and locks are filled (it rides all
+three; gc is now in-process, no external fill dependency) and **alongside** aws's
+S3 surface.
 
 ---
 
@@ -580,10 +683,49 @@ formerly in this section are superseded by the authored contracts.
 
 - `vfs-content` (vfs peer ↔ vfs peer, relayed by mesh) — the bulk content-transfer plane (added by the contract round). → `scaffold/contracts/vfs-content.md`
 - `vfs-mesh` — (vfs ↔ mesh) — registration + storage topology + perf. → `scaffold/contracts/vfs-mesh.md`
-- `vfs-gc` — (vfs ↔ gc) — per-device enforcement (gc.md is the counterpart). → `scaffold/contracts/vfs-gc.md`
+- `vfs-gc` — **RETAINED as the internal `gc` module's API record, NOT a live wire edge** (gc absorbed into vfs, INTENT #166 Q9 — concern 5). → `scaffold/contracts/vfs-gc.md`
 - `aws-vfs` — (aws ↔ vfs) — S3 overflow cold tier (aws.md is the counterpart). → `scaffold/contracts/aws-vfs.md`
 
-Also a party to (authored elsewhere / cross-cutting): `aws-mesh`, `gc-events`, `kg-vfs`, `projects-vfs`, `repo-vfs`, `rollup-vfs`, `service-lookup`, `surface-schema`, `vdb-vfs` — see `scaffold/contracts/`.
+Also a party to (authored elsewhere / cross-cutting): `aws-mesh`, `kg-vfs`, `projects-vfs`, `repo-vfs`, `rollup-vfs`, `service-lookup`, `surface-schema`, `vdb-vfs` — see `scaffold/contracts/`. (`gc-events` / `gc-managed-dirs` are **inference's** separate `lib/gc` embedding, not vfs's — see concern 5 residual.)
 
-Component-side notes retained by title (full text in git history, pre-harmonization): `vfs-secrets` — client-side content-encryption key; Storage-side sketches for consumer-owned edges (vfs is the target).
+## Proposed contracts (wave 3)
+
+Wave-3 consolidation changed the *shape* of three seams vfs owns. None invents a
+new wire contract; the net effect is one contract retired to internal, one
+transport binding re-pointed, and one worked-example dependency made explicit —
+all one-line-flippable where a parked question touches them.
+
+1. **`vfs-gc` demoted from wire edge → internal module API (SETTLED, INTENT #166
+   Q9).** gc is absorbed as vfs's internal enforcement module (the spectrum:
+   mark-for-removal → move-between-devices → cold-storage). The `vfs-gc.md`
+   contract file is **retained verbatim as that module's internal API record** but
+   is no longer a cross-process contract, no longer resolved via `service-lookup`,
+   and no longer carries a mesh-transport binding. The never-evict-below-factor
+   invariant (concern 4/5) becomes a direct in-process assertion. *Harmonizer
+   note:* `gc.md` should mark its vfs-facing surface as the in-process module
+   consumed by vfs (inference's embedding is separate); `service-registry` /
+   `service-lookup` drop any vfs→gc resolution.
+2. **`vfs-content` transport binding re-pointed to the RELAYED stream tunnel
+   (`StreamOpen/StreamChunk/StreamClose`, mesh-transport §5 — authorized
+   default).** vfs.md concern 3 now names the relayed one-directional stream
+   tunnel as the transport, superseding the earlier "bulk `MsgKind`
+   Request/Response with streamed body" phrasing. The **direct brokered peer-link
+   tunnel** (bytes off the relay) is **AUTHORIZATION PENDING (OQ-30)** and MUST
+   NOT be built until blessed; the frame vocabulary is identical, so the flip is a
+   one-line `Address`/mode change. *Harmonizer note:* `vfs-content.md`'s
+   "Transport binding" paragraph should be reconciled to `StreamOpen/Chunk/Close`
+   to match mesh-transport §5 (which already lists `vfs-content` as riding the
+   relayed stream); the schema and integrity/resume design are unchanged.
+3. **`vfs-content` `Write` gains the walk-along-Pi offline-outbox interplay as a
+   documented consumer (concern 13).** No schema change — the Pi's durable
+   write-intents / capture announcements ride **`chassis`'s** durable outbox
+   (thin-profile, F-5) while the bulk bytes ride pull-convergence; both drain on
+   reconnect. This pins a **`chassis` dependency** (outbox + optional
+   blessing-queue seam) that the earlier `mesh-client` framing did not name.
+
+**Consuming (shapes unchanged, dependencies restated):** `vfs-secrets`
+(approach-sketched — the client-side content-encryption key from `secrets`, concern
+8; batch-5 co-design); `vfs-mesh`, `aws-vfs`, `kg-vfs`, `projects-vfs`, `repo-vfs`,
+`rollup-vfs`, `vdb-vfs`, `surface-schema`, `pubsub-protocol`, `restart-protocol`,
+`locks-api` — authored elsewhere, consumed as-is.
 

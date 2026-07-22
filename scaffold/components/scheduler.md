@@ -25,7 +25,16 @@ co-designed in this batch), `engine.md` (the `engine-exec` provider side +
 `inference.md` (the interruptibility feed + 4-level ladder mapping this scheduler
 sources), `api.md` (`api-dispatch` + `subscribe_tokens`), `cache.md` (the prefix
 index `LocalitySelection` would query), and `supervision.md` (the ladder daemon
-side). INTENT #12/#22/#29/#38/#77/#85.
+side). INTENT #12/#22/#29/#38/#77/#85. **WAVE-3 LIGHT REFRESH
+(models-scheduler-refresh unit, INTENT #157/#166 Q12, #152):** two new
+concerns — (5) **modality-aware admission**, noting that an S2T (whisper) and
+a T2T (text) completion compete for the same accelerator exactly as two text
+models would, because the kernel/admission design (concern 1) is already keyed
+per `(node, model)`, not per modality — no kernel redesign; and (6) **promise
+integration**, aligning this file's local, always-admitting queue with
+completion-router's wave-3 admission-deferred `PromiseTicket` (the fleet-level
+"nobody can take this yet" case) — a boundary clarification, not a new
+mechanism. Everything else in this file is unchanged from the wave-2 refit.
 
 ## Charter
 
@@ -337,6 +346,95 @@ grounds (it needs the cache hit-rate signal the same index would provide);
 `FifoSelection`/`DefaultSwapEvaluator` remain the correct wired defaults until
 cache's index lands.
 
+### 5. Modality-aware admission — S2T/T2S generalize through the kernel, not around it (WAVE-3 light note, INTENT #157/#166 Q12)
+
+The ledger settles S2T (whisper) and T2S (voice synthesis) as **inference
+modalities** (A5.92) — engine.md concern 5 gives every backend a `Modality`
+tag (`Text | Image | Video | Audio`), and models.md concern 8 (this unit's
+sibling refresh) tags each downloaded weight the same way. The question this
+concern answers, lightly: does admission need a modality-specific rule for "an
+S2T request and a T2T request both want the accelerator"? **No — the existing
+design already generalizes; nothing here is redesigned:**
+
+- **The kernel is keyed per `(node, model)`, already modality-blind
+  (telemetry.md concern 1).** `effective_max_concurrent` is a fitted surface
+  per resident model, not per modality — a whisper model gets its own fitted
+  curve exactly like `qwen3-4b` does. Concern 1's `slots_to_admit` reads
+  whichever model is resident; it never branches on modality. Two models of
+  different modality contending for the accelerator is, to this function,
+  indistinguishable from two text models contending for it — the SAME
+  admission target computation applies.
+- **One resident model at a time is the existing constraint, not a new
+  one (engine.md).** `engine` "executes ONE generation on ONE resident model"
+  regardless of modality — so a node cannot run a whisper transcription and a
+  text completion concurrently unless one preempts/waits for the other, the
+  identical constraint that makes two competing *text* models swap today.
+  `DebouncedSwapEvaluator` (concern 4a) and the resident-model swap path treat
+  a Text↔Audio swap as an ordinary swap: no modality-conditioned branch is
+  needed or added.
+- **The generalized preemption threshold (concern 2) is the one knob a future
+  fill might reach for, not a new mechanism.** If a real-time S2T stream ever
+  needs to preempt background T2T batch work (or vice versa) the way benchmark
+  preempts to Idle-only, that is exactly the existing `preemption_threshold`
+  admission gate — a `Some(t)` value on the completion, not a modality
+  special-case. Nothing sets this today; it is named here only so a filler
+  reaches for the existing gate instead of inventing a parallel one.
+- **What is explicitly NOT decided here.** The A5.92 **warm-model policy**
+  (keep a voice model loaded for always-on use) implies a node might want a
+  resident S2T/T2S model to *never* be swapped out to serve ordinary T2T
+  traffic — that is a placement/capacity question (does such a node need a
+  second `engine` instance, or does it accept that voice and text time-share
+  one accelerator?) that sits above this scheduler's single-resident-model
+  charter and is **not this unit's call**; it is flagged for whoever designs
+  the warm-model policy's capacity story, consistent with the ledger's
+  "placement is a scheduling call" line (A5.92) meaning *cross-node*
+  placement, not this file's single-node admission loop.
+
+### 6. Promise integration — aligning the local queue with completion-router's admission-deferred `PromiseTicket` (WAVE-3 light note, INTENT #152)
+
+completion-router.md concern 9 (wave-3 NEW) gives the fleet-level balancer a
+`202 { PromiseTicket }` answer for "no live candidate is selectable right now"
+— and is explicit that **this is not a per-node admission redesign**: "`
+scheduler`'s own completion queue stays unbounded/always-admitting as today
+(out of scope, `scheduler`'s call)." This concern is the scheduler-side
+acknowledgment of that boundary, so a filler does not accidentally duplicate
+the router's promise machinery down here:
+
+- **This scheduler never mints a `types::transport::PromiseTicket`.** Once a
+  completion reaches a specific node (via the router's balancer pick, or a
+  `Node{N}` pin bypassing the balancer entirely — completion-router concern 4),
+  this scheduler's `submit` always admits it into the pending queue
+  immediately (today's `201 { id }` path, unchanged) — it is a `store`-backed,
+  crash-surviving `Pending` row from that point on, never a synchronous
+  reject. There is no "scheduler is full, try later" outcome to promise: a
+  pending completion simply waits its turn in the priority queue (concern 1's
+  `slots_to_admit`) for as long as it takes, exactly as wave-1/2 designed it.
+  The router's promise only ever covers the layer *above* this — "which node
+  (if any) should even receive the submission" — never "will this node run it
+  soon."
+- **Model-not-yet-downloaded is the one node-local wait that looks
+  promise-shaped, and it already has its own answer.** `model-ensure`'s
+  `ensure_available` (models.md) can leave a swap-target's completions
+  `Pending` for as long as a multi-GB download runs (`Err(ModelError::
+  InProgress)`, model-ensure.md) — this is a genuine "not ready yet" state,
+  but it is handled entirely in-process (`notify_new_work` re-wakes the tick
+  when the job completes) and never crosses the wire as a `MeshReply::
+  Promise`. It stays a Pending queue row, not a promise ticket — consistent
+  with `model-ensure` being an in-process trait seam, not a wire contract
+  (model-ensure.md `## Parties`).
+- **Interruptibility (concern 3) is unaffected.** A node holding
+  admission-deferred-then-forwarded work is, by the time it reaches this
+  scheduler, ordinary foreground work — `interruptibility()` sees it exactly
+  like any other admitted completion; the promise's existence at the router
+  layer leaves no trace once forwarding happens (completion-router concern 9,
+  point 4: "once the buffered submission is actually forwarded, it is an
+  ordinary completion from that point on").
+- **Nothing to author.** No new contract, no new field on `CompletionRow`, no
+  scheduler-side `PromiseTicket` handling code. This concern exists to record
+  the boundary so the wave-3 promise law (INTENT #152) is verifiably satisfied
+  end-to-end (router mediates fleet-selection promises; this scheduler mediates
+  none) without the two layers duplicating each other's job.
+
 ## Relationships / edges
 
 Inference-internal contract edges (compiled-in trait/handle seams — NOT wire
@@ -409,7 +507,13 @@ sketched** for: `LocalitySelection` (the read-only `CacheIndex` seam and the
 priority-dominates-locality invariant are decided; the tokenized-prefix-hash
 coupling is explicitly re-deferred to the cache-integration fill with reasoning —
 concern 4b), and the optional synchronous per-decision `kernel-confidence` query
-(default path is the `SystemState` scalar — concern 1).
+(default path is the `SystemState` scalar — concern 1). **Documented, no new
+mechanism** for: modality-aware admission (concern 5, wave-3 — the existing
+per-`(node, model)` kernel and single-resident-model swap already generalize;
+the warm-model capacity question is explicitly flagged out-of-scope) and
+promise integration (concern 6, wave-3 — a boundary note confirming this file
+mints no `PromiseTicket`, nothing to implement beyond what concern 1's
+already-designed Pending-queue behavior already does).
 
 ## Assigned design-depth
 
@@ -420,6 +524,10 @@ selection,queue}.rs` + `lib/benchmark/src/{lib,suite}.rs` (the priority-0/
 (the `SystemState` shape `effective_max_concurrent` extends), and the batch-5/6
 neighbor designs `telemetry.md`, `benchmark.md`, `engine.md`, `store.md`, `api.md`,
 `cache.md`, `inference.md`, `supervision.md`. INTENT #12/#22/#29/#38/#77/#85.
+**Wave-3 light refresh (concerns 5–6)** additionally grounded in
+`completion-router.md` concern 9 (admission-deferred promise), `models.md`
+concern 8 (modality tag), and the ledger's A5.92/INTENT #157/#166 Q12
+settlement.
 
 ## Suggested fill-model
 
@@ -439,7 +547,10 @@ a preempted priority≥1 completion is requeued). The interruptibility function 
 `cache` exposes its read seam; do not implement past the `CacheIndex` trait now.
 Sequence the whole module **after** `telemetry` (owns `effective_max_concurrent`),
 **alongside** `benchmark` (the exclusivity counterpart), and **after** `engine`'s
-`is_swapping()`/`engine-exec` shape is frozen.
+`is_swapping()`/`engine-exec` shape is frozen. Concerns 5–6 (wave-3) add **zero**
+fill burden — they document that the existing concern-1/2 mechanics and the
+existing `submit`→`Pending` path already cover the modality and promise
+questions; a filler should write no new code for them.
 
 ---
 
@@ -458,4 +569,12 @@ formerly in this section are superseded by the authored contracts.
 - `store-access` — (scheduler ↔ store) — consumer note (store authors). → `scaffold/contracts/store-access.md`
 
 Also a party to (authored elsewhere / cross-cutting): `node-state-poll` — see `scaffold/contracts/`.
+
+**Wave-3 note (concerns 5–6, not a new contract):** no edge is added here. The
+modality note (concern 5) touches no wire — it observes that `system-state`/
+`kernel-confidence` (above) are already modality-blind. The promise note
+(concern 6) touches no wire either — it is a boundary acknowledgment against
+`completion-router.md` concern 9 (the router's own file, not a scheduler-owned
+edge); this scheduler remains a pure in-process library reached only via
+`api-dispatch`, unaware of the router's fleet-level `PromiseTicket`.
 

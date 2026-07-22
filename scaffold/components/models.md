@@ -17,7 +17,15 @@ completion-router's Tier-2 affinity. **Nesting:** internal lib of `inference`
 wiring, the batch-1/2/3 designs (types.md `node`/`event`/`pubsub`, gc.md
 `GcHandle`/`GcApi`/DirPolicy, vfs.md content-plane/access-migrate,
 completion-router.md concerns 1–3, service-registry NodeScoped), and INTENT
-#4/#34/#48/#59/#66/#85.
+#4/#34/#48/#59/#66/#85. **WAVE-3 LIGHT REFRESH (models-scheduler-refresh unit,
+INTENT #157/#166 Q12):** one new concern (8) folds in **multi-modality model
+management** — S2T (whisper) and T2S (voice-synthesis) weights are `models`
+entries like any other, per the settled S2T/T2S-are-inference-modalities
+decision (ledger A5.92) — inventory, download, and disk-lifecycle are
+unchanged and already modality-agnostic; the only new surface is advertising
+*which modality* a node's downloaded models cover, flagged as an additive ask
+for `types.md`'s `NodeCapabilities`. Everything else in this file is
+unchanged from the wave-2 refit.
 
 ## Charter
 
@@ -267,6 +275,74 @@ to final and marked downloaded). Wave-2 hardening (cheap, honest):
   single-box exactly as today — the mesh integrations are all *additive
   publications*, never a *dependency* for the core download to function.
 
+### 8. Multi-modality model management — whisper/TTS models are models too (WAVE-3 light refresh, INTENT #157/#166 Q12)
+
+The ledger settles S2T/T2S as **inference modalities**, not standalone services
+(A5.92); engine.md's concern 5 already gives every backend a `fn modality(&self)
+-> Modality` descriptor (`Text | Image | Video | Audio`) so the engine trait
+never needs a signature refactor when a second modality lands. `models` needed
+no analogous refactor to be ready for this — its four owned things (registry
+sync, source resolution/transfer, download orchestration, disk discipline) are
+**already codec/format-agnostic**: a `.gguf` LLM weight, a whisper.cpp `ggml`
+model, and a TTS acoustic/vocoder checkpoint are all just a `ModelId` +
+`ModelConfig{source, sha256, expected_size_bytes}` resolved through the same
+`hf:`/`https:`/`file:` ladder (concern 1), the same singleflight `jobs.rs`
+orchestrator (concern 2), the same gc-managed `DirPolicy` weights directory
+(concern 3), and the same sha256 integrity gate (concern 6). **No new module,
+no new job type, no new download path** — this is the boring consequence of
+having built `models` modality-neutral from the start, not a new design.
+
+Two small additive things this wave-3 pass DOES add, both mechanical:
+
+- **`ModelConfig.modality: Modality` (additive field).** A config's
+  `[[models]]` entry tags itself `Text | Image | Video | Audio` (engine.md's
+  vocabulary, reused verbatim rather than inventing a parallel models-side
+  enum — one taxonomy, not two). `models` does not interpret the tag (it
+  never decides how a model is *served* — that stays `engine`'s job); it only
+  carries it through the registry so the inventory can be filtered/labeled by
+  modality downstream. Whisper and TTS entries both tag `Audio` — the S2T-vs-
+  T2S direction (input audio→text vs input text→audio) is a serving-time
+  distinction `engine`'s backend implementation cares about, not a
+  storage/download distinction `models` needs to represent; if a finer split
+  ever proves necessary it is `engine.md`'s `Modality` enum to extend, not a
+  second field here.
+- **Inventory publication gains a modality facet (proposed, flags `types.md`).**
+  Concern 5's `NodeCapabilities.models_available: Vec<ModelId>` today is a flat
+  list — a node advertising "I have qwen3-4b and whisper-base downloaded" gives
+  the router no cheap way to answer "which of this node's models are S2T?"
+  without a second lookup. The **boring additive fix**, proposed here for
+  `types.md`'s owner (the same style as concern 7's flagged `content_hash`
+  column — a component-side ask, not a component-owned contract change):
+  `NodeCapabilities.models_available: Vec<ModelId>` stays as-is (back-compat,
+  no breaking change), and gains a sibling `#[serde(default)]
+  models_by_modality: HashMap<Modality, Vec<ModelId>>` — a pure derived index
+  over the same inventory, populated by `inference`/`api` at assembly time from
+  `models`' registry (which now carries the tag above) zipped with each
+  `ModelConfig.modality`. This is the minimum shape a modality-aware router
+  affinity rule (or a future "give me an idle S2T node" placement query) would
+  need, without duplicating `models_available` or inventing a second
+  inventory channel. **Not designed further here** — it is `types.md`'s field
+  to accept or reshape; `models` only supplies the per-entry tag that makes it
+  derivable.
+
+**Storage: no VFS migration needed for this wave.** The "settled migration
+path" for model weights is concern 3's gc-managed local directory (today) with
+concern 1/6's peer-pull-via-VFS leg **deferred** pending vfs + operator
+blessing — that migration path is already modality-agnostic by construction
+(it keys on content hash and `DirPolicy`, never on file *kind*), so a whisper
+or TTS weight rides the identical deferred path the day it lands; nothing
+whisper/TTS-specific needs designing into vfs.md now.
+
+**Warm-model policy costs `models` nothing new.** A5.92's "warm-model policy"
+(keep a voice model loaded for always-on use) is a *resident/engine* decision
+(is_loaded, not is_downloaded) — out of `models`' boundary by the charter above.
+But it composes for free with concern 4's existing **lock-while-resident**
+invariant: whatever keeps a model `Idle`→`Interruptible` resident in `engine`
+already keeps `models`/`gc`'s lock renewed for exactly as long, so a
+perpetually-resident S2T/T2S model's weight is perpetually sweep-protected
+with zero new code — the warm-model policy "just works" through a mechanism
+this file already designed for ordinary swap-in/swap-out models.
+
 ## Relationships / edges
 
 Contract edges (models is a party):
@@ -300,6 +376,12 @@ Publication paths (models produces; another module owns the wire):
   the router's `node-state-poll`) and bridges models' `LifecycleEvent`s to the
   `inference-events` pub/sub the router consumes live (concern 5). models does not
   own those endpoints/topics — it owns the data and the delta events.
+- **is_downloaded-by-modality (NEW, wave-3, proposed)** → the same assembly
+  step additionally derives `NodeCapabilities.models_by_modality` (concern 8)
+  from `models`' per-entry `Modality` tag. Same producer/wire split as above:
+  models owns the tag on its data, `inference`/`api` owns turning it into the
+  capability struct's field — a proposed addition, not yet in the authored
+  `types.md` shape.
 
 Internal-lib seams (compiled-in, NOT contract edges — INTENT #29/#45): imports
 `substrate-types` (`ModelId`/`ModelConfig`/`ModelRow`/`ModelStatus`/`event`
@@ -326,11 +408,15 @@ swap (concern 3); the gc-race closure via `.partial` lock + `register_and_lock`
 (concern 4, with lock-while-resident flagged as a batch-5/6 dependency and a safe
 flat-ttl fallback); the inventory-publication split (concern 5 — `models_available`
 snapshot + `inference.model.*` deltas, is_loaded explicitly out of scope); and the
-sha256 integrity hardening (concern 6). **approach-sketched** for: the peer-pull
-`models-vfs` leg (concern 1/6 — the bandwidth optimization, deferred behind vfs +
-operator blessing) and the exact resident-transition signal wiring (concern 4 —
-reconciled with engine/scheduler in batch 5/6). No piece is left as a bare stub:
-the deferred items have a named edge and a designed shape.
+sha256 integrity hardening (concern 6); and the multi-modality tag + inventory
+facet (concern 8, wave-3 — mechanical: one additive `ModelConfig.modality`
+field, reusing engine.md's `Modality` enum, plus a proposed derived
+`NodeCapabilities.models_by_modality` map; no new download/storage mechanism).
+**approach-sketched** for: the peer-pull `models-vfs` leg (concern 1/6 — the
+bandwidth optimization, deferred behind vfs + operator blessing) and the exact
+resident-transition signal wiring (concern 4 — reconciled with engine/scheduler
+in batch 5/6). No piece is left as a bare stub: the deferred items have a named
+edge and a designed shape.
 
 ## Assigned design-depth
 
@@ -340,7 +426,10 @@ lib.rs::ensure_model` wiring, the `types::model` shapes, the batch-1/2/3 designs
 (types.md `node`/`event`/`pubsub`/`error`, gc.md `GcHandle`/`GcApi`/DirPolicy/
 `register_and_lock`, vfs.md content-plane/access-migrate/`ReplicaKind::Cache`,
 completion-router.md concerns 1–3 inventory feeds, service-registry NodeScoped,
-store.md `store-access`), and INTENT #4/#34/#48/#59/#66/#85.
+store.md `store-access`), and INTENT #4/#34/#48/#59/#66/#85. **Wave-3 light
+refresh (concern 8)** additionally grounded in engine.md concern 5's `Modality`
+enum and the ledger's A5.92/INTENT #157/#166 Q12 S2T/T2S-are-modalities
+settlement.
 
 ## Suggested fill-model
 
@@ -391,3 +480,12 @@ are superseded by them.
   vfs's `vfs-content` wire and needs operator blessing on weights entering the
   `vfs://models/` namespace; `model-ensure.md` records the reserved `Peer`
   source for it.
+- **`node.rs::NodeCapabilities` (models → types; types owns) — component-side
+  flag, wave-3, NOT authored as a contract-shape change here.** Concern 8
+  proposes an additive `models_by_modality: HashMap<Modality, Vec<ModelId>>`
+  sibling to the existing `models_available: Vec<ModelId>`, derived by
+  `inference`/`api` from `models`' new per-entry `ModelConfig.modality` tag
+  (itself reusing engine.md's `Modality` enum, not a new taxonomy). Same
+  category of ask as the `content_hash` flag above — `models` names the need
+  and supplies the source data; `types.md`'s owner decides the exact field
+  shape.

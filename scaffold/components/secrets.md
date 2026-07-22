@@ -1,19 +1,26 @@
 # secrets
 
 **Status:** NEW (round-6 lock; **RENAMED `vault` → `secrets` round-8**);
-**FULL DESIGN — wave 2, batch 3** (this pass supersedes the prior
-requirements-only stub). **Nesting:** top-level L3 app-crate (`lib/secrets`
-crate `substrate-secrets` + `bin/secrets` daemon/CLI). **Consumes (over the
-wire, never linked — INTENT #29):** mesh via `secrets-mesh` (registration +
-the mesh-brokered `secrets/` replicated keyspace), the OS keychain as
-root-of-trust, `db` via `db-secrets` (the Supabase push adapter), `aws` via
-`aws-secrets` (SM push + S3 CSE key handoff, design-only). **Consumed by:**
-`rollup`, `repo`, `vdb`/`db` handlers, `cc`/`org` agents, `environments`,
-`aws`/`vfs` (S3 encryption keys), `openrouter-mgmt`. Grounded in
-replicated-kv.md (opaque-bytes replication, `mirror_values` redaction, the
-delegated aws-mesh genesis-key circularity), db.md + `lib/db/src/vault.rs`
-(the real Supabase-Vault module = the Supabase adapter), aws.md, repo.md,
-rollup.md, types.md (guardrail 4, the reserved `error/secrets.rs`).
+**FULL DESIGN — wave 2, batch 3**; **CONSOLIDATED TO IMPLEMENTATION-READY —
+wave 3** (adds the secrets-manifest requirement, chassis adoption, explicit
+keep-ALL-versions, and the abstract blessing-queue relationship; this pass
+supersedes the prior requirements-only stub and refines, not reopens, the
+wave-2 design). **Nesting:** top-level L3 app-crate (`lib/secrets` crate
+`substrate-secrets` + `bin/secrets` daemon/CLI, now **built on `chassis`**
+— see concern 10). **Consumes (over the wire, never linked — INTENT #29):**
+mesh via `secrets-mesh` (registration + the mesh-brokered `secrets/`
+replicated keyspace), the OS keychain as root-of-trust, `db` via
+`db-secrets` (the Supabase push adapter), `aws` via `aws-secrets` (SM push +
+S3 CSE key handoff, design-only). **Consumed by:** `rollup`, `repo`,
+`vdb`/`db` handlers, `cc`/`org`/`keeper` agents, `environments`, `aws`/`vfs`
+(S3 encryption keys), `openrouter-mgmt`. Grounded in replicated-kv.md
+(opaque-bytes replication, `mirror_values` redaction, the delegated
+aws-mesh genesis-key circularity), db.md + `lib/db/src/vault.rs` (the real
+Supabase-Vault module = the Supabase adapter), aws.md, repo.md, rollup.md,
+chassis.md (the daemon-wrapper this crate now compiles against, incl. its
+abstract `BlessingTarget` seam), types.md (guardrail 4, the reserved
+`error/secrets.rs`), the wave-3 intent ledger (§A row 75, §C OQ-1
+design-around, INTENT #143/#156).
 
 > **NAMING HISTORY (round-8, LOCKED):** born `vault` (round-6); "vault"
 > REJECTED (collides with **Supabase Vault**, a push target), "SM" rejected
@@ -40,16 +47,21 @@ raw-vs-reference addressing model and the `llm_safe` fail-or-degrade policy;
 per-project / per-database / per-environment scoping; rotation and node
 enrollment; and the **push adapters** that mirror a secret out into an
 external secret store (Supabase Vault, local mesh DB, GitHub Actions, AWS
-Secrets Manager). Its boundary — what it does NOT own: the **replication
-mechanism** (that is `replicated-kv` inside mesh; secrets is a *tenant* of one
-mesh-brokered keyspace, not a replicator); **the secret↔workflow *linkage***
-(that is `repo`'s — secrets only pushes values when repo names the link);
-**which environment/database a deploy targets** (that is `environments`/`vdb`
-— secrets pushes where told); **its own daemon crypto being novel** (it uses
-boring, audited AEAD envelope encryption — no home-grown ciphers); and the
-external stores themselves (Supabase/GitHub/AWS hold their own copies; secrets
-is the source of truth and one-way mirrors outward). It must be "boring and
-not choppy."
+Secrets Manager). It also owns the **secrets manifest** — the declared,
+versioned record of which secrets a service *requires*, checked and
+reconciled at deploy time (concern 10, INTENT #143). Its boundary — what it
+does NOT own: the
+**replication mechanism** (that is `replicated-kv` inside mesh; secrets is a
+*tenant* of one mesh-brokered keyspace, not a replicator); **the secret↔workflow
+*linkage*** (that is `repo`'s — secrets only pushes values when repo names the
+link); **which environment/database a deploy targets** (that is
+`environments`/`vdb` — secrets pushes where told); **its own daemon crypto
+being novel** (it uses boring, audited AEAD envelope encryption — no
+home-grown ciphers); **who blesses a consistency-requiring secret write**
+(chassis's `BlessingTarget` seam is abstract by mandate — PARKED OQ-1, concern
+11); and the external stores themselves (Supabase/GitHub/AWS hold their own
+copies; secrets is the source of truth and one-way mirrors outward). It must
+be "boring and not choppy."
 
 ## Primary design concerns
 
@@ -153,10 +165,11 @@ MRK  Mesh Root Key  ──────────┘  — one mesh-wide symmetr
   clean split that makes "~3 copies" and "few nodes can actually read"
   independent knobs.
 - **Rotation** is two independent operations: **rotate a secret** (mint a new
-  DEK, re-encrypt the value, bump `version` — old ciphertext tombstoned via
-  KV) and **rotate the MRK** (mint MRK′, rewrap every DEK under MRK′ — cheap,
-  DEKs and ciphertexts are untouched — then re-enroll nodes with wrap(NK,MRK′)).
-  Both emit `secrets.rotated` events (metadata only).
+  DEK, re-encrypt the value, bump `version` — the **prior version's ciphertext
+  is kept, not tombstoned**; see concern 6's keep-ALL-versions rule, INTENT
+  #156) and **rotate the MRK** (mint MRK′, rewrap every DEK under MRK′ —
+  cheap, DEKs and ciphertexts are untouched — then re-enroll nodes with
+  wrap(NK,MRK′)). Both emit `secrets.rotated` events (metadata only).
 
 ### 3. Use-without-seeing — structural, not policy
 
@@ -285,8 +298,27 @@ pub enum SecretScope {
 }
 ```
 
-KV path: `secrets/<scope-encoded>/<name>` → one KV entry per secret,
-version-carried by the envelope. Resolution is **most-specific-wins** with an
+**Versioning: keep ALL versions, no cap (INTENT #156, LOCKED).** "Doesn't need
+to be three — keep them all, version them." A secret's history is therefore
+**append-only**, never pruned by the crate itself (a separate, later,
+operator-invoked retention/archival policy could exist, but secrets never
+silently drops a version). KV path is version-keyed, not name-keyed, so a
+rotation never overwrites an entry: `secrets/<scope-encoded>/<name>/<version>`
+holds one envelope per version forever; a small **pointer entry**
+`secrets/<scope-encoded>/<name>/HEAD` holds the current version number and is
+the only key rotation actually overwrites. Resolving "the current value" reads
+`HEAD` then the pointed-at versioned entry; resolving `SecretRef{ .., version:
+Some(v) }` reads that exact version directly — the same address form
+`use-without-seeing` (concern 3) already exposes, now load-bearing for
+history too: an agent may hold and reference an old `SecretRef` version
+without ever having seen its plaintext. Because every version is real
+ciphertext under its own `AAD`-bound envelope (concern 2), replaying an old
+version costs nothing extra to keep and nothing extra to replicate-correctly
+— `Replication::All` carries the full version history to every node exactly as
+it carries the current one. `secrets ls --versions <name>` and `secrets reveal
+<name> --version N` expose the history without adding a new access model.
+
+Resolution across **scope** (not version) is **most-specific-wins** with an
 explicit fallback chain (Environment → Database → Project → Global), so an
 environment can override a project default without duplicating unchanged
 secrets. Every resolve/use/push writes a provenance record (INTENT #85: "every
@@ -333,27 +365,159 @@ where the plaintext lives. Contract: `rollup-secrets`.
 
 ### 9. Boring surface — CLI + daemon + surface schema
 
-`bin/secrets` is a noun-verb `clap` CLI over `lib/secrets`, and a daemon
-registering with the local mesh (single-port locality, `mesh-client`):
+`bin/secrets` is a noun-verb `clap` CLI over `lib/secrets`, and a daemon built
+on **`chassis`** (concern 10 of `chassis.md`; see concern 10 below for what
+that buys):
 
 ```
 secrets set <name>  [--project P|--db P/D|--env P/E] [--from-stdin]   # create/update (value never in argv)
 secrets ref <name>  [--scope …]        # print a SecretRef (safe to paste anywhere)
-secrets ls          [--scope …]        # metadata only (name, scope, version, updated_at, adapters)
-secrets reveal <name>                  # the ONE plaintext path — local, audited, off the agent surface
+secrets ls          [--scope …] [--versions]   # metadata only; --versions lists the FULL kept history
+secrets reveal <name> [--version N]    # the ONE plaintext path — local, audited, off the agent surface
 secrets rm <name>
 secrets rotate <name> | secrets rotate --mrk
 secrets enroll <node> | secrets nodes  # key-hierarchy / enrollment ops
 secrets push <name> --adapter supabase|vdb|github|aws --target <…>
 secrets link <name> --workflow <owner/repo/workflow>   # delegates linkage to repo
+secrets manifest check <service>       # ensure-exists: verify a service's declared requirements (concern 10)
+secrets manifest ensure <service> --env E   # ensure-exists at deploy: create missing, error on unresolvable
 ```
 
 The daemon publishes a `SurfaceSchema` (`types::surface`) rendering
 metadata-only panels (never a value field; the `reveal` action carries
 `confirm: true` and is dashboard-hidden), so the boring dashboard renders it
 uniformly and agents can drive it — but the schema exposes no value-egress
-action. Participates in `restart-protocol` and `pubsub-protocol` like every
-service; `SecretsError` lands in `types::error::secrets` (the reserved slot).
+action. `SecretsError` lands in `types::error::secrets` (the reserved slot).
+
+### 10. Built on `chassis` — and the secrets manifest (INTENT #143)
+
+**Chassis adoption.** `bin/secrets` compiles in `lib/chassis` (INTENT #156)
+rather than hand-rolling registration/reconnect/restart-participation; what
+was written above (round-8/wave-2) as "a daemon registering with the local
+mesh (single-port locality, `mesh-client`)" now reads **"a service built on
+`chassis`"** — `mesh-client` retires (ledger D1), and chassis's absorption of
+its surface (register/resolve/subscribe/heartbeat/reconnect/re-announce, plus
+the restart-protocol client half and the generated `Contract` trait for
+`secrets-mesh`/`db-secrets`/`vdb-secrets`/`repo-secrets`/`rollup-secrets`/
+`aws-secrets`) is a straight substitution — no behavior in this file changes,
+only which crate supplies the plumbing. secrets supplies its own
+`RestartPolicy` (its `Interruptibility` is `CriticalSection` mid-rotation or
+mid-enrollment, `Idle` otherwise — a rotation or an MRK re-wrap must not be
+torn mid-flight) and its own `Contract` impls (concern 9's verbs plus the
+adapter push RPCs); chassis owns bring-up, the promise machinery for any push
+adapter call that can't answer synchronously (a GitHub API round-trip, an AWS
+SM call once built), and the outbox for any durable send. This is a pure
+adoption, not a redesign — flagged here so the fill wave doesn't rebuild what
+chassis already gives every service.
+
+**The secrets manifest — services declare required secrets (INTENT #143,
+NEW this wave).** A parallel branch's earlier db-vault work independently
+converged on a **secrets manifest**: a service-side declaration of the
+secrets it needs, checked so a calling service can't silently run without
+one. secrets' version of that requirement, per the operator's words: *"link
+directly to the secrets manager and ensure the secret exists — appropriate
+migrate-up and migrate-down behavior, linked to VERSIONS of secrets."* Three
+pieces:
+
+- **The declaration.** A service ships a `SecretsManifest` — the same shape
+  of thing `chassis`'s `.requires([dep("db", ">=1.4,<2"), …])` already does
+  for service-to-service version floors (ledger §A row 62's sibling idea,
+  applied to secrets instead of services):
+
+  ```rust
+  pub struct SecretsManifest {
+      pub service: String,                      // the mesh service slug this manifest belongs to
+      pub required: Vec<SecretRequirement>,
+  }
+  pub struct SecretRequirement {
+      pub name: String,
+      pub scope: SecretScopeTemplate,            // scope with holes: Project{project} filled at ensure-time
+      pub min_version: Option<u32>,               // None = "any version, just must exist"
+      pub optional: bool,                         // false by default — missing = hard block
+  }
+  ```
+
+  The manifest is authored alongside the service (a `secrets.manifest.toml` or
+  a `SecretsManifest::declare()` call at chassis bring-up — Filler's choice,
+  not frozen here) and is itself content-addressed/versioned like any other
+  service artifact, so "the manifest changed" is an observable, diffable
+  event, not a side effect.
+
+- **`ensure-exists` at deploy.** secrets subscribes to `repo.deployed`
+  (environments.md's declarative deploy trigger, INTENT #103) and, for a
+  service landing in a target environment/project, runs `manifest ensure`:
+  for each `SecretRequirement`, resolve the templated scope, check existence
+  (and `min_version` — concern 6's HEAD pointer makes "does version ≥ N
+  exist" a cheap check), and:
+  - **exists & satisfies `min_version`** → no-op, deploy proceeds;
+  - **missing & not `optional`** → the deploy is **blocked**, a
+    `SecretsError::ManifestUnsatisfied { service, name }` is surfaced (never a
+    silent partial deploy — INTENT #38's "no technical debt by design" reading
+    applied to deploy safety);
+  - **missing & `optional`** → warned, deploy proceeds;
+  - **exists but below `min_version`** → treated as missing for blocking
+    purposes (the service asked for a version floor for a reason — a stale
+    secret is not "close enough").
+  This is the same shape as chassis's version-floor check on inter-service
+  messages (chassis.md concern 2) — a manifest is a version-floor check
+  applied to *secrets* instead of *services*, so the two mechanisms rhyme on
+  purpose and a future harmonizer pass could plausibly unify their plumbing
+  (flagged, not done here — different owners, same shape).
+
+- **migrate-up / migrate-down, linked to secret VERSIONS.** Because secrets
+  keeps ALL versions (concern 6), a manifest bump is naturally reversible:
+  **migrate-up** = a manifest revision raises a requirement's `min_version` (or
+  adds a new required secret) — `ensure` at the next deploy provisions/rotates
+  to satisfy it. **migrate-down** = reverting to a prior manifest revision
+  drops the requirement back to its old `min_version` (or removes it) —
+  because no version was ever deleted, the rollback target's secret is
+  **already there**, so migrate-down is a pure manifest-state change, never a
+  data migration. This is the direct payoff of "keep all versions, no cap"
+  (INTENT #156): rollback of a *secret requirement* costs nothing extra
+  precisely because rollback of the *secret itself* was never needed. A
+  manifest revision is addressed the same way a stack definition is
+  (`vdb.md`'s ledger-head-as-version idiom) — a small, append-only history,
+  not a mutable pointer.
+
+**Prior art, credited not rebuilt.** The parallel-branch db-vault work is
+cited as the origin of the manifest idea (env-files + gitignore version,
+service-declares-requirements) — this design generalizes it to secrets'
+scope/version model rather than adopting its literal shape, since that branch
+predates the `SecretScope`/keep-all-versions decisions this crate already
+made. Contract seam: `secrets-environments` gains the `repo.deployed`
+subscription and the `ManifestUnsatisfied` error as an anticipated addition
+(named here; content deferred with the rest of that stub-track contract,
+consistent with its existing status).
+
+### 11. The blessing queue's relationship to secret writes — ABSTRACT (PARKED OQ-1)
+
+chassis (INTENT #157) gives every service, secrets included, a **blessing
+queue**: a consistency-requiring change can be enqueued locally and submitted
+to an abstract `BlessingTarget` on reconnect (chassis.md concern 7). Whether
+a *secret write* is one of those consistency-requiring changes is left
+**deliberately unresolved** here, per the ledger's OQ-1 design-around rule
+(§C: "keep flexible... do not thread an authority dependency into any other
+contract").
+
+**What this file commits to:** secrets writes (set/rotate/enroll) already
+have a correctness story that does not depend on blessing —
+`replicated-kv`'s naive last-write-wins + HLC ratchet (ledger §A row 29)
+governs ordinary KV convergence, and MRK rotation's re-enrollment step is
+already an explicit, operator-confirmed, one-node-at-a-time act (concern 2)
+that is not racy the way an offline double-write could be. So secrets does
+**not** require the blessing queue to function correctly at v1.
+
+**What is left open, on purpose:** a *future* tightening — e.g. "two disjoint
+partitions each rotated the same secret while split, which rotation wins" —
+is exactly the kind of consistency-requiring race OQ-1's authority-vs-no-
+authority question is about, and secrets **could** later route MRK rotation
+and enrollment through chassis's blessing queue as a `BlessingRequest` (its
+`schema_id` would be the secrets-rotation schema, its `change_id` the
+secret's `id` + target `version`). This file does **not** wire that up now:
+no code path in this design submits a `BlessingRequest`, and no contract here
+gains a `BlessingTarget` dependency. The seam is named so a future pass has
+somewhere obvious to attach it, and left otherwise untouched — abstract, as
+directed.
 
 ## Relationships / edges
 
@@ -389,6 +553,11 @@ service; `SecretsError` lands in `types::error::secrets` (the reserved slot).
   mesh-internal `KvHandle`; it reaches the `secrets/` keyspace only through
   `secrets-mesh`. The tenancy is blessed by KV concern 8 (the anticipated
   "secrets-adjacent keyspace").
+- **chassis** — **shared-lib dependency, NOT a contract edge** (like `schema`'s
+  codegen dependency on chassis's own edges list). `bin/secrets` compiles in
+  `lib/chassis` for bring-up/reconnect/restart/promise/outbox mechanics
+  (concern 10); the abstract `BlessingTarget` seam is present but unused by
+  this design (concern 11, PARKED OQ-1). → `scaffold/components/chassis.md`
 
 ## Nesting
 
@@ -399,21 +568,30 @@ Parent: none | Children: none. Dual-role crate like `db`/`gc`: `lib/secrets`
 ## Thoroughness level
 
 **implementation-ready** for the core: storage model (ciphertext-in-KV +
-keychain), the three-tier envelope key hierarchy with rotation/enrollment, the
-use-without-seeing SecretRef/resolve-to-sink model, the `llm_safe`
+keychain, now explicitly **version-keyed with a HEAD pointer, keep-ALL-
+versions**), the three-tier envelope key hierarchy with rotation/enrollment,
+the use-without-seeing SecretRef/resolve-to-sink model, the `llm_safe`
 fail-or-degrade policy, scoping/provenance, the adapter trait + the three
 build-now adapters (Supabase-reuse, local-mesh-db, GitHub Actions), the
-genesis-key resolution, and the CLI/surface. **approach-sketched** for: the
-AWS Secrets Manager adapter (DESIGN-ONLY by mandate — data contract only), the
-`secrets-environments`/`openrouter-secrets` L6-stub edges (named, content
-deferred), and the headless-Pi keychain fallback (approach given, the
-allow-MRK-on-headless question is the operator's).
+genesis-key resolution, the CLI/surface, **chassis adoption** (concern 10),
+and the **secrets-manifest / ensure-exists / migrate-up-down model** (concern
+10). **approach-sketched** for: the AWS Secrets Manager adapter (DESIGN-ONLY
+by mandate — data contract only), the `secrets-environments`/
+`openrouter-secrets` L6-stub edges (named, content deferred; the manifest's
+`repo.deployed` hook is named on `secrets-environments` but not built), the
+headless-Pi keychain fallback (approach given, the allow-MRK-on-headless
+question is the operator's), and the manifest's own authoring format
+(`.toml` vs a `declare()` call — Filler's choice). **Deliberately abstract by
+mandate:** the blessing queue's relationship to secret writes (concern 11,
+PARKED OQ-1) — the seam is named, nothing wired.
 
 ## Assigned design-depth
 
-Opus (single Component-Designer pass, this file), per the wave2-plan model
-tier, grounded in replicated-kv.md/types.md/db.md/aws.md/repo.md/rollup.md,
-the real `lib/db/src/vault.rs`, and INTENT #78/#92/#94/#99/#105.
+Opus (single Component-Designer pass, wave 2; consolidated wave 3 by the
+`secrets-consolidated` unit, same file), per the wave2-plan/wave3 model tier,
+grounded in replicated-kv.md/types.md/db.md/aws.md/repo.md/rollup.md/
+chassis.md, the real `lib/db/src/vault.rs`, INTENT #78/#92/#94/#99/#105/#143/
+#156, and the wave-3 intent ledger (§A row 75, §C OQ-1).
 
 ## Suggested fill-model
 
@@ -421,10 +599,14 @@ the real `lib/db/src/vault.rs`, and INTENT #78/#92/#94/#99/#105.
 tests FIRST.** The envelope/wrap/unwrap and AAD-binding must be conformance-
 tested before anything else (round-trip, wrong-key-fails, relabel-attack-fails,
 rotate-MRK-preserves-plaintext, enroll-then-decrypt, replica-without-MRK-
-cannot-read), and the `llm_safe` refusal must be tested against a spoofed
-caller identity. Adapters are transcription-grade once the trait is fixed (the
-Supabase one is a WS/CLI shim over existing code). Do NOT send the crypto core
-to a cheap model — the failure mode is silent disclosure, not a crash.
+cannot-read, **version-history-never-overwritten**), and the `llm_safe`
+refusal must be tested against a spoofed caller identity. Adapters are
+transcription-grade once the trait is fixed (the Supabase one is a WS/CLI shim
+over existing code). The manifest's `ensure-exists` check (concern 10) is
+mid-model-safe (a lookup + comparison, no crypto). Do NOT send the crypto core
+to a cheap model — the failure mode is silent disclosure, not a crash. Fill
+secrets **after** chassis is filled (concern 10's adoption is a real build
+dependency, not just a design reference).
 
 ---
 
@@ -443,4 +625,35 @@ formerly in this section are superseded by the authored contracts.
 - `secrets-environments` / `openrouter-secrets` — stub-track (anticipated, content deferred). → `scaffold/contracts/secrets-environments.md`, `scaffold/contracts/openrouter-secrets.md`
 
 Also a party to (authored elsewhere / cross-cutting): `db-control-plane`, `pubsub-protocol`, `service-lookup` — see `scaffold/contracts/`.
+
+## Proposed contracts (wave 3)
+
+secrets does not own any contract file (all are shared with a party crate),
+so wave-3 contract-shape changes are recorded here as **proposals for the
+harmonizer / the owning contract's next revision**, not applied directly to
+files this unit doesn't own:
+
+- **`chassis` shared-lib adoption is NOT a contract edge** (see Relationships)
+  — no contract file needs a new party, but every existing `secrets-*`
+  contract's "registers with the local mesh" language should be read as
+  "registers via chassis" going forward. No wording change forced on the
+  contract files themselves (they already say "over the wire, mesh-relayed,"
+  which remains true).
+- **`secrets-environments` gains an anticipated hook**: a `repo.deployed`
+  subscription and a `SecretsError::ManifestUnsatisfied { service, name }`
+  error variant, for the manifest's `ensure-exists` check (concern 10). Named
+  here; **not authored** — `secrets-environments` stays stub-track content-
+  deferred (environments.md is L6, NOT implemented in v1) and this unit does
+  not edit that contract file. The harmonizer or a future environments design
+  pass should fold this in when that file leaves the stub track.
+- **`SecretsManifest`/`SecretRequirement` land in `types::secrets`** alongside
+  `SecretRef`/`SecretScope` (types.md is a sibling-owned file; flagged for the
+  harmonizer, not edited here) — they are pure data shapes with no wire
+  behavior of their own; `manifest check`/`manifest ensure` are `bin/secrets`
+  CLI verbs, not new mesh RPCs, so no existing contract's message enum needs a
+  new variant to support them.
+- **No `BlessingTarget` dependency added anywhere** (concern 11) — recorded
+  explicitly so a future contract-graph audit can confirm this file introduced
+  none, consistent with chassis.md's own "no authority dependency threaded
+  into any other contract" discipline.
 
