@@ -2146,6 +2146,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "substrate-ccw"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "substrate-types",
+ "tempfile",
+ "thiserror 1.0.69",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "substrate-ccw-bin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "serde_json",
+ "substrate-ccw",
+ "substrate-types",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "substrate-db"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,18 @@
+[package]
+name = "substrate-ccw-bin"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ccw"
+path = "src/main.rs"
+
+[dependencies]
+substrate-ccw = { workspace = true }
+substrate-types = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

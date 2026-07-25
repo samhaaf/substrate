@@ -6,6 +6,8 @@ members = [
     "bin/gc",
     "bin/db",
     "bin/gateway",
+    "bin/ccw",
+    "lib/ccw",
     "lib/types",
     "lib/store",
     "lib/gc",
@@ -98,3 +100,4 @@ substrate-inference  = { path = "lib/inference" }
 substrate-mesh      = { path = "lib/mesh" }
 substrate-gc        = { path = "lib/gc" }
 substrate-db        = { path = "lib/db" }
+substrate-ccw       = { path = "lib/ccw" }

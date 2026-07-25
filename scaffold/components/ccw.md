@@ -1,4 +1,21 @@
-# cc
+# ccw
+
+> **RENAMED `cc` → `ccw` (Claude Code Wrapper, 2026-07-24, INTENT #205).** The
+> operator: "We were calling it CCD before, but it didn't make sense because
+> everything is a daemon. CCW makes sense because it's wrapping an external
+> service." This supersedes the `cc` name from #131 (below). The component file
+> was `git mv`'d `cc.md` → `ccw.md` this pass; the v0 crate landed as
+> `lib/ccw` (package `substrate-ccw`) + `bin/ccw` (binary `ccw`).
+>
+> **RENAME DEBT (for the harmonizer) — NOT done this pass.** A thorough
+> `cc → ccw` rename touches ~26 component files and many contracts (the
+> `cc.*` topic prefix, `types::cc`, and the contract set `cc-events`,
+> `cc-escalation`, `cc-projects` → `ccw-events`, `ccw-escalation`,
+> `ccw-projects`; plus the downstream compound names `rollup-cc`, `org-on-cc`,
+> `spend-cc`, `agents-cc` → `*-ccw`). That sprawl is out of scope for the v0
+> code deliverable and was deliberately left as one clean harmonization sweep
+> rather than a half-rename. The shipped crate/binary/registry-slug are `ccw`;
+> the scaffold prose below still reads `cc` pending that sweep.
 
 > **RENAMED `ccd` → `cc` (friction-round 3, 2026-07-20, INTENT #131).** The
 > operator: "They're all daemons — we don't need this one to be special. It's
@@ -746,3 +763,60 @@ Component-side notes:
   priorities 9 and 1, admit the priority-9 work first and `Defer` the priority-1
   work when only one fits under the guard — the caller-priority path the
   keeper layer depends on.
+
+---
+
+## v0 SHIPPED (2026-07-24) — the standalone Claude Code Wrapper
+
+The first real code deliverable landed on V1 (INTENT #202/#205/#207, green-lit
+"write the CCW and run unit tests and tell me when it's green"). v0 is
+deliberately **boring and standalone** — NO mesh / chassis / rollup / keeper
+dependencies. It is a drop-in prefix: `ccw run --budget x -- claude …` behaves
+like `claude …`.
+
+**Crates:** `lib/ccw` (package `substrate-ccw`, all logic) + `bin/ccw` (thin
+`clap` CLI, binary `ccw`). Both added to the workspace members.
+
+**State home:** `~/.leverage/ccw/` — `ccw.db` (SQLite, WAL, so concurrent
+wrappers coordinate through it) + `accounts.toml`.
+
+**What v0 built (vs. the wave-2/3 scaffold above, which stays the north star):**
+
+- **Accounts** — `accounts.toml` registry (name → `CLAUDE_CONFIG_DIR`, the
+  isolation mechanism per `reports/cc-recon.md` §1). First run auto-registers
+  the machine default (`~/.claude`, env unset) as `default` — the
+  already-logged-in Max account — so everything works immediately; a second
+  account is added later via `ccw account add`. `ccw account list` does a live,
+  timeout-guarded `claude auth status` per account.
+- **Budgets** — schema-versioned rules JSON (`schema_version` + `sdk`), v1 =
+  20% weekly of ONE account + 50% session backoff. `budget add/list/status`.
+  The `schema_version` field is the room for Cursor / other SDK budget shapes
+  later (documented, NOT implemented).
+- **`ccw run --budget <id> [--account <name>|auto] [--no-wait] -- <claude args>`**
+  — resolve account → zero-cost `/usage` pre-flight (session-backoff + weekly
+  token cap) → block/wait (emit `{"ccw":"pending","reason":…,"eta":…}` to
+  stdout + a human ETA to stderr; `--no-wait` exits 75 `EX_TEMPFAIL`) → spawn
+  `claude` transparently (`CLAUDE_CONFIG_DIR` set, stdio inherited, args
+  verbatim) → post-run transcript extraction (per-model usage + 429 detection
+  from `<configdir>/projects/<escaped-cwd>/*.jsonl`) + second `/usage` poll →
+  ledger.
+- **No estimates, ever (INTENT #202)** — weekly enforcement is in TOKENS and
+  only bites once a tokens-per-percent calibration exists per `(account, pool)`,
+  learned from observed `/usage` percentage deltas paired with observed
+  consumption. Until then, weekly enforcement reports `calibrating` and only
+  the session-backoff rule applies.
+- **`ccw status` / `ccw usage`** — live pool %/resets per account + budget
+  consumption/limits/calibration state (human + `--json`); recent ledger rows.
+
+**Deferred to the scaffold above (still future, unchanged by v0):** the
+declarative usage-game strategy language, `cc-escalation` DLQ/loop-depth
+investigation dispatch, `rollup` prefix/plugin assembly, thread↔project↔
+environment linking, mesh/chassis supervision & orphan re-adoption, and
+`spend` pull. **Mid-run kill-switch** is a documented future config seam
+(v0 default = observe-don't-kill: overage debits the budget so the NEXT run
+blocks); see `lib/ccw` docs (`run::RunOptions`).
+
+**Tests:** `cargo test -p substrate-ccw` — 35 green (usage parse, transcript +
+429 extraction, reset-prose parse/resolve/ETA, budget math + calibration +
+admission, pending JSON shape, store/registry round-trips). `cargo check
+--workspace` clean.
