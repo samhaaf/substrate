@@ -12,6 +12,7 @@ use rusqlite::{params, Connection};
 use substrate_types::{Result, SubstrateError};
 
 use crate::budget::BudgetRules;
+use crate::event::{CcwEvent, SeqEvent};
 
 const SCHEMA_SQL: &str = include_str!("../schema.sql");
 
@@ -68,6 +69,21 @@ pub struct CalibrationRecord {
     pub tokens_per_percent: f64,
     pub updated_at: Option<String>,
     pub sample_count: u64,
+}
+
+/// A persisted session (thread) row.
+#[derive(Debug, Clone)]
+pub struct SessionRow {
+    pub id: String,
+    pub account: Option<String>,
+    pub cwd: Option<String>,
+    pub model: Option<String>,
+    pub budget_id: Option<String>,
+    pub spec_json: String,
+    pub status: String,
+    pub last_seq: u64,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 /// An account-seen row (from `claude auth status`).
@@ -397,5 +413,138 @@ impl Store {
         )
         .map_err(sqlite_err)?;
         Ok(())
+    }
+
+    // ── sessions (v1 daemon) ─────────────────────────────────────────────
+
+    /// Insert a new session row (idempotent on id).
+    pub fn insert_session(&self, s: &SessionRow) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO sessions
+                (id, account, cwd, model, budget_id, spec_json, status, last_seq, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(id) DO UPDATE SET
+                account=excluded.account, cwd=excluded.cwd, model=excluded.model,
+                budget_id=excluded.budget_id, spec_json=excluded.spec_json,
+                updated_at=excluded.updated_at",
+            params![
+                s.id, s.account, s.cwd, s.model, s.budget_id, s.spec_json,
+                s.status, s.last_seq as i64, s.created_at, s.updated_at,
+            ],
+        )
+        .map_err(sqlite_err)?;
+        Ok(())
+    }
+
+    /// Update a session's status + last_seq watermark.
+    pub fn update_session_status(&self, id: &str, status: &str, last_seq: u64) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE sessions SET status=?2, last_seq=?3, updated_at=?4 WHERE id=?1",
+            params![id, status, last_seq as i64, now_rfc3339()],
+        )
+        .map_err(sqlite_err)?;
+        Ok(())
+    }
+
+    fn map_session(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
+        Ok(SessionRow {
+            id: r.get(0)?,
+            account: r.get(1)?,
+            cwd: r.get(2)?,
+            model: r.get(3)?,
+            budget_id: r.get(4)?,
+            spec_json: r.get(5)?,
+            status: r.get(6)?,
+            last_seq: r.get::<_, i64>(7)? as u64,
+            created_at: r.get(8)?,
+            updated_at: r.get(9)?,
+        })
+    }
+
+    pub fn get_session(&self, id: &str) -> Result<Option<SessionRow>> {
+        let conn = self.conn()?;
+        let r = conn
+            .query_row(
+                "SELECT id, account, cwd, model, budget_id, spec_json, status, last_seq, created_at, updated_at
+                 FROM sessions WHERE id = ?1",
+                params![id],
+                Self::map_session,
+            )
+            .ok();
+        Ok(r)
+    }
+
+    pub fn list_sessions(&self, limit: usize) -> Result<Vec<SessionRow>> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, account, cwd, model, budget_id, spec_json, status, last_seq, created_at, updated_at
+                 FROM sessions ORDER BY updated_at DESC LIMIT ?1",
+            )
+            .map_err(sqlite_err)?;
+        let rows = stmt
+            .query_map(params![limit as i64], Self::map_session)
+            .map_err(sqlite_err)?;
+        rows.collect::<std::result::Result<_, _>>().map_err(sqlite_err)
+    }
+
+    // ── event log (v1 daemon) ────────────────────────────────────────────
+
+    /// Append one sequenced event to the log (system of record for history +
+    /// resume). Returns the row id.
+    pub fn append_event(&self, ev: &SeqEvent) -> Result<i64> {
+        let conn = self.conn()?;
+        let payload = serde_json::to_string(&ev.event).map_err(SubstrateError::from)?;
+        conn.execute(
+            "INSERT INTO events (session_id, seq, kind, payload_json, ts)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(session_id, seq) DO NOTHING",
+            params![ev.session_id, ev.seq as i64, ev.event.kind(), payload, now_rfc3339()],
+        )
+        .map_err(sqlite_err)?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Paged history for a session: events with `seq > after_seq`, ascending,
+    /// capped at `limit`. Serves the WS `sessions.history` call.
+    pub fn list_events(&self, session_id: &str, after_seq: u64, limit: usize) -> Result<Vec<SeqEvent>> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT seq, payload_json FROM events
+                 WHERE session_id = ?1 AND seq > ?2 ORDER BY seq ASC LIMIT ?3",
+            )
+            .map_err(sqlite_err)?;
+        let rows = stmt
+            .query_map(params![session_id, after_seq as i64, limit as i64], |r| {
+                Ok((r.get::<_, i64>(0)? as u64, r.get::<_, String>(1)?))
+            })
+            .map_err(sqlite_err)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (seq, payload) = row.map_err(sqlite_err)?;
+            let event: CcwEvent = serde_json::from_str(&payload).map_err(SubstrateError::from)?;
+            out.push(SeqEvent {
+                session_id: session_id.to_string(),
+                seq,
+                event,
+            });
+        }
+        Ok(out)
+    }
+
+    /// The highest seq recorded for a session (0 if none) — resume watermark.
+    pub fn max_seq(&self, session_id: &str) -> Result<u64> {
+        let conn = self.conn()?;
+        let seq: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(seq), 0) FROM events WHERE session_id = ?1",
+                params![session_id],
+                |r| r.get(0),
+            )
+            .map_err(sqlite_err)?;
+        Ok(seq.max(0) as u64)
     }
 }

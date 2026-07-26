@@ -10,9 +10,7 @@ path = "src/main.rs"
 [dependencies]
 substrate-ccw = { workspace = true }
 substrate-types = { workspace = true }
-clap = { workspace = true }
 anyhow = { workspace = true }
-serde_json = { workspace = true }
-chrono = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

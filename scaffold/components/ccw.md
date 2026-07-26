@@ -766,7 +766,90 @@ Component-side notes:
 
 ---
 
-## v0 SHIPPED (2026-07-24) — the standalone Claude Code Wrapper
+## v1 SHIPPED (2026-07-25) — the pure WebSocket daemon (SUPERSEDES v0)
+
+**The CLI is DELETED.** INTENT #208 rejected the v0 CLI-wrapper shape outright:
+"we don't need a command line tool, we need a service... one service running on a
+port... always watching and handling retries... if it's a daemon and we're
+already building it for WebSockets, there's no reason to wrap it in a CLI. Just
+kill the CLI. Assume I'm never going to directly call Cloud Code again — it's
+only managed by this service." v1 is that service. The v0 `ccw run|status|budget`
+subcommands and `bin/ccw/src/cli.rs` are gone; `bin/ccw` now runs the daemon and
+takes at most an optional config path.
+
+**Shape.** One binary (`bin/ccw`, binary `ccw`) starts the daemon; all logic in
+`lib/ccw` (`substrate-ccw`). Config from `~/.leverage/ccw/config.toml` (`port`,
+`host`, `data_dir`, `claude_bin`, inline `accounts`). **WS API on a fixed port —
+default 3651** (mesh reserves 3649; 3650 left as a gap). The WS wire is THE data
+contract other Leverage services use — authored as `scaffold/contracts/ccw-api.md`.
+
+**CCW OWNS claude invocation.** Every turn spawns with the canonical streaming
+recipe (`-p --output-format stream-json --verbose --model … --session-id/--resume`,
+prompt on stdin, API key stripped, auto-memory off, the two subagent-survival env
+vars set), parses the live stream into a full `CcwEvent` taxonomy (persisted to a
+SQLite event log AND pushed to WS subscribers), and governs it. Grounded on the
+fresh recon (`reports/ccw-v1-recon.md`) — the event taxonomy, subagent-liveness
+strategy, spawn recipe, tool clean-slate mechanics, retry triggers.
+
+**What v1 built:**
+- **Sessions** — `sessions.start/send/resume/list/history/cancel` over WS. A
+  session is a thread with a stable id (== claude session uuid); it survives a
+  daemon restart (rehydrated from the ledger, `seq` continues).
+- **Live event stream** — subscribe per-session or firehose. EVERY event is
+  surfaced (nothing dropped, unlike aui): assistant text/tool_use/tool_result,
+  `thinking` (kept), per-message + per-turn usage, `system_init`/`compacted`/
+  `stream_event`/`agent_listing_delta`/`unknown`, subagent spawn/launch/completion,
+  and the wrapper meta-events (`budget_pending`/`account_switched`/`retry_started`/
+  `limit_hit`/`calibration_updated`).
+- **Subagent liveness (the operator's CRITICAL requirement)** — a session reports
+  BUSY while the parent process runs OR any async subagent's transcript is still
+  churning; `liveness` heartbeats carry the running-subagent list. A `busy:true`
+  beat fires the moment the parent `result` streams if async agents remain — a
+  subscriber never mistakes parent-result for thread-idle (the idle-illusion fix).
+- **Retries per policy** — 429 → switch account / wait-to-reset; 5xx/overload/
+  conn-drop → bounded backoff; `error_during_execution` → retry once; ceilings +
+  expired-resume classified correctly (`retry`/`retry.rs`).
+- **Budgets/accounts/status over WS** — `budgets.add/list`, `accounts.list`,
+  `accounts.status` (live zero-cost `/usage` pools), `ledger.query`. Pre-spawn
+  admission unchanged from v0 (20%-weekly/50%-session template, no estimates);
+  observe-don't-kill mid-run default.
+- **Tool clean-slate** — per-session `tools.clean_slate` emits `--tools ""` to
+  deactivate every built-in, then injects a provided tool set (`--agents`,
+  `--plugin-dir`, allow/deny fences) — "our entire Leverage OS needs to engineer
+  its own tools. No direct file writes or bash execution from our agents."
+- **Event log** — SQLite `sessions` + `events` tables (extend the v0 schema);
+  `(session_id, seq)` backs history/resume; the WS `sessions.history` serves from
+  here, NOT claude's on-disk transcripts.
+
+**Kept from v0 as internal libraries** (CLI surface removed): the accounts
+registry (`accounts`), budget engine + admission math (`budget`), calibration
+math + ledger (`store`), zero-cost `/usage` introspection (`usage`/`reset`/
+`claude`), transcript extraction (`transcript`, now a calibration source). The v0
+`run` module survives as internal preflight/calibration helpers.
+
+**Stubbed seam (INTENT #208):** **rollup** — `sessions.start` accepts a `rollup`
+ref that v1 REJECTS with not-implemented. Intent: CCW will assemble prompts/
+plugins via `rollup` ("inside CCW we're going to have it do rollup — that's going
+to be huge"). `rollup-cc` stays the consumer edge, unchanged.
+
+**Tests:** `cargo test -p substrate-ccw` — 59 green (the 35 v0 unit tests +
+stream-taxonomy mapping, spawn/clean-slate flag construction, retry
+classification, and WS protocol round-trips driven against a FAKE claude binary:
+event-stream correctness, liveness-busy-while-subagent-runs, 429 retry
+meta-events, budget_pending shape, history paging, budgets/accounts surfaces,
+rollup-rejected). NO real claude invocations in tests. `cargo check --workspace`
+clean. Manually verified: real daemon on a local port, WS `accounts.status`
+against the live Max account (zero-cost `/usage` only) returned session/weekly/
+Fable pools.
+
+---
+
+## v0 SHIPPED (2026-07-24) — the standalone Claude Code Wrapper (SUPERSEDED by v1)
+
+> **SUPERSEDED (2026-07-25, INTENT #208).** The CLI-wrapper shape below was
+> rejected and rebuilt as the v1 daemon (above). Kept for history; the accounts/
+> budget/calibration/ledger/`/usage` internals it describes SURVIVE as libraries
+> — only the `ccw run|status|budget` CLI surface was killed.
 
 The first real code deliverable landed on V1 (INTENT #202/#205/#207, green-lit
 "write the CCW and run unit tests and tell me when it's green"). v0 is

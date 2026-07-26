@@ -99,7 +99,7 @@ fn output_with_timeout(mut cmd: Command, timeout: Duration) -> Result<std::proce
 /// Run the zero-cost `/usage` introspection under an account.
 /// `--no-session-persistence` keeps it from leaving a session file.
 pub fn usage_snapshot(config_dir: Option<&Path>, timeout: Duration) -> Result<UsageSnapshot> {
-    let mut cmd = Command::new("claude");
+    let mut cmd = Command::new(crate::spawn::claude_bin());
     cmd.args([
         "-p",
         "/usage",
@@ -115,7 +115,7 @@ pub fn usage_snapshot(config_dir: Option<&Path>, timeout: Duration) -> Result<Us
 
 /// Run `claude auth status` under an account.
 pub fn auth_status(config_dir: Option<&Path>, timeout: Duration) -> Result<AuthStatus> {
-    let mut cmd = Command::new("claude");
+    let mut cmd = Command::new(crate::spawn::claude_bin());
     cmd.args(["auth", "status"]);
     apply_config_dir(&mut cmd, config_dir);
     let out = output_with_timeout(cmd, timeout)?;
@@ -187,7 +187,7 @@ pub fn find_transcript(
 /// Spawn `claude` transparently with all args passed verbatim and stdio
 /// inherited. Returns the child's exit code (or 1 if killed by signal).
 pub fn spawn_passthrough(config_dir: Option<&Path>, args: &[String]) -> Result<i32> {
-    let mut cmd = Command::new("claude");
+    let mut cmd = Command::new(crate::spawn::claude_bin());
     cmd.args(args);
     apply_config_dir(&mut cmd, config_dir);
     cmd.stdin(Stdio::inherit())

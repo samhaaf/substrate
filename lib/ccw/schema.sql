@@ -64,3 +64,38 @@ CREATE TABLE IF NOT EXISTS calibrations (
     sample_count       INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (account, pool)
 );
+
+-- ── v1 daemon (INTENT #208) ─────────────────────────────────────────────
+-- CCW v1 owns claude invocation; sessions (threads) and their full event
+-- streams are persisted here so the WS `sessions.history`/resume surfaces
+-- serve from CCW's own event log (not from claude's on-disk transcripts).
+
+-- One row per CCW session (thread). `claude_session_id` is the uuid CCW mints
+-- and passes to `--session-id` / `--resume`. `spec_json` is the SessionSpec
+-- (cwd, model, account, budget, tool config, options) captured at start.
+CREATE TABLE IF NOT EXISTS sessions (
+    id                TEXT PRIMARY KEY,   -- CCW session id (== claude session uuid)
+    account           TEXT,
+    cwd               TEXT,
+    model             TEXT,
+    budget_id         TEXT,
+    spec_json         TEXT NOT NULL,      -- full SessionSpec blob
+    status            TEXT NOT NULL DEFAULT 'idle',
+    last_seq          INTEGER NOT NULL DEFAULT 0,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_account ON sessions(account);
+
+-- The CCW event log: every CcwEvent, monotonically sequenced per session.
+-- (session_id, seq) is the resume/paging cursor the WS history call reads.
+CREATE TABLE IF NOT EXISTS events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id   TEXT NOT NULL,
+    seq          INTEGER NOT NULL,
+    kind         TEXT NOT NULL,           -- CcwEvent variant tag (for cheap filtering)
+    payload_json TEXT NOT NULL,           -- the full serialized CcwEvent
+    ts           TEXT NOT NULL,
+    UNIQUE (session_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_events_session_seq ON events(session_id, seq);

@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Fake `claude` binary for CCW v1 WS tests. Emits canned stream-json (never a
+# real invocation). The turn MODE is chosen from the prompt text (on stdin) so
+# parallel tests never race on a shared env var:
+#   prompt contains "subagent"  — an async Agent still running at parent result
+#   prompt contains "ratelimit" — first call emits a synthetic 429; retry succeeds
+#   otherwise                   — basic: system init, assistant text, result
+#
+# The `/usage` probe (detected in argv) prints a canned pool snapshot; its
+# session % comes from FAKE_SESSION_PCT. Ratelimit uses a per-prompt marker
+# under FAKE_STATE_DIR so distinct tests are isolated.
+set -u
+
+STATE_DIR="${FAKE_STATE_DIR:-/tmp}"
+SESSION_PCT="${FAKE_SESSION_PCT:-42}"
+args="$*"
+
+# ── zero-cost /usage probe (argv, stdin is null) ──────────────────────────
+if [[ "$args" == *"/usage"* ]]; then
+  printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":8,"num_turns":0,"result":"Current session: %s%% used resets Jul 25 at 1:59am (America/Chicago)\\nCurrent week (all models): 30%% used resets Jul 25 at 12:59pm (America/Chicago)","session_id":"usage-fake","total_cost_usd":0,"usage":{},"modelUsage":{}}\n' "$SESSION_PCT"
+  exit 0
+fi
+
+PROMPT="$(cat)"
+
+emit_init() {
+  echo '{"type":"system","subtype":"init","session_id":"fake-sess","cwd":"/tmp","model":"claude-fable-5","tools":["Bash","Read"],"mcp_servers":[],"permissionMode":"bypassPermissions","slash_commands":["/usage"],"apiKeySource":"none","agents":[]}'
+}
+emit_text() {
+  echo '{"type":"assistant","message":{"model":"claude-fable-5","content":[{"type":"text","text":"Hello from fake claude."}],"usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}'
+}
+emit_result() {
+  echo '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.01,"num_turns":1,"duration_ms":50,"stop_reason":"end_turn","modelUsage":{"claude-fable-5":{"inputTokens":105,"outputTokens":25,"cacheReadInputTokens":0,"cacheCreationInputTokens":0,"costUSD":0.01}},"session_id":"fake-sess"}'
+}
+
+if [[ "$PROMPT" == *"ratelimit"* ]]; then
+  TOKEN="$(printf '%s' "$PROMPT" | cksum | cut -d' ' -f1)"
+  MARKER="$STATE_DIR/ccw-rl-$TOKEN"
+  if [[ ! -f "$MARKER" ]]; then
+    : > "$MARKER"
+    emit_init
+    echo '{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"text","text":"You have hit your session limit resets 2:40am (America/Chicago)"}],"usage":{}},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}'
+    exit 0
+  else
+    emit_init; emit_text; emit_result; exit 0
+  fi
+elif [[ "$PROMPT" == *"subagent"* ]]; then
+  OUT="$STATE_DIR/ccw-agent-$(printf '%s' "$PROMPT" | cksum | cut -d' ' -f1).jsonl"
+  echo '{"type":"assistant","message":{"model":"claude-fable-5","content":[{"type":"text","text":"working"}]}}' > "$OUT"
+  emit_init
+  emit_text
+  echo '{"type":"assistant","message":{"model":"claude-fable-5","content":[{"type":"tool_use","id":"toolu_agent1","name":"Agent","input":{"description":"do work","subagent_type":"general-purpose","run_in_background":true,"prompt":"go"}}],"usage":{"input_tokens":5,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}'
+  printf '{"type":"user","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"agent-abc","toolUseId":"toolu_agent1","outputFile":"%s","canReadOutputFile":true},"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_agent1","content":"launched"}]}}\n' "$OUT"
+  emit_result
+  exit 0
+else
+  emit_init; emit_text; emit_result; exit 0
+fi

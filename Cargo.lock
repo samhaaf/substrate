@@ -2150,15 +2150,21 @@ name = "substrate-ccw"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "chrono",
+ "futures",
  "rusqlite",
  "serde",
  "serde_json",
  "substrate-types",
  "tempfile",
  "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite 0.21.0",
  "toml",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2166,11 +2172,9 @@ name = "substrate-ccw-bin"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
- "clap",
- "serde_json",
  "substrate-ccw",
  "substrate-types",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
